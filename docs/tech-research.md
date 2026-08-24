@@ -1,6 +1,6 @@
 # Technology Research: JoyCast-Style Noise-Cancelling Virtual Microphone for macOS
 
-- **Date**: 2026-08-24 (three research rounds conducted on this date)
+- **Date**: 2026-08-24 (four research rounds conducted on this date)
 - **Status**: Research complete; implementation not started
 - **Scope**: macOS only, personal use, fully on-device, Apple Developer Program membership available (Developer ID signing is possible)
 
@@ -132,7 +132,7 @@ design1 concluded the Rust `df` crate was the only practical route because DeepF
 | **UL-UNAS** (IEEE TASLP 2026) ✅ | ~171K | 16 k | [Xiaobin-Rong/ul-unas](https://github.com/Xiaobin-Rong/ul-unas): checkpoints + streaming ONNX (2026-02) | GTCRN author's successor; PESQ 3.09 vs. GTCRN 2.87 on VCTK-DEMAND. **Low-latency-mode candidate** |
 | GTCRN | 48K | 16 k | sherpa-onnx | RTF 0.07 on a 2022 desktop CPU; clearly beats RNNoise. Superseded by UL-UNAS but has the smoother integration path today |
 | RNNoise | 60K | 48 k | BSD, tiny | Two generations behind (GTCRN → UL-UNAS); keep only as a trivial fallback |
-| CoreML DFN3 (Swift) | 2.1 M | 48 k | [NoNoise-Mac](https://github.com/ivalsaraj/NoNoise-Mac) / [MetalVoice](https://github.com/Ghostkwebb/MetalVoice) (MIT) implement the full Swift STFT/ERB pipeline | Viable Swift-native route; per-project code quality unverified. Note: DFN3 is small enough that the Neural Engine offers little benefit over CPU |
+| CoreML DFN3 (Swift) | 2.1 M | 48 k | [NoNoise-Mac](https://github.com/ivalsaraj/NoNoise-Mac) / [MetalVoice](https://github.com/Ghostkwebb/MetalVoice) (MIT) implement the full Swift STFT/ERB pipeline; [speech-swift](https://github.com/soniqo/speech-swift) ships DFN3 as CoreML (INT8/FP16) + vDSP feature pipeline | Viable Swift-native route; per-project code quality unverified. Caveat: speech-swift's CoreML export does not yet thread GRU state as explicit I/O (60 s single-shot cap, chunked long-form) — file-oriented today, not mic-streaming-ready. Note: DFN3 is small enough that the Neural Engine offers little benefit over CPU |
 
 ### 5.3 Rejected for the live path
 
@@ -158,7 +158,7 @@ DeepFilterNet-class models learn speech-vs-noise separation: vacuum cleaners and
 
 ### 6.2 DIY hard gate (fallback; validated design)
 
-Speaker-embedding gate: run VAD + speaker verification (ECAPA-TDNN embedding, cosine similarity vs. an enrolled mean embedding) per frame window; fade out frames that do not match. All components are available pretrained (sherpa-onnx provides both VAD and speaker embeddings; also `voxudio`).
+Speaker-embedding gate: run VAD + speaker verification (ECAPA-TDNN embedding, cosine similarity vs. an enrolled mean embedding) per frame window; fade out frames that do not match. All components are available pretrained (sherpa-onnx provides both VAD and speaker embeddings; also `voxudio`; on the Swift side, [speech-swift](https://github.com/soniqo/speech-swift) bundles Silero VAD, WeSpeaker ResNet34 embeddings (256-dim), and pyannote segmentation/diarization).
 
 Two independent public PoCs implement exactly this design, confirming its soundness (and its non-novelty):
 
@@ -192,7 +192,7 @@ Needed only when the user plays meeting audio through speakers; a virtual mic in
 ### 7.1 Apple VoiceProcessingIO (VPIO) — limitations confirmed
 
 - `setVoiceProcessingEnabled(true)` enables AEC + NS + AGC as a bundle.
-- AGC alone can be disabled (`kAUVoiceIOProperty_VoiceProcessingEnableAGC = 0`); **NS and AEC cannot be separated**; `kAUVoiceIOProperty_BypassVoiceProcessing` is all-or-nothing.
+- AGC alone can be disabled (`kAUVoiceIOProperty_VoiceProcessingEnableAGC = 0`); **NS and AEC cannot be separated** — a dedicated final check confirmed the only public properties are the AGC toggle, output mute, and the all-or-nothing `kAUVoiceIOProperty_BypassVoiceProcessing`. No NS-specific property exists through macOS 26. This question is closed.
 - Field report ([Forasoft](https://www.forasoft.com/ship-log/spatial-audio-vpio)): VPIO builds an aggregate around the output device and demands a stereo reference; **fails to initialize (err -10875) on Spatial Audio Macs** and is flaky on Bluetooth/aggregate outputs. Their fix was replacing VPIO's NS with RNNoise and abandoning VPIO — reinforcing our decision to avoid it.
 - Double-processing concern (VPIO NS + our neural NS) remains, so even for AEC-only use it is unattractive.
 
@@ -203,9 +203,21 @@ Needed only when the user plays meeting audio through speakers; a virtual mic in
 - Lifecycle reference: [CoreAudioTapKit](https://github.com/CJStanfield/CoreAudioTapKit) (Swift; owns tap + aggregate + ring buffer + AUHAL output). Known pitfalls it handles: tap creation succeeds with no permission but delivers zero callbacks; must exclude own process from the tap; must wait for the aggregate to report alive.
 - **macOS 26 (Tahoe) regression**: taps can intermittently deliver all-zero buffers or a non-firing IOProc (Apple Dev Forums thread 825780; reproduced with Teams). Mitigation pattern from production apps ([dimmy commit](https://github.com/KonradDallaOrg/dimmy/commit/a81a902a6de7a2dfb8624aaff9edba0a576471ce)): non-zero-signal watchdog → full teardown + rebuild of tap + aggregate. Also: on macOS 26 the Screen Recording TCC grant implicitly covers system-audio capture, and a "System Audio Recording Only" TCC subsection exists.
 
-### 7.3 Decision
+### 7.3 Neural AEC options (alternatives to WebRTC AEC3)
 
-v0 operates headphones-only (no AEC). When speaker use becomes a requirement, implement tap + AEC3 with the zero-buffer watchdog. VPIO is avoided entirely.
+Small neural AEC models have matured and offer what Apple never exposed — echo cancellation as a standalone module (all 16 kHz):
+
+| Model | Size | Form | Notes |
+|---|---|---|---|
+| [LocalVQE](https://github.com/richiejp/LocalVQE) v1.4-AEC | 203K params (~3 MB); also a 2.7K linear-filter variant | GGML (C++), causal streaming, 16 ms hop | DeepVQE derivative. **Echo-only variant keeps voice, noise, and room** — composes cleanly with our own NS stage. Joint AEC+NS+dereverb variants (1.3–4.8 M) also available ([HF](https://huggingface.co/LocalAI-io/LocalVQE)) |
+| [JointAEC-NS](https://github.com/miuda-ai/joint_aec_ns) | 55K params (~440 KB) | Streaming ONNX, 10 ms frames, MIT | Joint AEC+NS in one graph; single-thread CPU RTF 0.015. Would replace both the AEC and low-latency NS stages at 16 kHz |
+| EchoFree (arXiv:2508.06271) | 278K params | Paper (linear filter + Bark-scale neural post-filter) | Comparable to DeepVQE-S; no production release found |
+
+These still need the process-tap reference signal (§7.2); they replace only the AEC3 DSP stage, potentially with better quality on nonlinear echo paths.
+
+### 7.4 Decision
+
+v0 operates headphones-only (no AEC). When speaker use becomes a requirement, implement the process-tap reference plus either WebRTC AEC3 (`aec3` crate; 48 kHz-friendly, battle-tested algorithm) or LocalVQE v1.4-AEC (neural, echo-only, 16 kHz) — decided by an echo-path test at that time. VPIO is avoided entirely.
 
 ---
 
@@ -216,6 +228,8 @@ v0 operates headphones-only (no AEC). When speaker use becomes a requirement, im
 | Light DSP chain (HPF, EQ, compressor, limiter via Accelerate/vDSP or fundsp) | Trivial | The practical way to add "studio polish" after NS; adopt when needed |
 | [Sidon](https://github.com/sarulab-speech/sidon) (UTokyo sarulab, MIT) | Real, but offline | w2v-BERT 2.0 feature cleanser + vocoder resynthesis, 48 kHz out, 100+ languages; built for TTS dataset cleansing with ~10 s chunking. Ports exist (CoreML/ONNX via Soniqo). **Offline post-processing option only** (e.g., cleaning recordings), never live |
 | [Stream.FM / MelFlow](https://github.com/sp-uhh/streamfm) (TASLP 2026 / ICASSP 2026, AGPL-3.0) | Real, streaming, 48 kHz variant; SE + dereverb + BWE + codec post-filter; 24–48 ms total latency | First genuinely streaming generative restoration — but requires a consumer **CUDA GPU** (CUDA graphs) to hit real time; no Apple Silicon path today; AGPL. **Watch item**: generative restoration is coming to real time; revisit in 1–2 years |
+| [LLaSE-G1](https://github.com/ASLP-lab/LLaSE-G1) (ACL 2025, Apache-2.0) | Real; checkpoints on [HF](https://huggingface.co/ASLP-lab/LLaSE-G1) | LLaMA-based unified generative model covering NS, TSE, AEC, packet-loss concealment, and separation in one checkpoint (WavLM features → X-Codec2 tokens). **Offline only** (two-stage LM inference, no streaming path, known instability); watch item — a future streaming successor would collapse several pipeline stages into one model |
+| [mlx-audio](https://github.com/Blaizzy/mlx-audio) / [speech-swift](https://github.com/soniqo/speech-swift) MLX ports | Real | DeepFilterNet-mlx, MossFormer2_SE_48K_MLX, SAM-Audio (text-guided source separation) on Apple GPU via MLX. Useful for offline batch work on-device; the streaming mic path is better served by CPU ONNX (GPU contention, scheduling jitter) |
 | resemble-enhance, AnyEnhance, Miipher(-2) | Offline / closed | Not applicable |
 
 Dereverberation note: DPDFNet variants claim some dereverb capability; MossFormer2_SE_48K and Sidon handle it offline. If live dereverb matters, compare DPDFNet HR against FastEnhancer in the listening test.
@@ -252,9 +266,12 @@ Latency budget (target 20–30 ms end-to-end):
 | [joycast.driver](https://github.com/joymacstudio/joycast.driver) | Shell/AppleScript build system around BlackHole submodule | GPL-3.0 | **Adopted** as the virtual-device template (§3) |
 | [roc-vad](https://github.com/roc-streaming/roc-vad) | C++ libASPL driver + gRPC control + CLI | MPL-2.0 | Reference for a fully custom driver with runtime device management, if ever needed |
 | [mellonella](https://github.com/penta2himajin/mellonella) / [voce](https://github.com/espetro/voce) | Rust/Python PoCs of speaker gating | — | Design references for the DIY gate (§6.2) |
+| [speech-swift](https://github.com/soniqo/speech-swift) | Swift toolkit: DFN3 + Sidon (CoreML), Silero/pyannote VAD, WeSpeaker embeddings, diarization, ASR/TTS | MIT | The richest Swift-native parts source if the app side grows (offline denoise, enrollment tooling, VAD/embeddings for the DIY gate). Mic-streaming DFN3 not yet supported (§5.2) |
 | Buy option | [JoyCast](https://joycast.ai/) ($8/mo), Krisp, macOS Voice Isolation | — | JoyCast remains the shortest path to "quiet meetings" without the speaker-suppression differentiator |
 
-Apple built-in note: macOS **Voice Isolation** mic mode cannot be enabled programmatically (`preferredMicrophoneMode` is read-only; users toggle it per-app in Control Center, and only apps adopting AUVoiceIO expose it). It is not a substitute for a virtual-mic product, but it is a zero-effort baseline for personal calls in supported apps.
+Apple built-in note: macOS **Voice Isolation** mic mode cannot be enabled programmatically (`preferredMicrophoneMode` is read-only; users toggle it per-app in Control Center, and only apps adopting AUVoiceIO expose it). It is not a substitute for a virtual-mic product, but it is a zero-effort baseline for personal calls in supported apps. The macOS 26 **SpeechAnalyzer** framework was also checked: it is speech-to-text only (with a `SpeechDetector` VAD module) and offers nothing for the enhancement path.
+
+Research dead ends worth recording: the Microsoft **DNS Challenge** series (the main engine of personalized-NS research) ended with ICASSP 2023; the winning TEA-PSE 3.0 system was never released as a usable model, so no new challenge-driven model supply should be expected from that direction.
 
 ---
 
@@ -320,7 +337,7 @@ SwiftUI `MenuBarExtra` + `SMAppService`: on/off, input device picker, strength, 
 4. Long-session (2 h+) stability of aggregate-device drift compensation.
 5. DIY gate fade time constant (if the DIY route is needed): onset clipping vs. interferer leakage.
 6. How meeting apps treat the virtual device's reported latency/safety offsets (BlackHole reports zero).
-7. `aec3` crate maturity vs. C++ `webrtc-audio-processing` (only relevant if AEC is built).
+7. AEC engine choice, only relevant if AEC is built: `aec3` crate maturity vs. C++ `webrtc-audio-processing` vs. neural LocalVQE v1.4-AEC (16 kHz constraint).
 8. Whether 16 kHz output (Hush path) is subjectively acceptable in meetings vs. the 48 kHz paths.
 
 ---
@@ -361,10 +378,15 @@ SwiftUI `MenuBarExtra` + `SMAppService`: on/off, input device picker, strength, 
 ### AEC
 - aec3 (Rust WebRTC AEC3 port): https://crates.io/crates/aec3
 - VPIO analysis: https://www.forasoft.com/ship-log/spatial-audio-vpio
+- LocalVQE (neural AEC/VQE, GGML): https://github.com/richiejp/LocalVQE / https://huggingface.co/LocalAI-io/LocalVQE
+- JointAEC-NS: https://github.com/miuda-ai/joint_aec_ns
+- EchoFree: arXiv:2508.06271
 
 ### Restoration (offline / future)
 - Sidon: https://github.com/sarulab-speech/sidon (JASA 10.1121/10.0040823)
 - Stream.FM / MelFlow: https://github.com/sp-uhh/streamfm (arXiv:2512.19442)
+- LLaSE-G1: https://github.com/ASLP-lab/LLaSE-G1 (arXiv:2503.00493)
+- mlx-audio: https://github.com/Blaizzy/mlx-audio / speech-swift: https://github.com/soniqo/speech-swift
 
 ### Apps
 - JoyCast: https://joycast.ai/
