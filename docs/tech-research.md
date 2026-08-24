@@ -80,7 +80,7 @@ Overall: design1 was the technically reliable backbone; design2 contributed the 
 | NNA Virtual Audio | Prebuilt signed driver | Free, closed-source | [neutralandnaturalaudio.com](https://neutralandnaturalaudio.com/virtual-audio.html). 1–256 configurable channels, renamable without reinstall, per-channel volume. Good no-build fallback; closed source is the drawback |
 | LitLink | Prebuilt signed driver + companion app | Free (freemium) | [litpads.app/litlink](https://litpads.app/litlink). One-click multi-output / mic passthrough. More consumer-oriented than we need |
 | AudioRouterNow | Open-source HAL driver + helper | GPL-3.0 | [mauriciomorkun/AudioRouterNow](https://github.com/mauriciomorkun/AudioRouterNow). Output fan-out focus; useful as another shared-memory ring-buffer reference |
-| libASPL | C++17 framework for custom ASPL | MPL-2.0 | [gavv/libASPL](https://github.com/gavv/libASPL). Production-proven via [roc-vad](https://github.com/roc-streaming/roc-vad) (which also demonstrates gRPC-controlled device lifecycle). The conservative choice if we ever need a fully custom driver (custom controls, in-driver features) |
+| libASPL | C++17 framework for custom ASPL | MIT | [gavv/libASPL](https://github.com/gavv/libASPL). Production-proven via [roc-vad](https://github.com/roc-streaming/roc-vad) (which also demonstrates gRPC-controlled device lifecycle). The conservative choice if we ever need a fully custom driver (custom controls, in-driver features) |
 | tympan-aspl | Rust framework for custom ASPL | (young, v0.1) | [penta2himajin/tympan-aspl](https://github.com/penta2himajin/tympan-aspl). Safe Rust over the ASPL C ABI, lock-free SPSC ring, realtime-safe primitives, loopback/gain/lowpass examples, author's guide. Keeps a Rust-core project single-language. Immature but promising |
 | KraspHAL / NoNoise Mic drivers | Drivers bundled in OSS apps | MIT | From [Krasp](https://github.com/pilshchikov/krasp) / [NoNoise-Mac](https://github.com/ivalsaraj/NoNoise-Mac). Useful as reference code; would need re-signing anyway |
 | AudioDriverKit (dext) | ❌ Rejected | — | Entitlements not granted for virtual devices |
@@ -288,8 +288,24 @@ Research dead ends worth recording: the Microsoft **DNS Challenge** series (the 
 | AEC | None in v0 (headphones) | Process tap + `aec3` (WebRTC AEC3) with macOS 26 watchdog |
 | Inference runtime | ONNX Runtime (FastEnhancer, TSE); sherpa-onnx (DPDFNet/GTCRN, VAD, speaker embeddings) | tract via `df` crate |
 | Core language | Rust (audio engine, inference, gating) | — |
-| UI | None initially (CLI + config + launchd) → SwiftUI `MenuBarExtra` later (on/off, device picker, strength, meters, login item) | — |
+| UI | SwiftUI `MenuBarExtra` from the start (on/off, input device picker, status; strength/meters/mode switch and `SMAppService` login item added incrementally). Rust engine embedded as a static library behind a C ABI, or run as a separate daemon process with a small IPC control plane | CLI + config + launchd (if the UI ever blocks progress) |
 | Enhancement extras | vDSP/fundsp EQ + compressor (later) | Sidon offline cleanup; Stream.FM (watch) |
+
+### Licensing notes for commercial distribution
+
+Personal (non-distributed) use carries no obligations. If the app is ever **sold or distributed**, the stack splits as follows (not legal advice; re-verify licenses at ship time):
+
+**Permissive — safe for closed-source commercial use** (attribution/notice files required):
+FastEnhancer (MIT), DPDFNet code + models (Apache-2.0), Hush (Apache-2.0), DeepFilterNet (MIT/Apache-2.0 dual), sherpa-onnx (Apache-2.0), ONNX Runtime (MIT), libASPL (MIT), Sidon (MIT), speech-swift (MIT), JointAEC-NS (MIT), Krasp / NoNoise-Mac / MetalVoice (MIT), webrtc-audio-processing (BSD-3).
+
+**Copyleft but workable — obligations attach to the driver only**:
+The BlackHole-fork driver (GPL-3.0) is a separate program loaded by `coreaudiod`, not linked into the app, so the GPL does not extend to the app itself. Distribution requires publishing the driver source under GPL-3.0 — exactly what JoyCast does with [joycast.driver](https://github.com/joymacstudio/joycast.driver), which is the precedent for this model. Alternatively, Existential Audio sells commercial BlackHole licenses if publishing the fork is undesirable.
+
+**Not usable in a commercial product**:
+NNA Virtual Audio (free *for personal use* — a vendor license would be needed), Stream.FM (AGPL-3.0 — would force open-sourcing the entire app).
+
+**Verify before shipping** (license not yet confirmed):
+tse-conv-tasnet-48k model weights (HF card lacks an explicit license; trained on VCTK CC-BY-4.0 + DEMAND), LocalVQE weights, tympan-aspl, `aec3` crate (upstream WebRTC is BSD-3), UL-UNAS, GTCRN.
 
 ---
 
@@ -308,18 +324,20 @@ The single largest uncertainty is **whether these models satisfy the ear in the 
 
 Exit criteria: pick one NS model and one speaker-suppression approach; or conclude the quality is insufficient and fall back to buying JoyCast.
 
-### Phase 0 — Minimal usable pipeline
+### Phase 0 — Minimal usable pipeline with a minimal UI
 
-Rust CLI: physical mic → chosen NS model → BlackHole (stock, unmodified). Private aggregate device for drift. Select BlackHole as input in Zoom. Already usable daily.
+- Rust engine: physical mic → chosen NS model → BlackHole (stock, unmodified). Private aggregate device for drift.
+- Minimal SwiftUI `MenuBarExtra` from day one: on/off toggle, input device picker, running status. The Rust engine is embedded as a static library behind a C ABI (single app bundle) or launched as a child/daemon process with a small IPC control plane — decided during implementation.
+- Select BlackHole as input in Zoom. Already usable daily.
 
 ### Phase 1 — Own the device + differentiator
 
 - Build, sign, and install the renamed BlackHole fork (joycast.driver pattern).
 - Add the speaker-suppression stage (Hush / TSE / DIY gate per Phase -1 results).
 
-### Phase 2 — Menu bar app
+### Phase 2 — Menu bar app, full version
 
-SwiftUI `MenuBarExtra` + `SMAppService`: on/off, input device picker, strength, quality/low-latency mode switch, level + reduction meters, start at login. Rust core stays a separate process or a static lib behind a C ABI.
+Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level + reduction meters (lock-free shared state from the engine), start at login via `SMAppService`.
 
 ### Phase 3 — Optional
 
