@@ -1,6 +1,6 @@
 # Technology Research: JoyCast-Style Noise-Cancelling Virtual Microphone for macOS
 
-- **Date**: 2026-08-24 (four research rounds conducted on this date)
+- **Date**: 2026-08-24 (five research rounds conducted on this date; round 5 was a zero-based sweep for alternative architectures and produced no stack changes — the stack below is final)
 - **Status**: Research complete; implementation not started
 - **Scope**: macOS only, personal use, fully on-device, Apple Developer Program membership available (Developer ID signing is possible)
 
@@ -100,6 +100,7 @@ Overall: design1 was the technically reliable backbone; design2 contributed the 
 - Use **AUHAL directly** (`kAudioUnitSubType_HALOutput`) or `AudioDeviceCreateIOProcIDWithBlock` on the target device. Buffer size 128–256 frames at 48 kHz.
 - **Do not use AVAudioEngine for device-specific I/O.** Its `inputNode` cannot be retargeted to a non-default HAL device: setting `kAudioOutputUnitProperty_CurrentDevice` returns `noErr` but is silently ignored (AUHAL logs `-10877` to Console only). Confirmed by a 2026 field report ([DGR Labs](https://dgrlabs.co/blog/2026-04-25-capturing-system-audio-on-macos-in-2026.html)). This invalidates design2's "start with AVAudioEngine" plan.
 - Microphone TCC permission (`NSMicrophoneUsageDescription`) required.
+- **Raw mic-array access is impossible on macOS** (checked as a beamforming angle): Apple's driver performs locked-down adaptive beamforming on the built-in 3-mic array and exposes a single processed stream; no public API returns the raw channels. [Triforce](https://github.com/chadmed/triforce) implements an MVDR beamformer for this array but only on Linux/Asahi. DIY beamforming is therefore a dead end on macOS; the pipeline is single-channel by constraint, not by choice.
 
 ### 4.2 Clock drift (mandatory countermeasure)
 
@@ -175,6 +176,8 @@ Known tuning risk (from design1): gate fade time constant — too short clips th
 | SpeakerBeam-SS (Interspeech 2024) / [OpenSpeakerBeam-SS](https://github.com/helloooideeeeea/openspeakerbeam-ss) | Real-time TSE with S4D; open reimplementation exists but early-stage, license TBD |
 | D-LGTSE / SEF-PNet / USEF-PNet / DSEF-PNet | Embedding-free PSE research line (ICASSP 2025+); 8–16 k research code, no production-ready streaming release |
 | [Look Once to Hear](https://github.com/vb000/LookOnceToHear) (CHI 2024 honorable mention) | Binaural (two-ear mic) enrollment and processing — hardware model mismatch with a single Mac mic |
+| [RAVEN](https://github.com/Bose/RAVEN) (Bose, Interspeech/WASPAA 2025) | First open-source **real-time audio-visual** speech enhancement: webcam watches the on-screen speaker's lips and isolates them; runs on Apple Silicon CPU. Rejected for the mic path because the visual encoder needs a 5-video-frame buffer → **~120 ms algorithmic latency** (vs. our 20–30 ms budget), plus webcam dependency. The strongest "revolutionary" watch item if a low-latency visual encoder appears |
+| Voice-conversion architecture (e.g. [LLVC](https://github.com/KoeAI/LLVC), <20 ms any-to-one VC on CPU) | Considered as a radical alternative: resynthesize everything as the user's voice, making noise structurally impossible. Rejected: any-to-one VC **converts background speakers' speech into the user's voice too** — the exact opposite of speaker isolation — and adds naturalness risk |
 | TSE via Positive/Negative enrollments (NeurIPS 2025) | TFGridNet-based, research code |
 | ClearerVoice-Studio TSE | Audio-only variant is 8 kHz; AV variants need camera input |
 | VoiceFilter-Lite / Personalized PercepNet | Historical options from design1 — no usable public pretrained models (unchanged) |
@@ -273,6 +276,10 @@ Apple built-in note: macOS **Voice Isolation** mic mode cannot be enabled progra
 
 Research dead ends worth recording: the Microsoft **DNS Challenge** series (the main engine of personalized-NS research) ended with ICASSP 2023; the winning TEA-PSE 3.0 system was never released as a usable model, so no new challenge-driven model supply should be expected from that direction.
 
+### Competitive landscape note (2026)
+
+As of 2026, **Microsoft Teams ships personalized voice isolation** (30-second voice-profile enrollment, personalized on-device model) and **Zoom ships personalized audio isolation** (locally stored voiceprint, optional scripted enrollment). Google Meet still uses a global, non-personalized model. Implication for positioning: "suppress other people's voices" is becoming a built-in feature *inside* Teams and Zoom, so this product's differentiation is being the **universal, system-wide layer** — one clean microphone that works identically in Google Meet, Discord, OBS, FaceTime, Slack huddles, recording apps, and anything else, with the user's own choice of model quality (48 kHz path vs. the platforms' internal processing) and full local privacy. NoNoise-Mac also demonstrates a feature worth borrowing later: cleaning **incoming** audio (what you hear) via a Core Audio process tap — the same tap machinery already planned for AEC (§7.2).
+
 ---
 
 ## 11. Final Recommended Stack
@@ -342,8 +349,9 @@ Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level 
 ### Phase 3 — Optional
 
 - AEC via process tap + AEC3 (if speaker use emerges).
+- Incoming-audio cleaning ("clean what you hear") via the same process tap — NoNoise-Mac precedent.
 - Light EQ/compressor polish; offline Sidon cleanup for recordings.
-- Re-evaluate generative restoration (Stream.FM-class) for Apple Silicon.
+- Re-evaluate generative restoration (Stream.FM-class) for Apple Silicon, and audio-visual enhancement (RAVEN-class) if visual-encoder latency drops.
 
 ---
 
