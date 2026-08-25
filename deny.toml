@@ -7,6 +7,17 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+    # tract-nnef's NNEF `.dat` tensor parser has an integer-overflow OOB
+    # read on *attacker-controlled NNEF files*. We never parse NNEF: the
+    # deep_filter stages load only ONNX graphs from SHA-256-pinned archives
+    # bundled in the crate or fetched from pinned URLs. Revisit when the
+    # deep_filter dependency (and its tract pin) is next bumped.
+    { id = "RUSTSEC-2026-0217", reason = "tract-nnef parsing is unreachable; only trusted, pinned ONNX inputs are loaded" },
+    # `paste` is unmaintained (archived) but is a build-time-only proc macro
+    # pulled in transitively by tract 0.19; no runtime exposure.
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained build-time proc macro via tract; removed when deep_filter/tract is bumped" },
+]
 
 [licenses]
 version = 2
@@ -26,6 +37,8 @@ allow = [
     "Zlib",
     "Unicode-3.0",
     "CDLA-Permissive-2.0",
+    # Public-domain dedication (tiny-keccak via tract); no obligations.
+    "CC0-1.0",
 ]
 confidence-threshold = 0.8
 
@@ -39,3 +52,6 @@ allow-wildcard-paths = true
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# deep_filter must come from git: the crates.io release (0.2.5) predates
+# DeepFilterNet3 and has no tract runtime. Pinned to a release tag.
+allow-git = ["https://github.com/Rikorose/DeepFilterNet"]

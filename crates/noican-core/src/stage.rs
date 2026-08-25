@@ -59,6 +59,14 @@ pub trait FrameProcessor: Send {
     /// Returns [`StageError::Inference`] when the backend fails.
     fn process_frame(&mut self, input: &[f32], output: &mut [f32]) -> Result<(), StageError>;
 
+    /// Additional algorithmic delay of the model itself, in samples at
+    /// [`Self::sample_rate`] (e.g. STFT window minus hop for overlap-add
+    /// models, or lookahead frames). Used only for latency reporting and
+    /// offline alignment; defaults to zero.
+    fn output_delay(&self) -> usize {
+        0
+    }
+
     /// Drop recurrent model state.
     fn reset(&mut self);
 }

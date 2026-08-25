@@ -12,6 +12,14 @@ thiserror = { workspace = true }
 ort = { workspace = true }
 ureq = { workspace = true }
 sha2 = { workspace = true }
+realfft = { workspace = true }
+deep_filter = { workspace = true }
+ndarray = { workspace = true }
 
 [lints]
 workspace = true
+
+[package.metadata.cargo-machete]
+# The deep_filter package exposes its library as `df`, which cargo-machete
+# does not associate with the package name.
+ignored = ["deep_filter"]

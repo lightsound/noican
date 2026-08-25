@@ -109,12 +109,28 @@ pub fn fetch_model(
     Ok(())
 }
 
+/// Returns a Hugging Face access token from the environment
+/// (`NOICAN_HF_TOKEN` or `HF_TOKEN`), if any. Needed only for gated/private
+/// repos (see docs/models.md).
+fn hf_token() -> Option<String> {
+    std::env::var("NOICAN_HF_TOKEN")
+        .or_else(|_| std::env::var("HF_TOKEN"))
+        .ok()
+        .filter(|t| !t.is_empty())
+}
+
 fn download(url: &str) -> Result<Vec<u8>, FetchError> {
     let wrap = |source: ureq::Error| FetchError::Http {
         url: url.to_owned(),
         source: Box::new(source),
     };
-    let mut response = ureq::get(url).call().map_err(wrap)?;
+    let mut request = ureq::get(url);
+    if url.starts_with("https://huggingface.co/")
+        && let Some(token) = hf_token()
+    {
+        request = request.header("Authorization", &format!("Bearer {token}"));
+    }
+    let mut response = request.call().map_err(wrap)?;
     let mut bytes = Vec::new();
     response
         .body_mut()

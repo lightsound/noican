@@ -15,6 +15,12 @@ thiserror = "2.0"
 ort = "=2.0.0-rc.13"
 ureq = "3.4"
 sha2 = "0.11"
+realfft = "3.5"
+# deep_filter on crates.io is stale (0.2.5, pre-DFN3); the maintained crate
+# lives in the DeepFilterNet repo. Pinned to the v0.5.6 release tag.
+deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet.git", tag = "v0.5.6", default-features = false, features = ["tract", "default-model"] }
+# Matches the ndarray version of deep_filter's public API.
+ndarray = "0.15"
 anyhow = "1.0"
 clap = { version = "4.6", features = ["derive"] }
 hound = "3.5"

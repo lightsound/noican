@@ -59,7 +59,8 @@ impl<P: FrameProcessor> FramedStage<P> {
         let filter_delay = resampler.as_ref().map_or(0, |(d, i)| {
             d.delay_input_samples() + i.delay_output_samples()
         });
-        let latency = round_len + filter_delay;
+        // Include the model's own algorithmic delay, scaled to engine rate.
+        let latency = round_len + filter_delay + processor.output_delay() * factor;
         let mut out_fifo = VecDeque::with_capacity(round_len * 2 + max_block_len);
         out_fifo.extend(std::iter::repeat_n(0.0, round_len));
         Ok(Self {
