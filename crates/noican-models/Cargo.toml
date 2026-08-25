@@ -18,7 +18,7 @@ dirs = "6.0.0"
 ndarray = "0.17.2"
 ndarray015 = { version = "0.15.6", package = "ndarray" }
 noican-engine = { version = "0.1.0", path = "../noican-engine" }
-ort = "2.0.0-rc.13"
+ort = { version = "2.0.0-rc.13", default-features = false, features = ["std", "ndarray", "download-binaries", "tls-rustls", "copy-dylibs", "api-27"] }
 rustfft = "6.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
