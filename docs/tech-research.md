@@ -330,19 +330,49 @@ tse-conv-tasnet-48k model weights (HF card lacks an explicit license; trained on
 Policy: **start with everything as an error, and demote only what is truly
 impossible, with a written reason.**
 
-- Rust: `[workspace.lints]` with clippy `warnings = deny` and the `pedantic` /
-  `nursery` groups promoted to error. Local opt-outs require `#[allow]` plus a
-  reason comment.
+- Rust: `[workspace.lints]` denies an exhaustive rustc lint set
+  (`unsafe_code`, `missing_docs`, `unreachable_pub`, trivial casts, the
+  `unused` group, ...), the rustdoc lints, and clippy with the `pedantic` /
+  `nursery` / `cargo` groups promoted to error. Local opt-outs require
+  `#[expect(..., reason = "...")]` (stale opt-outs fail the build;
+  `clippy::allow_attributes` is denied), falling back to `#[allow]` with a
+  reason only where `expect` cannot work (cfg-dependent code).
 - `cargo-deny` (licenses, advisories, duplicate/unknown sources) and
   `cargo-machete` (unused dependencies) run in CI (GitHub Actions) together
-  with `cargo fmt --check`, clippy, and tests.
-- Swift side (when it appears): SwiftLint in strict mode (warnings promoted to
-  errors).
+  with `cargo fmt --check`, clippy, rustdoc, and tests.
+- Swift side (in CI on a macOS runner): SwiftLint in strict mode and
+  `swift build -Xswiftc -warnings-as-errors`; the same runner lints and
+  tests the whole Rust workspace for `aarch64-apple-darwin` and builds the
+  release app bundle.
 - TS/JS: none in the repo today. PR #2 (fallow + ImportLint, branch
   `cursor/lint-tooling-3722`) was closed for that reason; revive that branch if
   TS/JS ever enters the repo.
 
 ### Phase 0 — Switchable engine + CLI comparison + minimal UI
+
+> **Status (2026-08-25): code-complete.** Phase 0 was implemented as a
+> best-of-3 (three parallel agents, tasks 0–4); candidate C's engine won and
+> was merged to `main` (Rust workspace, stage abstraction, model registry
+> with SHA-256-verified fetching, CLI batch comparison). Candidate B's macOS
+> transport (`PR #4`, branch `cursor/phase-zero-engine-4f79`) **passed
+> hardware acceptance on macOS 26 / Apple Silicon** — mic permission →
+> Running, QuickTime recording through BlackHole 2ch, no crash or blowup on
+> live model switching, clean teardown — while its *engine* failed
+> acceptance (stereo input collapsed to the left channel in the CLI; the
+> 16 kHz resampling path, especially Hush, was near-silent in real time;
+> transient sounds such as keystrokes/claps cut off speech). Candidate A
+> (`PR #3`) contributed the exhaustive lint configuration. The completed
+> Phase 0 is therefore a hybrid: **C engine + B transport**, with B's
+> coreaudio/FFI/Swift layers rewired onto the C engine crates so the live
+> path uses exactly the resampling/framing code the CLI verifies, plus A's
+> quality gates. The CLI additionally reads AIFF/AIFC/CAF/M4A (symphonia)
+> besides WAV. Remaining for Phase 0 sign-off: the on-hardware acceptance
+> run of this hybrid build (docs/macos-hardware-test.md) — audio output,
+> TCC, aggregate-device behavior, and model switching cannot be verified
+> in CI and are **not claimed as working** until recorded there. Note for
+> all macOS 26 documentation: `sudo launchctl kickstart -k
+> system/com.apple.audio.coreaudiod` is rejected by SIP; restart the audio
+> daemon with `sudo killall coreaudiod` instead.
 
 Everything the former Phase -1 needed, built as the product itself:
 
@@ -390,7 +420,7 @@ insufficient and fall back to buying JoyCast.
 
 ### Phase 2 — Menu bar app, full version
 
-Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level + reduction meters (lock-free shared state from the engine), start at login via `SMAppService`. Introduce SwiftLint (strict) no later than this phase.
+Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level + reduction meters (lock-free shared state from the engine), start at login via `SMAppService`. (SwiftLint strict and Swift warnings-as-errors have been in CI since Phase 0.)
 
 ### Phase 3 — Optional
 
@@ -403,7 +433,7 @@ Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level 
 
 ## 13. Open Questions
 
-1. Listening-test outcomes (§12 Phase -1) — the entire stack pivots on these.
+1. Listening-test outcomes (§12 Phase 0, CLI comparison + live switching) — the entire stack pivots on these.
 2. Hush's behavior when the background speaker is *louder* than the user (trained at 12–24 dB SIR below primary).
 3. tse-conv-tasnet-48k real-world quality given its small training set (VCTK + DEMAND).
 4. Long-session (2 h+) stability of aggregate-device drift compensation.
