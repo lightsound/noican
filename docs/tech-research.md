@@ -1,7 +1,7 @@
 # Technology Research: JoyCast-Style Noise-Cancelling Virtual Microphone for macOS
 
 - **Date**: 2026-08-24 (five research rounds conducted on this date; round 5 was a zero-based sweep for alternative architectures and produced no stack changes — the stack below is final)
-- **Status**: Research complete; Phase 0 implementation in progress
+- **Status**: Research complete; Phase 0 implementation complete, hardware behavior unverified
 - **Scope**: macOS only, fully on-device, commercial distribution kept possible, Apple Developer Program membership available (Developer ID signing is possible)
 
 This document consolidates the review of two earlier AI-generated design documents ("design1" and "design2") and three rounds of follow-up research. It records every candidate that was evaluated — including rejected ones and the reasons for rejection — so that later decisions can be revisited with full context and rejected options can serve as fallbacks.
@@ -324,7 +324,8 @@ The former Phase -1 listening test is part of Phase 0. Model selection must be b
 
 - Establish the Rust workspace and quality gates in the first implementation commit. Workspace lint policy promotes all Rust and Clippy warnings, including `all`, `pedantic`, and `nursery`, to errors. Every exception requires a local `#[allow(..., reason = "...")]`. CI runs formatting, Clippy, tests, `cargo-deny` (licenses, advisories, bans, and sources), and `cargo-machete` (unused dependencies).
 - Define every audio processor behind one stage trait. A stage declares its native sample rate, frame size, latency, state, and enrollment requirements; common adapters perform sample-rate and frame conversion so the pipeline remains 48 kHz externally. Adding a future model requires one new trait implementation plus registry metadata.
-- Implement and compare FastEnhancer 48 kHz (T/B/S first), DPDFNet 48 kHz HR (`dpdfnet2_48khz_hr`, `dpdfnet8_48khz_hr`), DeepFilterNet3 as the baseline, UL-UNAS 16 kHz, Hush 16 kHz, and `tse-conv-tasnet-48k`. TSE enrollment uses a separately sourced public ECAPA-TDNN model that produces the required 192-dimensional embedding; the TSE distribution does not contain that model.
+- Implement and compare the Phase 0 set: FastEnhancer 48 kHz T/B/S, DPDFNet 48 kHz HR (`dpdfnet2_48khz_hr`, `dpdfnet8_48khz_hr`), DeepFilterNet3 as the baseline, UL-UNAS 16 kHz, and Hush 16 kHz.
+- Keep `tse-conv-tasnet-48k` and its separate 192-dimensional ECAPA-TDNN enrollment path as an experimental future candidate, but exclude it from Phase 0 defaults and acceptance. This 2026-08-25 scope decision follows the upstream HTTP 401 access restriction and unresolved model/data redistribution terms; the implementation remains available through explicit CLI selection.
 - Use the engine in a CLI WAV batch mode. One invocation processes the same input through every selected model, writes stable model-specific output paths and a comparison manifest, and records configuration needed to reproduce the run. This replaces a separate throwaway listening-test implementation.
 - Support runtime switching through the model registry. Publish model replacements without locking the real-time path, and apply a bounded crossfade or short mute at the transition so state discontinuities cannot produce a click.
 - Rust live path: physical microphone → selected stage → stock BlackHole during development, using AUHAL directly and a private Aggregate Device with drift compensation. The audio callback only moves samples through preallocated lock-free SPSC buffers; inference never runs in the callback.
@@ -332,7 +333,7 @@ The former Phase -1 listening test is part of Phase 0. Model selection must be b
 
 Phase 0 exit criteria:
 
-1. Linux CI passes every quality gate and a checked sample WAV produces a valid output WAV for every required model through actual model inference.
+1. Linux CI passes every quality gate and a checked sample WAV produces a valid output WAV through actual inference for all eight Phase 0 variants: FastEnhancer T/B/S, DPDFNet2/8 HR, DeepFilterNet3, UL-UNAS, and Hush.
 2. Offline comparison output is reproducible, and the model picker changes the active live stage without locking the audio callback or introducing an unbounded discontinuity.
 3. The macOS app and Rust static library build successfully, with AUHAL/Aggregate Device lifecycle and BlackHole routing covered by an Apple-Silicon hardware test plan. Hardware behavior remains explicitly unverified until that plan is run.
 

@@ -285,4 +285,12 @@ mod tests {
         deduplicate(&mut models);
         assert_eq!(models, [ModelId::UlUnas, ModelId::DeepFilterNet3]);
     }
+
+    #[test]
+    fn default_selection_uses_phase_zero_models() {
+        let defaults = selected_models(&[], false);
+        assert_eq!(defaults, ModelId::PHASE_ZERO);
+        assert!(!defaults.contains(&ModelId::TseConvTasNet48k));
+        assert_eq!(selected_models(&[], true), ModelId::ALL);
+    }
 }
