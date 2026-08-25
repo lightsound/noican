@@ -8,10 +8,12 @@
 //! exact code the CLI comparison mode exercises.
 //!
 //! Real-time rules (docs/tech-research.md §9): the Core Audio render
-//! callback only calls `AudioUnitRender` and moves `f32` samples through
-//! preallocated lock-free SPSC rings; inference runs on a dedicated worker
-//! thread joined to the device's `os_workgroup`; output-ring underrun
-//! produces silence, never blocking.
+//! callback only calls `AudioUnitRender`, moves `f32` samples through
+//! preallocated lock-free SPSC rings, and signals a dispatch semaphore
+//! (non-blocking); inference runs on a dedicated worker thread joined to
+//! the device's `os_workgroup`, blocking on that semaphore between
+//! callbacks instead of spinning; output-ring underrun produces silence,
+//! never blocking the callback.
 
 use thiserror::Error;
 

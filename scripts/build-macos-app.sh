@@ -3,14 +3,22 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="aarch64-apple-darwin"
+# CONFIGURATION (release|debug) selects the Swift build configuration only.
+# The Rust staticlib is always built in release: Package.swift links
+# ../target/aarch64-apple-darwin/release, and a debug-profile engine is too
+# slow for the real-time path anyway.
 CONFIGURATION="${CONFIGURATION:-release}"
+case "$CONFIGURATION" in
+  release|debug) ;;
+  *) echo "CONFIGURATION must be 'release' or 'debug', got '$CONFIGURATION'" >&2; exit 1 ;;
+esac
 APP="$ROOT/dist/noican.app"
 
 cargo build \
   --manifest-path "$ROOT/Cargo.toml" \
   --locked \
   --package noican-ffi \
-  --profile "$CONFIGURATION" \
+  --release \
   --target "$TARGET"
 
 # Warnings are errors, matching the Rust side of the quality gates.

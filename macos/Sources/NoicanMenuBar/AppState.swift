@@ -28,6 +28,10 @@ final class AppState: ObservableObject {
     private let aggregate = AggregateDevice()
     private var engine: RustEngine?
     private var activeModelID: String?
+    /// Watches for engine faults/unexpected stops while enabled. Owned here
+    /// (not by the menu view) so faults are detected even when the popover
+    /// is closed.
+    private var faultPollTask: Task<Void, Never>?
 
     init() {
         do {
@@ -90,35 +94,27 @@ final class AppState: ObservableObject {
         let model = selectedModel
         isBusy = true
         phase = .busy("Loading \(displayName(for: model))…")
-        Task {
-            let result = await Self.perform(engine) { try $0.setModel(model) }
-            self.isBusy = false
-            switch result {
-            case .success:
-                self.activeModelID = model
-                self.phase = .running
-            case let .failure(error):
-                // The engine keeps running the previous model; keep the
-                // picker truthful.
-                if let activeModelID = self.activeModelID {
-                    self.selectedModel = activeModelID
-                }
-                self.phase = .failed(error.localizedDescription)
-            }
+        // Detached: weight download and model construction must not run on
+        // (or inherit) the main actor.
+        Task.detached {
+            let result = Result { try engine.setModel(model) }
+            await self.finishModelSwitch(result, model: model)
         }
     }
 
-    func updateStatus() {
-        guard isEnabled, !isBusy, let engine else {
-            return
-        }
-        if engine.isFaulted {
-            phase = .failed("Audio fault — turn noise cancellation off and on")
-        } else if !engine.isRunning {
-            isEnabled = false
-            aggregate.destroy()
-            activeModelID = nil
-            phase = .failed("Engine stopped unexpectedly")
+    private func finishModelSwitch(_ result: Result<Void, Error>, model: String) {
+        isBusy = false
+        switch result {
+        case .success:
+            activeModelID = model
+            phase = .running
+        case let .failure(error):
+            // The engine keeps running the previous model; keep the picker
+            // truthful.
+            if let activeModelID {
+                selectedModel = activeModelID
+            }
+            phase = .failed(error.localizedDescription)
         }
     }
 
@@ -138,36 +134,40 @@ final class AppState: ObservableObject {
             return
         }
         let model = selectedModel
+        let aggregate = self.aggregate
         isBusy = true
         phase = .busy("Starting \(displayName(for: model))…")
-        do {
-            let aggregateID = try aggregate.create(input: input, virtualOutput: virtualOutput)
-            Task {
-                let result = await Self.perform(engine) {
-                    try $0.start(aggregateDevice: aggregateID, model: model)
-                }
-                self.isBusy = false
-                switch result {
-                case .success:
-                    self.isEnabled = true
-                    self.activeModelID = model
-                    self.phase = .running
-                case let .failure(error):
-                    engine.stop()
-                    self.aggregate.destroy()
-                    self.isEnabled = false
-                    self.phase = .failed(error.localizedDescription)
-                }
+        // Detached: aggregate creation polls the device until it is alive
+        // (up to ~1.5 s) and engine start may download weights — neither may
+        // block the main actor. `isBusy` keeps this the only operation
+        // touching `aggregate`/`engine` until it finishes.
+        Task.detached {
+            let result = Result {
+                let aggregateID = try aggregate.create(input: input, virtualOutput: virtualOutput)
+                try engine.start(aggregateDevice: aggregateID, model: model)
             }
-        } catch {
+            await self.finishStart(result, model: model)
+        }
+    }
+
+    private func finishStart(_ result: Result<Void, Error>, model: String) {
+        isBusy = false
+        switch result {
+        case .success:
+            isEnabled = true
+            activeModelID = model
+            phase = .running
+            startFaultPolling()
+        case let .failure(error):
+            engine?.stop()
             aggregate.destroy()
-            isBusy = false
             isEnabled = false
             phase = .failed(error.localizedDescription)
         }
     }
 
     private func stop() {
+        stopFaultPolling()
         engine?.stop()
         aggregate.destroy()
         isEnabled = false
@@ -175,12 +175,33 @@ final class AppState: ObservableObject {
         phase = .off
     }
 
-    /// Runs blocking engine work (weight download, model construction, AUHAL
-    /// setup) off the main actor so the menu stays responsive.
-    private nonisolated static func perform(
-        _ engine: RustEngine,
-        _ work: @escaping @Sendable (RustEngine) throws -> Void
-    ) async -> Result<Void, Error> {
-        Result { try work(engine) }
+    private func startFaultPolling() {
+        faultPollTask?.cancel()
+        faultPollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                self?.checkEngineHealth()
+            }
+        }
+    }
+
+    private func stopFaultPolling() {
+        faultPollTask?.cancel()
+        faultPollTask = nil
+    }
+
+    private func checkEngineHealth() {
+        guard isEnabled, !isBusy, let engine else {
+            return
+        }
+        if engine.isFaulted {
+            phase = .failed("Audio fault — turn noise cancellation off and on")
+        } else if !engine.isRunning {
+            stopFaultPolling()
+            isEnabled = false
+            aggregate.destroy()
+            activeModelID = nil
+            phase = .failed("Engine stopped unexpectedly")
+        }
     }
 }

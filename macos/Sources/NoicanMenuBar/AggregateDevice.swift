@@ -1,7 +1,11 @@
 import CoreAudio
 import Foundation
 
-final class AggregateDevice {
+/// Owns the private Aggregate Device combining the physical input and the
+/// virtual output. `@unchecked Sendable`: creation happens on the detached
+/// start task and teardown on the main actor, but never concurrently —
+/// `AppState.isBusy` serializes every operation that touches this object.
+final class AggregateDevice: @unchecked Sendable {
     private(set) var identifier = AudioObjectID(kAudioObjectUnknown)
 
     deinit {

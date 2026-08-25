@@ -83,9 +83,9 @@ impl std::fmt::Debug for SwitchingEngine {
     }
 }
 
-/// Longest supported fade half. Bounds the fade so [`ratio`] is exact
-/// arithmetic (`u16` → `f32` is lossless); ~1.37 s at 48 kHz, orders of
-/// magnitude above any sensible switch fade.
+/// Longest supported fade half. Bounds the fade so the internal gain
+/// arithmetic is exact (`u16` → `f32` is lossless); ~1.37 s at 48 kHz,
+/// orders of magnitude above any sensible switch fade.
 pub const MAX_FADE_SAMPLES: usize = u16::MAX as usize;
 
 impl SwitchingEngine {
