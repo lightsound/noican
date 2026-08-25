@@ -6,11 +6,16 @@
 //! minutes. `docs/tech-research.md` §4.2 makes an aggregate device with drift
 //! compensation the mandatory countermeasure, and this is it.
 //!
-//! Two details matter beyond simply creating one. The aggregate is marked
+//! Three details matter beyond simply creating one. The aggregate is marked
 //! private so it never shows up in Sound Settings — a user should not be able
-//! to select our plumbing as their microphone. And drift compensation is
-//! enabled on the *non-clock* sub-device only: the clock source defines the
-//! timeline, so asking it to compensate against itself is meaningless.
+//! to select our plumbing as their microphone. Drift compensation is enabled on
+//! the *non-clock* sub-device only: the clock source defines the timeline, so
+//! asking it to compensate against itself is meaningless.
+//!
+//! And creation **returns before the device works.** Opening an I/O proc on a
+//! freshly created aggregate delivers a stream of silent buffers with no error
+//! anywhere, so [`AggregateDevice::create`] waits for
+//! `kAudioDevicePropertyDeviceIsAlive` before handing the device back.
 
 /// A private aggregate device, destroyed when dropped.
 #[derive(Debug)]
@@ -36,6 +41,7 @@ impl AggregateDevice {
 #[cfg(target_os = "macos")]
 mod imp {
     use core::ffi::c_void;
+    use std::time::{Duration, Instant};
 
     use core_foundation::array::CFArray;
     use core_foundation::base::{CFType, TCFType};
@@ -46,7 +52,16 @@ mod imp {
 
     use super::AggregateDevice;
     use crate::error::{Error, Result, check};
-    use crate::sys::{self, AudioObjectId, DRIFT_COMPENSATION_MAX_QUALITY, aggregate_keys as keys};
+    use crate::sys::{
+        self, AudioObjectId, AudioObjectPropertyAddress, DRIFT_COMPENSATION_MAX_QUALITY,
+        aggregate_keys as keys,
+    };
+
+    /// How long to wait for a freshly created aggregate to report itself alive.
+    const ALIVE_TIMEOUT: Duration = Duration::from_secs(3);
+
+    /// How often to re-check while waiting.
+    const ALIVE_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
     /// Builds the sub-device dictionary for one member of the aggregate.
     fn sub_device(uid: &str, drift_compensation: bool) -> CFDictionary<CFString, CFType> {
@@ -133,11 +148,120 @@ mod imp {
             };
             check("creating the aggregate device", status)?;
 
-            tracing::info!(id, uid, clock_source_uid, follower_uid, "aggregate created");
-            Ok(Self {
+            let device = Self {
                 id,
                 uid: uid.to_owned(),
-            })
+            };
+            device.wait_until_alive()?;
+
+            tracing::info!(id, uid, clock_source_uid, follower_uid, "aggregate created");
+            Ok(device)
+        }
+
+        /// Blocks until the HAL reports the device alive.
+        ///
+        /// Creation returns before the device is usable. Opening an I/O proc
+        /// too early yields silent buffers and no error, so this has to be a
+        /// hard gate rather than a hopeful sleep.
+        fn wait_until_alive(&self) -> Result<()> {
+            let address = AudioObjectPropertyAddress::global(sys::DEVICE_IS_ALIVE);
+            let deadline = Instant::now() + ALIVE_TIMEOUT;
+            loop {
+                let mut alive: u32 = 0;
+                let mut size = u32::try_from(size_of::<u32>()).unwrap_or(4);
+                // SAFETY: `alive` has room for exactly `size` bytes.
+                let status = unsafe {
+                    sys::AudioObjectGetPropertyData(
+                        self.id,
+                        &raw const address,
+                        0,
+                        core::ptr::null(),
+                        &raw mut size,
+                        (&raw mut alive).cast::<c_void>(),
+                    )
+                };
+                if status == 0 && alive != 0 {
+                    return Ok(());
+                }
+                if Instant::now() >= deadline {
+                    return Err(Error::UnsuitableDevice(format!(
+                        "the aggregate device `{}` never reported itself alive; an I/O proc \
+                         opened on it would deliver silence",
+                        self.uid
+                    )));
+                }
+                std::thread::sleep(ALIVE_POLL_INTERVAL);
+            }
+        }
+
+        /// Asks for 48 kHz and reports the rate the device actually settled on.
+        ///
+        /// Setting the nominal rate returns success before the change takes
+        /// effect, and a device may refuse the request outright, so the return
+        /// value is a read-back rather than the requested value. The caller
+        /// configures the engine from what came back: the resampler handles any
+        /// rational ratio, but only if it is told the truth about the host rate.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`Error::CoreAudio`] if the rate cannot be read at all.
+        pub fn negotiate_sample_rate(&self, preferred: u32) -> Result<u32> {
+            let address = AudioObjectPropertyAddress::global(sys::DEVICE_NOMINAL_SAMPLE_RATE);
+            let requested = f64::from(preferred);
+            // SAFETY: the property takes a `Float64`, which is what is passed.
+            let status = unsafe {
+                sys::AudioObjectSetPropertyData(
+                    self.id,
+                    &raw const address,
+                    0,
+                    core::ptr::null(),
+                    u32::try_from(size_of::<f64>()).unwrap_or(8),
+                    (&raw const requested).cast::<c_void>(),
+                )
+            };
+            if status != 0 {
+                tracing::debug!(
+                    status,
+                    preferred,
+                    "the aggregate refused the requested sample rate; using its own"
+                );
+            }
+
+            let mut actual = 0f64;
+            let mut size = u32::try_from(size_of::<f64>()).unwrap_or(8);
+            // SAFETY: `actual` has room for exactly `size` bytes. The device is
+            // not running I/O yet, which is what makes this read-back reliable.
+            let status = unsafe {
+                sys::AudioObjectGetPropertyData(
+                    self.id,
+                    &raw const address,
+                    0,
+                    core::ptr::null(),
+                    &raw mut size,
+                    (&raw mut actual).cast::<c_void>(),
+                )
+            };
+            check("reading the aggregate's sample rate", status)?;
+
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a nominal sample rate is a small positive integer"
+            )]
+            let actual = actual.round() as u32;
+            if actual == 0 {
+                return Err(Error::UnsuitableDevice(
+                    "the aggregate device reports a sample rate of zero".to_owned(),
+                ));
+            }
+            if actual != preferred {
+                tracing::warn!(
+                    preferred,
+                    actual,
+                    "running at the device's rate rather than the preferred one"
+                );
+            }
+            Ok(actual)
         }
     }
 
@@ -174,6 +298,15 @@ mod imp {
             _clock_source_uid: &str,
             _follower_uid: &str,
         ) -> Result<Self> {
+            Err(Error::Unsupported)
+        }
+
+        /// Asks for `preferred` and reports the rate the device settled on.
+        ///
+        /// # Errors
+        ///
+        /// Always returns [`Error::Unsupported`] away from macOS.
+        pub const fn negotiate_sample_rate(&self, _preferred: u32) -> Result<u32> {
             Err(Error::Unsupported)
         }
     }

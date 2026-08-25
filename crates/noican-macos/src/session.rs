@@ -113,17 +113,29 @@ impl Session {
     pub fn start(config: SessionConfig, stage: Box<dyn Stage>) -> Result<Self> {
         config.validate()?;
 
-        let mut engine = Engine::new(config.engine)?;
-        let bridge = engine.start(stage)?;
-
-        // The microphone is the clock source: its rate is the one we cannot
-        // influence, so the virtual device is the one that has to follow.
+        // The aggregate comes first, because the rate it settles on decides how
+        // the engine has to be configured. The microphone is the clock source:
+        // its rate is the one we cannot influence, so the virtual device is the
+        // one that has to follow.
         let aggregate = AggregateDevice::create(
             AGGREGATE_NAME,
             &aggregate::default_uid(),
             &config.input_uid,
             &config.output_uid,
         )?;
+
+        // Ask for the host rate but believe the answer. Telling the engine
+        // 48 kHz while the device runs at 44.1 would not fail anywhere — it
+        // would just transpose everything by a semitone, which is the kind of
+        // bug that gets blamed on the model.
+        let sample_rate = aggregate.negotiate_sample_rate(config.engine.sample_rate)?;
+        let engine_config = EngineConfig {
+            sample_rate,
+            ..config.engine
+        };
+
+        let mut engine = Engine::new(engine_config)?;
+        let bridge = engine.start(stage)?;
 
         let stream = IoStream::start(aggregate.id(), bridge, config.stream.into())?;
 
@@ -133,6 +145,14 @@ impl Session {
             engine,
             config,
         })
+    }
+
+    /// The sample rate the engine is actually running at.
+    ///
+    /// May differ from the requested rate if the device refused it.
+    #[must_use]
+    pub const fn sample_rate(&self) -> u32 {
+        self.engine.config().sample_rate
     }
 
     /// The configuration this session was started with.
