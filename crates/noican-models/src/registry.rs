@@ -39,7 +39,7 @@ pub enum ModelId {
 }
 
 impl ModelId {
-    /// Stable catalog order used by `--all-models` and the menu picker.
+    /// Complete stable catalog order used by explicit `--all-models`.
     pub const ALL: [Self; 9] = [
         Self::FastEnhancerTiny,
         Self::FastEnhancerBase,
@@ -50,6 +50,18 @@ impl ModelId {
         Self::UlUnas,
         Self::Hush,
         Self::TseConvTasNet48k,
+    ];
+
+    /// Models accepted for Phase 0 without gated or legally ambiguous assets.
+    pub const PHASE_ZERO: [Self; 8] = [
+        Self::FastEnhancerTiny,
+        Self::FastEnhancerBase,
+        Self::FastEnhancerSmall,
+        Self::DpdfNet2HighResolution,
+        Self::DpdfNet8HighResolution,
+        Self::DeepFilterNet3,
+        Self::UlUnas,
+        Self::Hush,
     ];
 
     /// Stable machine-readable identifier.
@@ -264,5 +276,11 @@ mod tests {
             .filter(|model| model.requires_enrollment())
             .collect();
         assert_eq!(enrolled, [ModelId::TseConvTasNet48k]);
+    }
+
+    #[test]
+    fn phase_zero_excludes_gated_tse_assets() {
+        assert!(!ModelId::PHASE_ZERO.contains(&ModelId::TseConvTasNet48k));
+        assert_eq!(ModelId::PHASE_ZERO.len(), 8);
     }
 }

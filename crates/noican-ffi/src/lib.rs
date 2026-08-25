@@ -263,7 +263,7 @@ pub unsafe extern "C" fn noican_engine_last_error(
 /// Number of runtime-selectable models.
 #[unsafe(no_mangle)]
 pub const extern "C" fn noican_model_count() -> usize {
-    ModelId::ALL.len()
+    ModelId::PHASE_ZERO.len()
 }
 
 /// Copy a model slug by catalog index.
@@ -280,7 +280,7 @@ pub unsafe extern "C" fn noican_model_slug(
     buffer: *mut c_char,
     capacity: usize,
 ) -> usize {
-    ModelId::ALL
+    ModelId::PHASE_ZERO
         .get(index)
         .map_or(0, |model| copy_string(model.slug(), buffer, capacity))
 }
@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn catalog_is_available_without_a_handle() {
-        assert_eq!(noican_model_count(), ModelId::ALL.len());
+        assert_eq!(noican_model_count(), ModelId::PHASE_ZERO.len());
     }
 
     #[test]

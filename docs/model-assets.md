@@ -63,9 +63,9 @@ cargo run -- process input.wav \
   --embedding-json enrollment.json
 ```
 
-### Current upstream access blocker
+### Deferred experimental TSE assets
 
-As verified on 2026-08-25, both unauthenticated resolve URLs under `penta2himajin/tse-conv-tasnet-48k` return HTTP 401. The pinned revision and SHA-256 values are recoverable from an independent verified downloader and are built into noican, but the bytes could not be independently fetched in this cloud run. Therefore noican does not use trust-on-first-use or redistribute those files.
+As verified on 2026-08-25, both unauthenticated resolve URLs under `penta2himajin/tse-conv-tasnet-48k` return HTTP 401. The pinned revision and SHA-256 values are recoverable from an independent verified downloader and are built into noican, but the bytes could not be independently fetched in this cloud run. TSE is therefore excluded from Phase 0 defaults and acceptance. Its implementation remains available through explicit `--model tse-conv-tasnet-48k` or `--all-models`.
 
 To use assets obtained legitimately from the publisher:
 

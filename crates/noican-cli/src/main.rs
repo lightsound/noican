@@ -36,7 +36,7 @@ struct ProcessArgs {
     /// Model slug. Repeat the flag or separate values with commas.
     #[arg(long = "model", value_delimiter = ',')]
     models: Vec<ModelId>,
-    /// Process every catalog model. This is the default when --model is absent.
+    /// Process every catalog model, including experimental TSE.
     #[arg(long, conflicts_with = "models")]
     all_models: bool,
     /// Root directory for stable model-specific outputs.
@@ -76,7 +76,7 @@ struct FetchArgs {
     /// Model slug. Repeat the flag or separate values with commas.
     #[arg(long = "model", value_delimiter = ',')]
     models: Vec<ModelId>,
-    /// Fetch every catalog model.
+    /// Fetch every catalog model, including experimental TSE.
     #[arg(long, conflicts_with = "models")]
     all_models: bool,
     /// Also fetch the ECAPA enrollment graph and filterbank.
@@ -158,11 +158,13 @@ fn fetch_models(args: FetchArgs) -> Result<()> {
     Ok(())
 }
 
-fn selected_models(explicit: &[ModelId], _all: bool) -> Vec<ModelId> {
-    if explicit.is_empty() {
+fn selected_models(explicit: &[ModelId], all: bool) -> Vec<ModelId> {
+    if !explicit.is_empty() {
+        explicit.to_vec()
+    } else if all {
         ModelId::ALL.to_vec()
     } else {
-        explicit.to_vec()
+        ModelId::PHASE_ZERO.to_vec()
     }
 }
 

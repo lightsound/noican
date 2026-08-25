@@ -10,7 +10,7 @@ Phase 0 implementation:
 
 - [docs/tech-research.md](docs/tech-research.md) — consolidated technology research: candidate evaluation for every layer, final recommended stack, roadmap, and open questions.
 - Rust engine with a common fixed-frame model trait, sample-rate adaptation, lock-free replacement, and bounded mute transitions.
-- Real inference backends for FastEnhancer T/B/S, DPDFNet2/8 HR, DeepFilterNet3, UL-UNAS, Hush, and TSE Conv-TasNet.
+- Real inference backends for FastEnhancer T/B/S, DPDFNet2/8 HR, DeepFilterNet3, UL-UNAS, and Hush, plus an explicitly selected experimental TSE Conv-TasNet backend.
 - Reproducible multi-model WAV comparison CLI and checksum-verified model cache.
 - AUHAL transport, private Aggregate Device control, and a minimal SwiftUI `MenuBarExtra`.
 - [docs/model-assets.md](docs/model-assets.md) — model provenance, downloads, CLI comparison, and the current TSE access blocker.
@@ -25,7 +25,7 @@ cargo run -- process fixtures/sample-noisy.wav \
 dpdfnet2-48khz-hr,dpdfnet8-48khz-hr,deepfilternet3,ul-unas,hush
 ```
 
-Outputs and a deterministic `comparison.json` are written below `output/`.
+Outputs and a deterministic `comparison.json` are written below `output/`. With no model flags, the CLI uses the eight Phase 0 variants and excludes gated TSE assets.
 
 ## macOS app
 
