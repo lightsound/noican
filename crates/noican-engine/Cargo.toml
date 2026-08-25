@@ -11,3 +11,9 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+audioadapter-buffers = "5.2.0"
+crossbeam-queue = "0.3.13"
+rubato = "5.0.0"
+thiserror = "2.0.20"
