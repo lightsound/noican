@@ -31,6 +31,13 @@ pub struct RateAdapter {
     model_output: Vec<f32>,
 }
 
+struct ResamplerPair {
+    down: Option<Fft<f32>>,
+    up: Option<Fft<f32>>,
+    native_samples_per_quantum: usize,
+    conversion_delay: usize,
+}
+
 impl RateAdapter {
     /// Wrap a native stage with the shared pipeline contract.
     ///
@@ -42,8 +49,11 @@ impl RateAdapter {
         let native = stage.descriptor();
         validate_descriptor(native)?;
 
-        let (downsampler, upsampler, native_samples_per_quantum, conversion_delay) =
-            build_resamplers(native)?;
+        let resamplers = build_resamplers(native)?;
+        let downsampler = resamplers.down;
+        let upsampler = resamplers.up;
+        let native_samples_per_quantum = resamplers.native_samples_per_quantum;
+        let conversion_delay = resamplers.conversion_delay;
         let upsampler_input_samples = upsampler.as_ref().map_or(1, Resampler::input_frames_next);
         let converted_model_frame = scale_samples(
             native.frame_samples,
@@ -230,13 +240,16 @@ fn validate_descriptor(descriptor: StageDescriptor) -> Result<(), StageError> {
     Ok(())
 }
 
-fn build_resamplers(
-    descriptor: StageDescriptor,
-) -> Result<(Option<Fft<f32>>, Option<Fft<f32>>, usize, usize), StageError> {
+fn build_resamplers(descriptor: StageDescriptor) -> Result<ResamplerPair, StageError> {
     if descriptor.sample_rate == PIPELINE_SAMPLE_RATE {
-        return Ok((None, None, PIPELINE_FRAME_SAMPLES, 0));
+        return Ok(ResamplerPair {
+            down: None,
+            up: None,
+            native_samples_per_quantum: PIPELINE_FRAME_SAMPLES,
+            conversion_delay: 0,
+        });
     }
-    let mut down = Fft::<f32>::new(
+    let down = Fft::<f32>::new(
         usize::try_from(PIPELINE_SAMPLE_RATE)
             .map_err(|error| invalid_config(descriptor, &error.to_string()))?,
         usize::try_from(descriptor.sample_rate)
@@ -278,7 +291,12 @@ fn build_resamplers(
     let conversion_delay = down_delay
         .checked_add(up.output_delay())
         .ok_or_else(|| invalid_config(descriptor, "resampler delay overflow"))?;
-    Ok((Some(down), Some(up), native_samples, conversion_delay))
+    Ok(ResamplerPair {
+        down: Some(down),
+        up: Some(up),
+        native_samples_per_quantum: native_samples,
+        conversion_delay,
+    })
 }
 
 fn startup_quanta(
