@@ -458,7 +458,6 @@ dependencies = [
  "hound",
  "noican-core",
  "noican-models",
- "tracing",
  "tracing-subscriber",
 ]
 
