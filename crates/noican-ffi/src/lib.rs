@@ -45,7 +45,7 @@ pub unsafe extern "C" fn noican_engine_create(model_directory: *const c_char) ->
     } else {
         let path = match unsafe { CStr::from_ptr(model_directory) }.to_str() {
             Ok(path) if !path.is_empty() => PathBuf::from(path),
-            Ok(_empty) | Err(_error) => return ptr::null_mut(),
+            Ok(_) | Err(_) => return ptr::null_mut(),
         };
         ModelStore::new(path)
     };
@@ -89,38 +89,38 @@ pub unsafe extern "C" fn noican_engine_start(
         Ok(model) => model,
         Err(error) => return set_error(handle, error),
     };
-    let mut state = match handle.state.lock() {
-        Ok(state) => state,
+    let mut control = match handle.state.lock() {
+        Ok(control) => control,
         Err(error) => return set_error(handle, format!("control state is poisoned: {error}")),
     };
-    if let Some(mut runtime) = state.runtime.take() {
+    if let Some(mut runtime) = control.runtime.take() {
         runtime.stop();
     }
-    state.publisher = None;
-    let stage = match prepare_stage(&state.store, model) {
-        Ok(stage) => stage,
+    control.publisher = None;
+    let prepared = match prepare_stage(&control.store, model) {
+        Ok(prepared) => prepared,
         Err(error) => {
-            state.last_error = error;
+            control.last_error = error;
             return FAILURE;
         }
     };
-    let (publisher, engine) = match SwitchingEngine::new(stage, SWITCH_FADE_SAMPLES) {
+    let (publisher, engine) = match SwitchingEngine::new(prepared, SWITCH_FADE_SAMPLES) {
         Ok(value) => value,
         Err(error) => {
-            state.last_error = error.to_string();
+            control.last_error = error.to_string();
             return FAILURE;
         }
     };
     match Runtime::start(aggregate_device, engine) {
         Ok(runtime) => {
-            state.runtime = Some(runtime);
-            state.publisher = Some(publisher);
-            state.active_model = Some(model);
-            state.last_error.clear();
+            control.runtime = Some(runtime);
+            control.publisher = Some(publisher);
+            control.active_model = Some(model);
+            control.last_error.clear();
             SUCCESS
         }
         Err(error) => {
-            state.last_error = error.to_string();
+            control.last_error = error.to_string();
             FAILURE
         }
     }
@@ -155,29 +155,29 @@ pub unsafe extern "C" fn noican_engine_set_model(
         Ok(model) => model,
         Err(error) => return set_error(handle, error),
     };
-    let mut state = match handle.state.lock() {
-        Ok(state) => state,
+    let mut control = match handle.state.lock() {
+        Ok(control) => control,
         Err(error) => return set_error(handle, format!("control state is poisoned: {error}")),
     };
-    let stage = match prepare_stage(&state.store, model) {
-        Ok(stage) => stage,
+    let prepared = match prepare_stage(&control.store, model) {
+        Ok(prepared) => prepared,
         Err(error) => {
-            state.last_error = error;
+            control.last_error = error;
             return FAILURE;
         }
     };
-    let Some(publisher) = &state.publisher else {
-        state.last_error = "engine is not running".to_owned();
+    let Some(publisher) = &control.publisher else {
+        control.last_error = "engine is not running".to_owned();
         return FAILURE;
     };
-    match publisher.publish(stage) {
+    match publisher.publish(prepared) {
         Ok(_superseded) => {
-            state.active_model = Some(model);
-            state.last_error.clear();
+            control.active_model = Some(model);
+            control.last_error.clear();
             SUCCESS
         }
         Err(error) => {
-            state.last_error = error.to_string();
+            control.last_error = error.to_string();
             FAILURE
         }
     }
@@ -265,7 +265,7 @@ fn parse_model(model_slug: *const c_char) -> Result<ModelId, String> {
     let slug = unsafe { CStr::from_ptr(model_slug) }
         .to_str()
         .map_err(|error| format!("model slug is not UTF-8: {error}"))?;
-    slug.parse().map_err(|error| error.to_string())
+    slug.parse::<ModelId>().map_err(|error| error.to_string())
 }
 
 fn set_error(handle: &EngineHandle, error: String) -> i32 {
