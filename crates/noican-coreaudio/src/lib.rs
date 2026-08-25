@@ -47,7 +47,7 @@ impl Runtime {
     }
 
     /// No-op portable shutdown.
-    pub fn stop(&mut self) {}
+    pub const fn stop(&mut self) {}
 
     /// Portable builds never run an audio device.
     #[must_use]
