@@ -1,0 +1,9 @@
+/target/
+/models/
+/output/
+*.wav
+!.github/
+!fixtures/**/*.wav
+.DS_Store
+.swiftpm/
+DerivedData/

@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  rust:
+    name: Rust quality gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.83.0
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-machete
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Lint all targets and features
+        run: cargo clippy --workspace --all-targets --all-features --locked
+      - name: Run tests
+        run: cargo test --workspace --all-features --locked
+      - name: Audit licenses, advisories, dependencies, and sources
+        run: cargo deny --locked check
+      - name: Reject unused dependencies
+        run: cargo machete
