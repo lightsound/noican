@@ -47,6 +47,10 @@ def verify_wav(path: Path, expected_samples: int) -> None:
         audio_format, channels, sample_rate, _, _, bits = struct.unpack(
             "<HHIIHH", format_chunk[:16]
         )
+        if audio_format == 0xFFFE:
+            if len(format_chunk) < 40:
+                raise ValueError(f"{path}: truncated WAVE_FORMAT_EXTENSIBLE chunk")
+            audio_format = struct.unpack_from("<H", format_chunk, 24)[0]
         expected = (3, 1, 48_000, 32)
         actual = (audio_format, channels, sample_rate, bits)
         if actual != expected:
