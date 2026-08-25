@@ -179,7 +179,24 @@ Every shipped stage was checked against an independent reference before being tr
 | DeepFilterNet3 | **Not shipped** | See below |
 | Hush | Not yet implemented | Needs the three-graph front-end (below), so it lands with it |
 
-**DeepFilterNet3.** The third-party single-graph export (`penta2himajin/deepfilternet3-onnx`) is attractive because it threads recurrent state explicitly and applies the ERB mask and deep filter inside the graph — but it could not be driven correctly. Sixteen combinations of the documented feature-pipeline choices were tried (spectrum scaled by `2·hop/n_fft²` or unscaled; ERB feature in power-dB or magnitude-dB; unit normalisation over magnitude or power; normalisation history seeded from the reference's ramps or from zero) and **every one attenuates the speech band by 2–13 dB on real 48 kHz speech**, where DPDFNet is transparent to 0.2 dB on the same input. The export is undocumented and by the same author as the withdrawn `tse-conv-tasnet-48k`, so rather than ship a baseline that is quietly wrong, DeepFilterNet3 waits for the **official three-graph export** (`enc` / `erb_dec` / `df_dec` plus `config.ini`) — which is the same format Hush ships, so one front-end serves both. That front-end has to implement the ERB mask interpolation and the order-5 complex deep filter outside the graph, and work around the missing recurrent-state I/O.
+**The `DeepFilterNet` family does not work yet, and the reason is the feature front-end.** Two independent exports were tried and both fail the same way, which localises the problem to our derivation of the features rather than to either export.
+
+*The single-graph export* (`penta2himajin/deepfilternet3-onnx`) is attractive because it threads recurrent state explicitly and applies the ERB mask and deep filter inside the graph. Sixteen combinations of the documented feature-pipeline choices were tried (spectrum scaled by `2·hop/n_fft²` or unscaled; ERB feature in power-dB or magnitude-dB; unit normalisation over magnitude or power; normalisation history seeded from the reference's ramps or from zero) and **every one attenuates the speech band by 2–13 dB on real 48 kHz speech**, where DPDFNet is transparent to 0.2 dB on the same input.
+
+*The three-graph export* (`enc` / `erb_dec` / `df_dec` plus `config.ini`, which is what Hush ships and what `DeepFilterNet` publishes officially) was then implemented end to end against Hush at 16 kHz, where a clean/noisy pair makes the result measurable. It improves SI-SDR on the noisy input by 3.1 dB — so it is not garbage — but it attenuates *clean* speech by 11–16 dB across the band, which a denoiser must not do. Isolating the stages shows the ERB mask alone accounts for about 9.5 dB of it: its mean value over a clean recording is 0.336, meaning the encoder is being told the speech is noise.
+
+What that investigation did establish, so the next attempt need not rediscover it:
+
+| Question | Answer |
+|---|---|
+| Deep-filter coefficient layout | `coefs` of shape `[1, S, nb_df, df_order·2]` reshapes to `[S, nb_df, df_order, 2]` — complex on the **last** axis. The three alternatives are 6–16 dB worse |
+| Deep-filter tap order | Coefficient index 0 pairs with the **oldest** frame in the window and index `df_order − 1` with the current one. Reversing it costs 17 dB |
+| Stage order | ERB mask over the whole spectrum first, then the deep filter **replacing** the first `nb_df` bins, computed from the *noisy* spectrum rather than the masked one |
+| `enc`'s `feat_spec` layout | `[1, 2, S, nb_df]` — real and imaginary as separate **channels**, not interleaved on a trailing axis. This differs from the single-graph export, which wants `[1, 1, S, nb_df, 2]` |
+| Is `lsnr` gating the missing piece? | **No.** The reference skips processing entirely when the local SNR estimate exceeds `max_db_erb_thresh` (35 dB by default), which would explain transparency on clean input — but the measured `lsnr` on real speech spans −12 to +15 dB, so the gate never fires and the reference would apply both stages exactly as we do |
+| Where the remaining error is | In `feat_erb`, `feat_spec`, or the analysis scaling — the three things both exports share. The encoder's outputs are numerically plausible (embeddings in the ±4 range, `lsnr` in a believable ±15 dB), so the features are wrong in a subtle way rather than grossly malformed |
+
+Rather than ship a baseline that is quietly wrong, both `DeepFilterNet3` and Hush wait until the feature front-end is verified against a known-good reference output — the most direct route being to run the upstream `deepFilter` binary on a file and match it frame by frame.
 
 **Methodology rule that came out of this: evaluate a 48 kHz model on genuinely 48 kHz material.** FastEnhancer attenuates the speech band by 4–16 dB when fed 16 kHz speech upsampled to 48 kHz — a signal with a brick wall at 7.2 kHz and nothing above it — and is within 0.3 dB of transparent on a real 48 kHz recording. Upsampled 16 kHz test files will therefore rank the 48 kHz models below the 16 kHz ones for a reason that has nothing to do with how they will sound in a meeting.
 
@@ -389,7 +406,7 @@ Exit criteria: the virtual device is selectable in Zoom and usable daily, and th
 ### Phase 1 — Own the device + differentiator
 
 - Build, sign, and install the renamed BlackHole fork (joycast.driver pattern).
-- Implement the `DeepFilterNet` three-graph front-end (ERB mask interpolation plus the order-5 complex deep filter, outside the graph), which brings in both the official DeepFilterNet3 baseline and Hush (§5.5).
+- Finish the `DeepFilterNet` feature front-end, which brings in both the DeepFilterNet3 baseline and Hush. The mask application and deep filter are already pinned down; what is left is verifying `feat_erb`, `feat_spec`, and the analysis scaling against a known-good reference output rather than against the source's prose (§5.5).
 - Promote Hush from a block stage to a streaming one by re-exporting its graphs with recurrent state as explicit I/O (§5.4).
 - Add the DIY VAD + ECAPA-TDNN gate of §6.2 as the enrollment-based option, now that `tse-conv-tasnet-48k` has been withdrawn.
 
