@@ -43,6 +43,10 @@ disabled_rules:
   - closure_body_length
   # `@Observable` generates the initialisers this rule wants written by hand.
   - explicit_init
+  # Demands an explicit `deinit` on every class. The one class here that owns a
+  # resource has one; adding an empty `deinit` to a plain value holder is the
+  # kind of noise this rule is meant to prevent.
+  - required_deinit
   # Would forbid the `guard let x else { return }` shorthand this code relies on.
   - prefer_nimble
   - no_magic_numbers
