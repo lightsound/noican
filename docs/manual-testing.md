@@ -1,9 +1,14 @@
 # Manual testing on a Mac
 
-Everything below needs hardware. None of it has been run: the CI machines have
-no audio devices, no microphone permission, and no way to hear the result, so
-what CI proves about this code is that it compiles, links, and signs — not that
-it works. Treat every step as unverified until you have done it.
+Everything below needs hardware. None of it has been run.
+
+What CI does establish, on a macOS runner: the Core Audio code compiles and
+lints with the platform paths actually enabled, the Swift app compiles, the two
+link together against ONNX Runtime, the bundle is assembled and signed, and its
+`Info.plist` carries `LSUIElement` and `NSMicrophoneUsageDescription`. That is
+all it can establish — the runner has no audio devices, no microphone
+permission, and no way to hear anything. **Treat every step below as unverified
+until you have done it.**
 
 Work through the steps in order; each one narrows down where a failure is.
 
