@@ -249,7 +249,15 @@ Known tuning risk (from design1): gate fade time constant — too short clips th
 
 ### 6.4 Decision
 
-Ship **Hush (16 k, no enrollment)** as a selectable stage and compare it in live use against the plain NS models. The enrollment-based alternative is now the DIY gate of §6.2 rather than tse-conv-tasnet-48k, which has been withdrawn from Hugging Face (§5.4); the ECAPA-TDNN embedding it needed is still published and is what the gate uses. Combining remains possible and is the likely end state (e.g. FastEnhancer 48 k for NS followed by a gate for speakers), which is another reason the pipeline is a chain of interchangeable stages rather than a single model slot.
+Ship **Hush (16 k, no enrollment)** as a selectable stage and compare it in live use against the plain NS models. Done, and verified against `DeepFilterNet`'s own runtime (§5.5). Combining remains possible and is the likely end state (e.g. FastEnhancer 48 k for NS followed by a gate for speakers), which is another reason the pipeline is a chain of interchangeable stages rather than a single model slot.
+
+The enrollment-based alternative is the DIY gate of §6.2, since tse-conv-tasnet-48k has been withdrawn from Hugging Face (§5.4). **It is not implemented, and the reason is worth recording: the ECAPA-TDNN embedding it depends on could not be verified.**
+
+The published export (`penta2himajin/ecapa-tdnn-onnx`) takes `[batch, frames, 80]` log-mel features and documents nothing about how to compute them. Forty variants were tried — Hamming, Hann and Povey windows; magnitude and power spectra; natural-log and decibel scaling; Kaldi framing with and without pre-emphasis, DC removal, and the 20 Hz–7.6 kHz band; two amplitude scales; per-utterance mean and mean-variance normalisation — scored by whether embeddings of the same speaker sit closer than embeddings of different speakers across three speakers split into halves.
+
+The best result separates the *means* usefully (same-speaker cosine 0.69, different-speaker 0.27) but **no variant achieved a positive worst-case margin**: the closest different-speaker pair always beat the furthest same-speaker pair. Published ECAPA on VoxCeleb separates roughly 0.8 against 0.1, so the front-end is close but still wrong, and the amplitude scale turned out not to matter at all — the graph normalises its own input, which rules out a whole family of candidate explanations.
+
+Building a gate on top of that would be building on an unverified front-end, and §5.5 records what that costs. The next attempt should get a reference first, as that section's investigation eventually did: **use sherpa-onnx's speaker-embedding path, whose front-end is `kaldi-native-fbank` with documented parameters and whose output can be diffed directly.** That is a dependency decision this document has not yet made, which is the honest reason it is not in this phase.
 
 ---
 
@@ -452,6 +460,7 @@ Historical note: PR #2 introduced `fallow` + ImportLint for TypeScript/JavaScrip
 1. Which model wins in live use. No longer a blocking question: the engine ships every candidate and switches between them at run time (§12), so this is answered continuously rather than once.
 2. Hush's behavior when the background speaker is *louder* than the user (trained at 12–24 dB SIR below primary).
 3. Whether the `DeepFilterNet`-family exports can be re-exported with their recurrent state as explicit graph I/O. That is the only thing between Hush and the live path, and Hush is the only speaker-suppression model available (§5.5).
+4. Which speaker-embedding model to build the enrollment gate on. The published ECAPA-TDNN export's feature front-end could not be verified against anything, and forty variants failed to separate speakers reliably (§6.4). Adopting sherpa-onnx would supply both a documented front-end and a reference to diff against, at the cost of a second inference runtime.
 4. Long-session (2 h+) stability of aggregate-device drift compensation.
 5. DIY gate fade time constant (if the DIY route is needed): onset clipping vs. interferer leakage.
 6. How meeting apps treat the virtual device's reported latency/safety offsets (BlackHole reports zero).
