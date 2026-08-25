@@ -62,3 +62,19 @@ jobs:
         with:
           tool: cargo-machete
       - run: cargo machete
+
+  macos-build:
+    name: macOS build (engine + menu-bar app)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Build Rust FFI library
+        run: cargo build --release -p noican-ffi --locked
+      - name: Build SwiftUI app
+        run: swift build -c release --package-path app
+      - name: Assemble app bundle
+        run: ./scripts/build-macos-app.sh
