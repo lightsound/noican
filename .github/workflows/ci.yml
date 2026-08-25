@@ -31,6 +31,20 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features --locked
       - name: Run tests
         run: cargo test --workspace --all-features --locked
+      - name: Cache checksum-verified public model assets
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/noican-model-cache
+          key: noican-models-${{ runner.os }}-${{ hashFiles('crates/noican-models/src/assets.rs') }}
+      - name: Run public-model WAV inference smoke test
+        run: |
+          cargo run --locked -- process fixtures/sample-noisy.wav \
+            --model fastenhancer-t,fastenhancer-b,fastenhancer-s,dpdfnet2-48khz-hr,dpdfnet8-48khz-hr,deepfilternet3,ul-unas,hush \
+            --model-dir "${RUNNER_TEMP}/noican-model-cache" \
+            --output-dir "${RUNNER_TEMP}/noican-output"
+          python3 scripts/verify-comparison.py \
+            "${RUNNER_TEMP}/noican-output/sample-noisy-e5149090/comparison.json" \
+            --expect fastenhancer-t,fastenhancer-b,fastenhancer-s,dpdfnet2-48khz-hr,dpdfnet8-48khz-hr,deepfilternet3,ul-unas,hush
       - name: Audit licenses, advisories, dependencies, and sources
         run: cargo deny --locked check
       - name: Reject unused dependencies
