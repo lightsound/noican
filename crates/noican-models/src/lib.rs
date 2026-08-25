@@ -16,13 +16,16 @@
 //! ```
 
 pub mod catalog;
+pub mod dfn;
 pub mod error;
 pub mod latency;
 pub mod session;
 pub mod stages;
 pub mod store;
 
-pub use catalog::{Architecture, Artifact, CATALOG, ModelDescriptor, ModelKind, SpectralParams};
+pub use catalog::{
+    Architecture, Artifact, ArtifactKind, CATALOG, ModelDescriptor, ModelKind, SpectralParams,
+};
 pub use error::{Error, Result};
 pub use store::{MODEL_DIR_ENV, ModelStore, Progress};
 
@@ -37,8 +40,14 @@ use noican_core::Stage;
 /// [`Error::UnexpectedSignature`] if the graph does not match the signature its
 /// architecture implies.
 pub fn build_stage(model: &ModelDescriptor, store: &ModelStore) -> Result<Box<dyn Stage>> {
-    let path = store.require(model)?;
     let latency = latency::of(model.id);
+    // A bundle is required as a directory rather than a file, so the plain
+    // presence check only applies to single-graph models.
+    let path = if model.architecture == Architecture::DeepFilterNet {
+        std::path::PathBuf::new()
+    } else {
+        store.require(model)?
+    };
 
     let stage: Box<dyn Stage> = match model.architecture {
         Architecture::Waveform => Box::new(stages::WaveformStage::load(
@@ -57,6 +66,12 @@ pub fn build_stage(model: &ModelDescriptor, store: &ModelStore) -> Result<Box<dy
             params,
             latency,
         )?),
+        Architecture::DeepFilterNet => {
+            let directory = store.require_bundle(model)?;
+            Box::new(stages::DeepFilterNetStage::load(
+                model.id, &directory, latency,
+            )?)
+        }
     };
     Ok(stage)
 }

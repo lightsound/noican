@@ -85,6 +85,17 @@ static MEASURED: &[Entry] = &[
         id: "ul-unas",
         samples: 256,
     },
+    // The DeepFilterNet family emits the frame `lookahead` behind the newest,
+    // plus the hop our own transform costs. DeepFilterNet3 declares two frames
+    // of lookahead, Hush none.
+    Entry {
+        id: "deepfilternet3",
+        samples: 1_440,
+    },
+    Entry {
+        id: "hush",
+        samples: 160,
+    },
 ];
 
 /// The measured algorithmic delay of `model_id`, in samples at its native rate.

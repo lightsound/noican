@@ -71,6 +71,27 @@ pub enum Architecture {
     /// Used by GTCRN and UL-UNAS, which share an I/O signature but were trained
     /// with different windows.
     Spectral(SpectralParams),
+
+    /// A three-graph `DeepFilterNet` bundle: an encoder, an ERB-mask decoder,
+    /// and a deep-filter decoder, plus a `config.ini` giving every parameter.
+    ///
+    /// Everything outside those graphs is ours: the transform, the ERB and
+    /// complex features, the mask interpolation, and the deep filter itself.
+    DeepFilterNet,
+}
+
+/// What a downloaded file is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtifactKind {
+    /// A single ONNX graph, used as downloaded.
+    Graph,
+    /// A gzipped tar holding several graphs and a `config.ini`, which has to be
+    /// unpacked before use.
+    ///
+    /// Paths inside are flattened to their file names: the two published bundles
+    /// disagree about whether the files sit at the root or under a directory,
+    /// and nothing downstream cares.
+    Bundle,
 }
 
 /// One file a model needs on disk.
@@ -82,6 +103,8 @@ pub struct Artifact {
     pub url: &'static str,
     /// Lowercase hex SHA-256 of the expected contents.
     pub sha256: &'static str,
+    /// Whether the file is used as-is or unpacked.
+    pub kind: ArtifactKind,
 }
 
 /// Everything needed to describe, fetch, and instantiate one model.
@@ -135,6 +158,7 @@ macro_rules! fastenhancer {
                     ".onnx"
                 ),
                 sha256: $sha,
+                kind: ArtifactKind::Graph,
             }],
         }
     };
@@ -161,6 +185,7 @@ macro_rules! dpdfnet {
                     ".onnx"
                 ),
                 sha256: $sha,
+                kind: ArtifactKind::Graph,
             }],
         }
     };
@@ -259,6 +284,7 @@ pub static CATALOG: &[ModelDescriptor] = &[
             url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/\
                   speech-enhancement-models/gtcrn_simple.onnx",
             sha256: "e77603ac0c23dac3227dd2d7135b3a585cbee2679048aecfa886657d3ae1b534",
+            kind: ArtifactKind::Graph,
         }],
     },
     ModelDescriptor {
@@ -283,6 +309,51 @@ pub static CATALOG: &[ModelDescriptor] = &[
                   a2d77c933ea17bc17dbc9ad5c942c857d0d8e9ee/ulunas_onnx/onnx_models/\
                   ulunas_stream_simple.onnx",
             sha256: "f2e804d54d6a88f4f82f44d86c9f1cf646db2509bfca935cfbfc5fcd8cbfac3b",
+            kind: ArtifactKind::Graph,
+        }],
+    },
+    ModelDescriptor {
+        id: "deepfilternet3",
+        display_name: "DeepFilterNet3 (48 kHz)",
+        kind: ModelKind::NoiseSuppression,
+        architecture: Architecture::DeepFilterNet,
+        sample_rate: 48_000,
+        license: "MIT OR Apache-2.0",
+        source: "https://github.com/Rikorose/DeepFilterNet (models/DeepFilterNet3_onnx.tar.gz)",
+        notes: "The historical baseline and the reference row in comparisons. Runs as a block \
+                stage: its published graphs take no recurrent state, so they cannot be driven \
+                frame by frame (see docs/tech-research.md §5.5).",
+        artifacts: &[Artifact {
+            file_name: "DeepFilterNet3_onnx.tar.gz",
+            // Pinned to a commit: the bundle lives in the repository tree rather
+            // than a release, so a branch URL would not be reproducible.
+            url: "https://raw.githubusercontent.com/Rikorose/DeepFilterNet/\
+                  d375b2d8309e0935d165700c91da9de862a99c31/models/DeepFilterNet3_onnx.tar.gz",
+            sha256: "c94d91f70911001c946e0fabb4aa9adc37045f45a03b56008cb0c8244cb63616",
+            kind: ArtifactKind::Bundle,
+        }],
+    },
+    ModelDescriptor {
+        id: "hush",
+        display_name: "Hush (16 kHz, background speakers)",
+        kind: ModelKind::SpeakerSuppression,
+        architecture: Architecture::DeepFilterNet,
+        sample_rate: 16_000,
+        license: "Apache-2.0",
+        source: "https://huggingface.co/weya-ai/hush",
+        notes: "DeepFilterNet3 retrained with competing speakers, and the only model here that \
+                targets them. Needs no enrollment, but suppresses the quieter speaker, so it can \
+                fail when the interferer is louder. Attenuates heavily — around 14 dB even on \
+                clean speech, which is the model's own behaviour and was confirmed against its \
+                reference runtime. Also a block stage, for the same reason as DeepFilterNet3.",
+        artifacts: &[Artifact {
+            file_name: "hush_onnx.tar.gz",
+            // Pinned to a revision: `main` moves.
+            url: "https://huggingface.co/weya-ai/hush/resolve/\
+                  a55d932cbf6344d284ac985f21e7f6e5bc4d38a5/onnx/\
+                  advanced_dfnet16k_model_best_onnx.tar.gz",
+            sha256: "45632ccaa82b71bb743d6caa7c78e983fe2f2790a3af7f6ec48e6ed7ba085df6",
+            kind: ArtifactKind::Bundle,
         }],
     },
 ];
@@ -300,7 +371,7 @@ pub fn ids() -> impl Iterator<Item = &'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CATALOG, ModelKind, find, ids};
+    use super::{ArtifactKind, CATALOG, ModelKind, find, ids};
 
     #[test]
     fn ids_are_unique() {
@@ -351,12 +422,24 @@ mod tests {
                     model.id,
                     artifact.url
                 );
-                assert_eq!(
-                    std::path::Path::new(artifact.file_name).extension(),
-                    Some(std::ffi::OsStr::new("onnx")),
-                    "{} has a non-ONNX artifact",
-                    model.id
-                );
+                let name = std::path::Path::new(artifact.file_name);
+                let extension = name.extension().and_then(std::ffi::OsStr::to_str);
+                match artifact.kind {
+                    ArtifactKind::Graph => assert_eq!(
+                        extension,
+                        Some("onnx"),
+                        "{} declares a graph artifact that is not ONNX: {:?}",
+                        model.id,
+                        name
+                    ),
+                    ArtifactKind::Bundle => assert_eq!(
+                        extension,
+                        Some("gz"),
+                        "{} declares a bundle artifact that is not gzipped: {:?}",
+                        model.id,
+                        name
+                    ),
+                }
             }
         }
     }
