@@ -18,7 +18,9 @@ doc-valid-idents = [
     "JoyCast",
     "AUHAL",
     "SwiftUI",
+    "SwiftLint",
     "MenuBarExtra",
+    "QuickTime",
     "sherpa-onnx",
     "tse-conv-tasnet-48k",
 ]

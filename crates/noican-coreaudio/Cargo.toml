@@ -1,0 +1,15 @@
+[package]
+name = "noican-coreaudio"
+description = "AUHAL real-time transport between a private Aggregate Device and the noican engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+noican-core = { workspace = true }
+thiserror = { workspace = true }
+rtrb = { workspace = true }
+
+[lints]
+workspace = true
