@@ -10,7 +10,7 @@ use std::{
     sync::Arc,
 };
 
-use ndarray::Array3;
+use ndarray::{Array1, Array3};
 use ort::{session::Session, value::TensorRef};
 use rustfft::{num_complex::Complex32, Fft, FftPlanner};
 use thiserror::Error;
@@ -76,10 +76,13 @@ impl Ecapa {
         let frame_count = features.len() / MEL_BANDS;
         let features = Array3::from_shape_vec((1, frame_count, MEL_BANDS), features)
             .map_err(|error| EnrollmentError::Shape(error.to_string()))?;
+        let feature_lengths = Array1::from_vec(vec![1.0_f32]);
         let outputs = self
             .session
             .run(ort::inputs![
                 "features" => TensorRef::from_array_view(&features)
+                    .map_err(|error| EnrollmentError::Onnx(error.to_string()))?,
+                "feature_lens" => TensorRef::from_array_view(&feature_lengths)
                     .map_err(|error| EnrollmentError::Onnx(error.to_string()))?
             ])
             .map_err(|error| EnrollmentError::Onnx(error.to_string()))?;
