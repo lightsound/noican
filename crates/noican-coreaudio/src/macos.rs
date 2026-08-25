@@ -160,11 +160,141 @@ unsafe extern "C" {
     fn os_workgroup_leave(workgroup: *mut c_void, token: *mut WorkgroupJoinToken);
 }
 
+const DISPATCH_TIME_NOW: u64 = 0;
+
+#[link(name = "System")]
+unsafe extern "C" {
+    fn dispatch_semaphore_create(value: isize) -> *mut c_void;
+    fn dispatch_semaphore_signal(semaphore: *mut c_void) -> isize;
+    fn dispatch_semaphore_wait(semaphore: *mut c_void, timeout: u64) -> isize;
+    fn dispatch_time(when: u64, delta: i64) -> u64;
+    fn dispatch_release(object: *mut c_void);
+}
+
+/// Owned libdispatch semaphore. Wakes the inference worker when the render
+/// callback has produced samples, so the worker blocks between device
+/// callbacks instead of busy-spinning (`dispatch_semaphore_signal` is the
+/// mechanism Apple's audio-workgroup example uses from real-time threads:
+/// it never blocks or allocates).
+#[derive(Debug)]
+struct DispatchSemaphore(*mut c_void);
+
+// The semaphore handle is shared with the render callback and the worker
+// thread; libdispatch semaphores are internally thread-safe.
+unsafe impl Send for DispatchSemaphore {}
+unsafe impl Sync for DispatchSemaphore {}
+
+impl DispatchSemaphore {
+    fn new() -> Result<Self, CoreAudioError> {
+        let semaphore = unsafe { dispatch_semaphore_create(0) };
+        if semaphore.is_null() {
+            return Err(CoreAudioError::Worker(
+                "dispatch_semaphore_create returned null".to_owned(),
+            ));
+        }
+        Ok(Self(semaphore))
+    }
+
+    fn signal(&self) {
+        unsafe {
+            let _ignored = dispatch_semaphore_signal(self.0);
+        }
+    }
+
+    fn wait_ns(&self, timeout_ns: i64) {
+        unsafe {
+            let deadline = dispatch_time(DISPATCH_TIME_NOW, timeout_ns);
+            let _timed_out = dispatch_semaphore_wait(self.0, deadline);
+        }
+    }
+}
+
+impl Drop for DispatchSemaphore {
+    fn drop(&mut self) {
+        unsafe {
+            dispatch_release(self.0);
+        }
+    }
+}
+
+/// Owns the AUHAL instance during setup: uninitializes (when reached) and
+/// disposes it on any early error return. [`AuhalUnit::into_raw`] defuses
+/// the guard once the runtime takes over ownership.
+struct AuhalUnit {
+    unit: AudioUnit,
+    initialized: bool,
+}
+
+impl AuhalUnit {
+    fn create() -> Result<Self, CoreAudioError> {
+        create_auhal().map(|unit| Self {
+            unit,
+            initialized: false,
+        })
+    }
+
+    const fn raw(&self) -> AudioUnit {
+        self.unit
+    }
+
+    fn initialize(&mut self) -> Result<(), CoreAudioError> {
+        check_status(
+            unsafe { AudioUnitInitialize(self.unit) },
+            "AudioUnitInitialize",
+        )?;
+        self.initialized = true;
+        Ok(())
+    }
+
+    const fn into_raw(self) -> AudioUnit {
+        let unit = self.unit;
+        std::mem::forget(self);
+        unit
+    }
+}
+
+impl Drop for AuhalUnit {
+    fn drop(&mut self) {
+        unsafe {
+            if self.initialized {
+                let _ignored = AudioUnitUninitialize(self.unit);
+            }
+            let _ignored = AudioComponentInstanceDispose(self.unit);
+        }
+    }
+}
+
+/// Owns the heap-allocated [`CallbackContext`] during setup, reclaiming it
+/// on any early error return (safe because the audio unit is never started
+/// on those paths, so no callback can observe the pointer).
+struct ContextGuard(*mut CallbackContext);
+
+impl ContextGuard {
+    const fn raw(&self) -> *mut CallbackContext {
+        self.0
+    }
+
+    const fn into_raw(self) -> *mut CallbackContext {
+        let context = self.0;
+        std::mem::forget(self);
+        context
+    }
+}
+
+impl Drop for ContextGuard {
+    fn drop(&mut self) {
+        unsafe {
+            drop(Box::from_raw(self.0));
+        }
+    }
+}
+
 struct CallbackContext {
     unit: AudioUnit,
     input: Producer<f32>,
     output: Consumer<f32>,
     faulted: Arc<AtomicBool>,
+    samples_ready: Arc<DispatchSemaphore>,
 }
 
 /// Running AUHAL instance and inference worker.
@@ -174,6 +304,7 @@ pub struct Runtime {
     callback: usize,
     shutdown: Arc<AtomicBool>,
     faulted: Arc<AtomicBool>,
+    samples_ready: Arc<DispatchSemaphore>,
     worker: Option<JoinHandle<()>>,
     running: bool,
 }
@@ -188,34 +319,32 @@ impl Runtime {
     /// # Errors
     ///
     /// Returns [`CoreAudioError`] when AUHAL setup or worker startup fails.
+    /// Every error path releases the AUHAL instance, the callback context,
+    /// and the worker (RAII guards; nothing leaks on failed starts).
     pub fn start(aggregate_device: u32, engine: SwitchingEngine) -> Result<Self, CoreAudioError> {
-        let unit = create_auhal()?;
-        if let Err(error) = configure_auhal(unit, aggregate_device) {
-            unsafe {
-                let _ignored = AudioComponentInstanceDispose(unit);
-            }
-            return Err(error);
-        }
+        let samples_ready = Arc::new(DispatchSemaphore::new()?);
+        let mut unit = AuhalUnit::create()?;
+        configure_auhal(unit.raw(), aggregate_device)?;
 
         let (input_producer, input_consumer) = RingBuffer::new(RING_CAPACITY);
         let (output_producer, output_consumer) = RingBuffer::new(RING_CAPACITY);
         let faulted = Arc::new(AtomicBool::new(false));
-        let callback = Box::new(CallbackContext {
-            unit,
+        let context = ContextGuard(Box::into_raw(Box::new(CallbackContext {
+            unit: unit.raw(),
             input: input_producer,
             output: output_consumer,
             faulted: Arc::clone(&faulted),
-        });
-        let callback = Box::into_raw(callback);
+            samples_ready: Arc::clone(&samples_ready),
+        })));
         let callback_property = AudioUnitRenderCallback {
             callback: Some(render_callback),
-            context: callback.cast(),
+            context: context.raw().cast(),
         };
         let callback_size = size_u32::<AudioUnitRenderCallback>()?;
         check_status(
             unsafe {
                 AudioUnitSetProperty(
-                    unit,
+                    unit.raw(),
                     AUDIO_UNIT_PROPERTY_SET_RENDER_CALLBACK,
                     AUDIO_UNIT_SCOPE_INPUT,
                     OUTPUT_BUS,
@@ -225,12 +354,13 @@ impl Runtime {
             },
             "AudioUnitSetProperty(render callback)",
         )?;
-        check_status(unsafe { AudioUnitInitialize(unit) }, "AudioUnitInitialize")?;
+        unit.initialize()?;
 
-        let workgroup = audio_workgroup(unit)?;
+        let workgroup = audio_workgroup(unit.raw())?;
         let shutdown = Arc::new(AtomicBool::new(false));
         let worker_shutdown = Arc::clone(&shutdown);
         let worker_fault = Arc::clone(&faulted);
+        let worker_semaphore = Arc::clone(&samples_ready);
         let worker = thread::Builder::new()
             .name("noican-inference".to_owned())
             .spawn(move || {
@@ -240,29 +370,28 @@ impl Runtime {
                     output_producer,
                     &worker_shutdown,
                     &worker_fault,
+                    &worker_semaphore,
                     workgroup,
                 );
             })
             .map_err(|error| CoreAudioError::Worker(error.to_string()))?;
 
         if let Err(error) = check_status(
-            unsafe { AudioOutputUnitStart(unit) },
+            unsafe { AudioOutputUnitStart(unit.raw()) },
             "AudioOutputUnitStart",
         ) {
             shutdown.store(true, Ordering::Release);
+            samples_ready.signal();
             let _ignored = worker.join();
-            unsafe {
-                let _ignored = AudioUnitUninitialize(unit);
-                let _ignored = AudioComponentInstanceDispose(unit);
-                drop(Box::from_raw(callback));
-            }
+            // `unit` and `context` guards clean up on drop.
             return Err(error);
         }
         Ok(Self {
-            unit: unit as usize,
-            callback: callback as usize,
+            unit: unit.into_raw() as usize,
+            callback: context.into_raw() as usize,
             shutdown,
             faulted,
+            samples_ready,
             worker: Some(worker),
             running: true,
         })
@@ -278,6 +407,7 @@ impl Runtime {
             let _ignored = AudioOutputUnitStop(unit);
         }
         self.shutdown.store(true, Ordering::Release);
+        self.samples_ready.signal();
         if let Some(worker) = self.worker.take() {
             let _ignored = worker.join();
         }
@@ -430,12 +560,18 @@ fn audio_workgroup(unit: AudioUnit) -> Result<usize, CoreAudioError> {
     Ok(workgroup as usize)
 }
 
+/// Longest the worker sleeps waiting for the render callback's semaphore
+/// signal before re-checking the shutdown flag (a fraction of the ~5.3 ms
+/// device period at 256 frames / 48 kHz).
+const WORKER_WAIT_NS: i64 = 2_000_000;
+
 fn processing_loop(
     mut engine: SwitchingEngine,
     mut input: Consumer<f32>,
     mut output: Producer<f32>,
     shutdown: &Arc<AtomicBool>,
     faulted: &Arc<AtomicBool>,
+    samples_ready: &DispatchSemaphore,
     workgroup: usize,
 ) {
     let workgroup = workgroup as *mut c_void;
@@ -466,7 +602,11 @@ fn processing_loop(
                     position = 0;
                 }
             }
-            Err(_empty) => thread::yield_now(),
+            // Block until the render callback signals more input (or the
+            // timeout elapses, so shutdown is always noticed). Busy-spinning
+            // here would burn a core for the whole session and distort the
+            // os_workgroup's power/deadline balancing.
+            Err(_empty) => samples_ready.wait_ns(WORKER_WAIT_NS),
         }
     }
     if joined {
@@ -523,6 +663,8 @@ unsafe extern "C" fn render_callback(
     for sample in samples.iter().copied() {
         let _ignored = context.input.push(sample);
     }
+    // Wake the inference worker (never blocks; see DispatchSemaphore).
+    context.samples_ready.signal();
     for sample in samples {
         *sample = context.output.pop().unwrap_or(0.0);
     }
