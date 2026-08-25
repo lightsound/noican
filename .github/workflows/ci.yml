@@ -70,6 +70,37 @@ jobs:
       - uses: actions/checkout@v6
       - uses: bnjbvr/cargo-machete@main
 
+  end-to-end:
+    name: end-to-end (real models)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      # The two smallest models, one per ONNX signature: a waveform graph with
+      # its own transform, and a spectral graph driven by ours. Together they
+      # cover the whole inference path for 700 KB of download.
+      - name: Fetch models
+        run: cargo run --release -p noican-cli -- fetch fastenhancer-t gtcrn
+      - name: Verify checksums
+        run: cargo run --release -p noican-cli -- verify fastenhancer-t gtcrn
+      - name: Process a sample and check the outputs exist
+        run: |
+          cargo run --release -p noican-cli -- probe sample.wav --seconds 3
+          cargo run --release -p noican-cli -- process sample.wav \
+            -o out -m fastenhancer-t -m gtcrn
+          test -s out/sample/fastenhancer-t.wav
+          test -s out/sample/gtcrn.wav
+          test -s out/sample/00-reference-unprocessed.wav
+          cat out/sample/manifest.md
+      - name: Fail if the runner had to emit silence
+        run: |
+          if grep -qF 'output underruns.**' out/sample/manifest.md; then
+            echo "the runner underran; its priming estimate is wrong"
+            exit 1
+          fi
+
   macos:
     name: macOS build
     runs-on: macos-latest
