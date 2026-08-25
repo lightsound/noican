@@ -25,10 +25,10 @@ pub enum ModelAsset {
     DpdfNet2HighResolution,
     /// `DPDFNet8` high-resolution 48 kHz graph.
     DpdfNet8HighResolution,
+    /// `DeepFilterNet3` stateful streaming graph.
+    DeepFilterNet3,
     /// UL-UNAS 16 kHz simplified streaming graph.
     UlUnas,
-    /// Hush 16 kHz `DeepFilterNet` model bundle.
-    Hush,
     /// Target-speaker extraction graph.
     TseGraph,
     /// External data referenced by the TSE graph.
@@ -47,8 +47,8 @@ impl ModelAsset {
         Self::FastEnhancerSmall,
         Self::DpdfNet2HighResolution,
         Self::DpdfNet8HighResolution,
+        Self::DeepFilterNet3,
         Self::UlUnas,
-        Self::Hush,
         Self::TseGraph,
         Self::TseWeights,
         Self::Ecapa,
@@ -84,15 +84,15 @@ impl ModelAsset {
                 "https://huggingface.co/Ceva-IP/DPDFNet/resolve/dd6818d00f50c836fed43a6243ebe49116de5964/onnx/dpdfnet8_48khz_hr.onnx",
                 "7b3afbb260a08fe9af3d16e3bda992971be1e7e951d1dee7c2d235f5c43f5631",
             ),
+            Self::DeepFilterNet3 => AssetSpecification::verified(
+                "deepfilternet3/dfn3.onnx",
+                "https://huggingface.co/penta2himajin/deepfilternet3-onnx/resolve/daf50ae97dd051e8455570157cfe68fa69626eb1/dfn3.onnx",
+                "f5db932f221e54aeaaff8072fa9351f7ca1bae891dfc8980cedec0c6e1d408d8",
+            ),
             Self::UlUnas => AssetSpecification::verified(
                 "ul-unas/ulunas_stream_simple.onnx",
                 "https://raw.githubusercontent.com/Xiaobin-Rong/ul-unas/00f7c700da43d38347f30a6ccebd86fcbc798e07/ulunas_onnx/onnx_models/ulunas_stream_simple.onnx",
                 "f2e804d54d6a88f4f82f44d86c9f1cf646db2509bfca935cfbfc5fcd8cbfac3b",
-            ),
-            Self::Hush => AssetSpecification::verified(
-                "hush/advanced_dfnet16k_model_best_onnx.tar.gz",
-                "https://huggingface.co/weya-ai/hush/resolve/40812c28145510d8a4b14641bb58c879a7a7b4fe/onnx/advanced_dfnet16k_model_best_onnx.tar.gz",
-                "45632ccaa82b71bb743d6caa7c78e983fe2f2790a3af7f6ec48e6ed7ba085df6",
             ),
             Self::TseGraph => AssetSpecification::authenticated(
                 "tse/tse_prod_48k.onnx",

@@ -7,9 +7,10 @@ use thiserror::Error;
 
 use crate::{
     assets::{AssetError, FetchOptions, ModelAsset, ModelStore},
-    deep_filter::DeepFilterStage,
+    dfn3::DeepFilterNet3,
     dpdfnet::{DpdfNet, DpdfNetVariant},
     fastenhancer::{FastEnhancer, FastEnhancerVariant},
+    hush::Hush,
     tse::{Tse, EMBEDDING_DIMENSIONS},
     ul_unas::UlUnas,
 };
@@ -128,9 +129,9 @@ impl ModelId {
             Self::FastEnhancerSmall => &[ModelAsset::FastEnhancerSmall],
             Self::DpdfNet2HighResolution => &[ModelAsset::DpdfNet2HighResolution],
             Self::DpdfNet8HighResolution => &[ModelAsset::DpdfNet8HighResolution],
-            Self::DeepFilterNet3 => &[],
+            Self::DeepFilterNet3 => &[ModelAsset::DeepFilterNet3],
             Self::UlUnas => &[ModelAsset::UlUnas],
-            Self::Hush => &[ModelAsset::Hush],
+            Self::Hush => &[],
             Self::TseConvTasNet48k => &[ModelAsset::TseGraph, ModelAsset::TseWeights],
         }
     }
@@ -211,13 +212,13 @@ fn load_native_stage(request: &LoadRequest<'_>) -> Result<Box<dyn AudioStage>, M
                 .ensure(ModelAsset::DpdfNet8HighResolution, fetch)?,
             DpdfNetVariant::DpdfNet8,
         )?),
-        ModelId::DeepFilterNet3 => Box::new(DeepFilterStage::deep_filter_net3()?),
+        ModelId::DeepFilterNet3 => Box::new(DeepFilterNet3::load(
+            request.store.ensure(ModelAsset::DeepFilterNet3, fetch)?,
+        )?),
         ModelId::UlUnas => Box::new(UlUnas::load(
             request.store.ensure(ModelAsset::UlUnas, fetch)?,
         )?),
-        ModelId::Hush => Box::new(DeepFilterStage::hush(
-            request.store.ensure(ModelAsset::Hush, fetch)?,
-        )?),
+        ModelId::Hush => Box::new(Hush::load()?),
         ModelId::TseConvTasNet48k => {
             let embedding = request
                 .speaker_embedding

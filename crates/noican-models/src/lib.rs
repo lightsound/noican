@@ -1,11 +1,12 @@
 //! Inference backends and verified model assets for noican.
 
 pub mod assets;
-pub mod deep_filter;
+pub mod dfn3;
 pub mod dpdfnet;
 pub mod dsp;
 pub mod ecapa;
 pub mod fastenhancer;
+pub mod hush;
 pub mod registry;
 pub mod tse;
 pub mod ul_unas;
