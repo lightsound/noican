@@ -78,7 +78,7 @@ final class EngineController {
     private let defaults = UserDefaults.standard
     // `nonisolated(unsafe)` so `deinit`, which is not main-actor isolated, can
     // release it. The pointer is immutable and only ever passed back to Rust.
-    private nonisolated(unsafe) let engine: OpaquePointer?
+    nonisolated(unsafe) private let engine: OpaquePointer?
     private var refreshTask: Task<Void, Never>?
 
     init() {

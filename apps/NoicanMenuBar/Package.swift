@@ -31,6 +31,8 @@ let package = Package(
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("AudioToolbox"),
                 .linkedFramework("CoreFoundation"),
+                // ONNX Runtime, which the Rust engine statically links, is C++.
+                .linkedLibrary("c++"),
             ]
         ),
     ]
