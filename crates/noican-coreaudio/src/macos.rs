@@ -498,6 +498,10 @@ unsafe extern "C" fn render_callback(
         )
     };
     let buffer_list = unsafe { &mut *data };
+    if buffer_list.number_buffers == 0 {
+        context.faulted.store(true, Ordering::Release);
+        return PARAM_ERR;
+    }
     let buffer = &mut buffer_list.buffers[0];
     if buffer.data.is_null() {
         context.faulted.store(true, Ordering::Release);

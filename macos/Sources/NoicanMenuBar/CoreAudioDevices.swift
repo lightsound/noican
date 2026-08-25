@@ -50,8 +50,9 @@ enum AudioDeviceCatalog {
             guard device.outputChannels > 0 else {
                 return false
             }
-            let normalized = device.name.lowercased()
-            return normalized.contains("noican") || normalized.contains("blackhole")
+            let normalizedUID = device.uid.lowercased()
+            return device.uid == "BlackHole2ch_UID"
+                || normalizedUID.hasPrefix("com.lightsound.noican.")
         }
     }
 
