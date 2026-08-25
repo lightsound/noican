@@ -1,0 +1,52 @@
+# Same policy as the Rust side: everything starts as an error, and CI runs
+# `swiftlint --strict` so warnings fail too. Exceptions are listed here only
+# when a rule cannot be satisfied, with the reason next to it.
+
+included:
+  - apps/NoicanMenuBar/Sources
+
+excluded:
+  - apps/NoicanMenuBar/.build
+
+opt_in_rules:
+  - all
+
+disabled_rules:
+  # Contradicts `explicit_type_interface`, which is also in `all`: one wants the
+  # type written out, the other wants it inferred. `explicit_type_interface` is
+  # the one kept, so this has to go.
+  - redundant_type_annotation
+  # Requires a doc comment on every declaration including private helpers and
+  # trivial computed properties, which buries the comments that matter.
+  - missing_docs
+  # Wants every file to open with the same licence header; the licence lives in
+  # one place at the repository root instead.
+  - file_header
+  # Demands an explicit ACL on every declaration, including the many that are
+  # correctly internal.
+  - explicit_acl
+  - explicit_top_level_acl
+  # SwiftUI view bodies are declarative trees, and splitting them to satisfy a
+  # length limit makes them harder to read, not easier.
+  - closure_body_length
+  # `@Observable` generates the initialisers this rule wants written by hand.
+  - explicit_init
+  # Would forbid the `guard let x else { return }` shorthand this code relies on.
+  - prefer_nimble
+  - no_magic_numbers
+
+line_length:
+  warning: 100
+  error: 100
+  ignores_comments: false
+
+type_body_length:
+  warning: 320
+  error: 320
+
+file_length:
+  warning: 400
+  error: 400
+
+identifier_name:
+  min_length: 2

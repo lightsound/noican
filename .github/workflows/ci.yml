@@ -109,9 +109,35 @@ jobs:
       - name: Install toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      # The Core Audio code is compiled out on Linux, so this job is the only
+      # place it is checked at all.
       - name: Build the workspace
         run: cargo build --workspace --all-features
       - name: Lint the macOS-only code paths
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Test
         run: cargo test --workspace --all-features
+      - name: Build the menu bar app
+        run: ./apps/NoicanMenuBar/build.sh release
+      - name: Check the bundle is complete
+        run: |
+          BUNDLE=apps/NoicanMenuBar/.build/NoicanMenuBar.app
+          test -x "$BUNDLE/Contents/MacOS/NoicanMenuBar"
+          test -f "$BUNDLE/Contents/Info.plist"
+          # Without LSUIElement the app takes a Dock icon; without the usage
+          # description the microphone prompt never appears and capture
+          # silently returns zeros.
+          /usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' \
+            "$BUNDLE/Contents/Info.plist"
+          codesign --verify --verbose "$BUNDLE"
+
+  swiftlint:
+    name: SwiftLint
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install SwiftLint
+        run: brew install swiftlint
+      # `--strict` turns warnings into errors, matching the Rust policy.
+      - run: swiftlint lint --strict
