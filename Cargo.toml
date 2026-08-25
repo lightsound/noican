@@ -1,0 +1,91 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/lightsound/noican"
+authors = ["noican contributors"]
+readme = "README.md"
+keywords = ["audio", "dsp", "noise-suppression", "macos", "onnx"]
+categories = ["multimedia::audio"]
+
+[workspace.dependencies]
+noican-core = { path = "crates/noican-core", version = "0.1.0" }
+noican-models = { path = "crates/noican-models", version = "0.1.0" }
+noican-engine = { path = "crates/noican-engine", version = "0.1.0" }
+
+anyhow = "1.0.104"
+clap = { version = "4.6.6", features = ["derive"] }
+hound = "3.5.1"
+realfft = "3.5.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+thiserror = "2.0.20"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+ureq = { version = "3.4.0", default-features = false, features = [
+  "rustls",
+  "platform-verifier",
+  "gzip",
+] }
+
+# ONNX Runtime. `tls-native` (an `ort` default) pulls in `openssl-sys`, which
+# needs a system OpenSSL; rustls keeps the build self-contained on every runner.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = [
+  "std",
+  "download-binaries",
+  "tls-rustls",
+  "copy-dylibs",
+  "api-27",
+  "tracing",
+] }
+
+# Every lint below starts at `deny`. Exceptions must be introduced with a
+# narrowly scoped `#[expect(..., reason = "...")]` (or `#[allow]` where `expect`
+# is impossible) that states why the lint cannot be satisfied — never by
+# relaxing an entry here.
+#
+# The clippy `restriction` group is deliberately absent: it is documented as a
+# collection of mutually exclusive opinions ("not all of them at once"), so
+# enabling it wholesale cannot pass by construction.
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+variant_size_differences = "deny"
+future_incompatible = { level = "deny", priority = -1 }
+keyword_idents = { level = "deny", priority = -1 }
+let_underscore = { level = "deny", priority = -1 }
+nonstandard_style = { level = "deny", priority = -1 }
+refining_impl_trait = { level = "deny", priority = -1 }
+rust_2018_idioms = { level = "deny", priority = -1 }
+unused = { level = "deny", priority = -1 }
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+invalid_codeblock_attributes = "deny"
+bare_urls = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+# `ort` and its transitive tree pin several duplicated minor versions that we do
+# not control; the lint fires on the dependency graph rather than on our code.
+multiple_crate_versions = "allow"

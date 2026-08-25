@@ -1,0 +1,12 @@
+/target
+**/*.rs.bk
+
+# Downloaded ONNX model weights and CLI output.
+/models/
+/out/
+
+# Swift / Xcode
+.build/
+.swiftpm/
+*.xcuserdatad
+DerivedData/

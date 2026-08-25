@@ -1,0 +1,49 @@
+[graph]
+# The workspace is macOS-first, but CI lints and tests on Linux too, so both
+# graphs have to be clean.
+targets = [
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+  "x86_64-unknown-linux-gnu",
+]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+unmaintained = "workspace"
+
+[licenses]
+version = 2
+# Permissive licences only. Copyleft is confined to the virtual-audio driver,
+# which is a separate GPL-3.0 program loaded by `coreaudiod` and is never linked
+# into this workspace (see docs/tech-research.md §11).
+allow = [
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CC0-1.0",
+  "ISC",
+  "MIT",
+  "MIT-0",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Zlib",
+]
+confidence-threshold = 0.9
+# The allow-list is the policy, not an inventory of the current graph: entries
+# that nothing currently depends on are intentional, not stale.
+unused-allowed-license = "allow"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# GPL/AGPL crates must never enter the app's dependency graph.
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

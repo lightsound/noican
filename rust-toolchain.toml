@@ -1,0 +1,6 @@
+# Pinned so that the clippy lint set is reproducible: `clippy::nursery` and
+# `clippy::pedantic` gain new lints on every release, so an unpinned toolchain
+# would turn a routine `rustup update` into an unexplained CI failure.
+[toolchain]
+channel = "1.98.0"
+components = ["clippy", "rustfmt"]
