@@ -62,19 +62,23 @@ Hush
   Asset: Quantized upstream weights embedded by the hush-vani crate.
 
 SpeechBrain ECAPA-TDNN conversion
-  Conversion source:
-    https://huggingface.co/vedk00/ecapa-voxceleb-speaker-embedding-onnx
-  Revision: a9cb9321b07b4ee5b0ea47fdd25242d9cacd824a
+  Conversion source: https://huggingface.co/penta2himajin/ecapa-tdnn-onnx
+  Revision: 57bc773c7cc1a8afa117b38b0b2a38c96ffa99a2
   Upstream model: https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb
+  Filterbank table: vedk00/ecapa-voxceleb-speaker-embedding-onnx
+    revision a9cb9321b07b4ee5b0ea47fdd25242d9cacd824a
   License: Apache License 2.0
-  Assets: ecapa-speaker-v1.onnx and fbank-80x201-f32.bin.
+  Assets: ecapa_tdnn.onnx and a pinned SpeechBrain filterbank table.
+  Note: VoxCeleb source-media and biometric-use rights require separate review.
 
 TSE Conv-TasNet 48 kHz
   Source: https://huggingface.co/penta2himajin/tse-conv-tasnet-48k
-  License: NOT SPECIFIED by the publisher as of 2026-08-25.
+  Revision: 5d8934d48e582dbd00285697bde972c4ec17ba2a
+  License: Reported as CC BY 4.0 by the inaccessible model card.
   Status: No files are redistributed. Authenticated user-supplied assets are
-          accepted only with explicit SHA-256 values. Do not include this model
-          in a commercial distribution until its license is clarified.
+          accepted only at pinned SHA-256 values. DEMAND training-data metadata
+          is CC BY-SA 3.0, contrary to the card's reported provenance; obtain
+          legal review before commercial redistribution.
 
 GPL separation
 --------------
@@ -82,4 +86,5 @@ GPL separation
 BlackHole and joycast.driver are GPL-3.0 components of the separate virtual
 audio driver. No GPL source is copied into or linked with the noican
 application. When a renamed driver is distributed, its corresponding driver
-source and GPL notices must be published separately.
+source and GPL notices must be published separately. Obtain legal review for
+combined distribution with a non-GPL app, or use a commercial BlackHole license.

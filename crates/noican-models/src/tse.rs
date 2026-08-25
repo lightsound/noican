@@ -40,6 +40,7 @@ pub const ASSETS: [ModelAsset; 2] = [ModelAsset::TseGraph, ModelAsset::TseWeight
 /// Stateful target-speaker extraction stage.
 pub struct Tse {
     session: Session,
+    condition_input: String,
     embedding: [f32; EMBEDDING_DIMENSIONS],
     state: Vec<ArrayD<f32>>,
 }
@@ -66,8 +67,26 @@ impl Tse {
             .map_err(backend_error)?
             .commit_from_file(path)
             .map_err(backend_error)?;
+        let condition_inputs: Vec<&str> = session
+            .inputs()
+            .iter()
+            .filter(|input| {
+                input
+                    .dtype()
+                    .tensor_shape()
+                    .is_some_and(|shape| shape.as_ref() == [1, 192])
+            })
+            .map(|input| input.name())
+            .collect();
+        let [condition_input] = condition_inputs.as_slice() else {
+            return Err(backend_error(format!(
+                "expected one [1, 192] condition input, found {condition_inputs:?}"
+            )));
+        };
+        let condition_input = (*condition_input).to_owned();
         Ok(Self {
             session,
+            condition_input,
             embedding: *embedding,
             state: initial_state(),
         })
@@ -110,7 +129,7 @@ impl AudioStage for Tse {
                 .into(),
         ));
         inputs.push((
-            Cow::Borrowed("cond"),
+            Cow::Owned(self.condition_input.clone()),
             TensorRef::from_array_view(&embedding)
                 .map_err(backend_error)?
                 .into(),

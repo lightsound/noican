@@ -94,20 +94,20 @@ impl ModelAsset {
                 "https://raw.githubusercontent.com/Xiaobin-Rong/ul-unas/00f7c700da43d38347f30a6ccebd86fcbc798e07/ulunas_onnx/onnx_models/ulunas_stream_simple.onnx",
                 "f2e804d54d6a88f4f82f44d86c9f1cf646db2509bfca935cfbfc5fcd8cbfac3b",
             ),
-            Self::TseGraph => AssetSpecification::authenticated(
+            Self::TseGraph => AssetSpecification::verified(
                 "tse/tse_prod_48k.onnx",
-                "https://huggingface.co/penta2himajin/tse-conv-tasnet-48k/resolve/main/tse_prod_48k.onnx",
-                "NOICAN_TSE_ONNX_SHA256",
+                "https://huggingface.co/penta2himajin/tse-conv-tasnet-48k/resolve/5d8934d48e582dbd00285697bde972c4ec17ba2a/tse_prod_48k.onnx",
+                "71490a5a9c66f0693f6ce1990c3e258c0814fed1f970f3efd2a832ddbeccfdc9",
             ),
-            Self::TseWeights => AssetSpecification::authenticated(
+            Self::TseWeights => AssetSpecification::verified(
                 "tse/tse_prod_48k.onnx.data",
-                "https://huggingface.co/penta2himajin/tse-conv-tasnet-48k/resolve/main/tse_prod_48k.onnx.data",
-                "NOICAN_TSE_DATA_SHA256",
+                "https://huggingface.co/penta2himajin/tse-conv-tasnet-48k/resolve/5d8934d48e582dbd00285697bde972c4ec17ba2a/tse_prod_48k.onnx.data",
+                "4b84f54b47beb7904bb39de47a76a9936c560f5a0a09577ff593980692c81a16",
             ),
             Self::Ecapa => AssetSpecification::verified(
-                "ecapa/ecapa-speaker-v1.onnx",
-                "https://huggingface.co/vedk00/ecapa-voxceleb-speaker-embedding-onnx/resolve/a9cb9321b07b4ee5b0ea47fdd25242d9cacd824a/model/ecapa-speaker-v1.onnx",
-                "f46380bbaeddb929fb3a10ab63a4b1877a50e3d1e5fdd55a1b618d5651d3f64e",
+                "ecapa/ecapa_tdnn.onnx",
+                "https://huggingface.co/penta2himajin/ecapa-tdnn-onnx/resolve/57bc773c7cc1a8afa117b38b0b2a38c96ffa99a2/ecapa_tdnn.onnx",
+                "75f5f36d23879c5b2dd73b09221e8727e8e6e6a7cbd1a0655992d7ae81195698",
             ),
             Self::EcapaFilterbank => AssetSpecification::verified(
                 "ecapa/fbank-80x201-f32.bin",
@@ -140,24 +140,11 @@ impl AssetSpecification {
             expected_hash: ExpectedHash::Fixed(sha256),
         }
     }
-
-    const fn authenticated(
-        relative_path: &'static str,
-        url: &'static str,
-        hash_environment_variable: &'static str,
-    ) -> Self {
-        Self {
-            relative_path,
-            url,
-            expected_hash: ExpectedHash::Environment(hash_environment_variable),
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ExpectedHash {
     Fixed(&'static str),
-    Environment(&'static str),
 }
 
 /// Options controlling an asset fetch.
@@ -218,7 +205,7 @@ impl ModelStore {
         options: FetchOptions<'_>,
     ) -> Result<PathBuf, AssetError> {
         let specification = asset.specification();
-        let expected = expected_hash(specification.expected_hash)?;
+        let expected = expected_hash(specification.expected_hash);
         let destination = self.path(asset);
         if destination.is_file() {
             if sha256_file(&destination)? == expected {
@@ -325,12 +312,6 @@ pub enum AssetError {
     /// The operating system did not expose a user cache location.
     #[error("platform cache directory is unavailable")]
     CacheDirectoryUnavailable,
-    /// An expected hash must be supplied for a gated mutable URL.
-    #[error("set {variable} to the publisher-confirmed SHA-256 before fetching this gated asset")]
-    MissingExpectedHash {
-        /// Environment variable accepted by the downloader.
-        variable: &'static str,
-    },
     /// A generated destination has no parent.
     #[error("asset destination has no parent: {}", .0.display())]
     InvalidPath(PathBuf),
@@ -371,12 +352,9 @@ pub enum AssetError {
     },
 }
 
-fn expected_hash(expected: ExpectedHash) -> Result<String, AssetError> {
+fn expected_hash(expected: ExpectedHash) -> String {
     match expected {
-        ExpectedHash::Fixed(hash) => Ok(hash.to_owned()),
-        ExpectedHash::Environment(variable) => env::var(variable)
-            .map(|hash| hash.to_ascii_lowercase())
-            .map_err(|_error| AssetError::MissingExpectedHash { variable }),
+        ExpectedHash::Fixed(hash) => hash.to_owned(),
     }
 }
 

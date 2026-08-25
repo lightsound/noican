@@ -41,6 +41,6 @@ Install stock BlackHole 2ch for Phase 0 or the separately signed noican driver f
 ## Scope
 
 - macOS only (Apple Silicon first), fully on-device.
-- Commercial distribution remains possible with the permissive application stack. The GPL-3.0 BlackHole-derived driver stays separate and requires corresponding driver source.
-- The TSE weight license is not explicit and its upstream repository currently requires authentication, so it must not be redistributed until both issues are resolved.
+- Commercial distribution is an architectural goal, not a cleared legal conclusion. The GPL-3.0 BlackHole-derived driver stays separate; combined distribution requires legal review or a commercial BlackHole license.
+- The TSE repository currently requires authentication, and its reported license conflicts with DEMAND provenance. Do not redistribute it without review.
 - Target: ~20–30 ms end-to-end latency, < 100 MB memory, 48 kHz native audio path.

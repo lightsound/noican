@@ -31,6 +31,7 @@ const MINIMUM_SAMPLES: usize = 16_000;
 /// SpeechBrain-compatible ECAPA embedding extractor.
 pub struct Ecapa {
     session: Session,
+    requires_feature_lengths: bool,
     fbank: Fbank,
 }
 
@@ -52,8 +53,16 @@ impl Ecapa {
             .map_err(|error| EnrollmentError::Onnx(error.to_string()))?
             .commit_from_file(model_path)
             .map_err(|error| EnrollmentError::Onnx(error.to_string()))?;
+        let requires_feature_lengths = session
+            .inputs()
+            .iter()
+            .any(|input| input.name() == "feature_lens");
         let fbank = Fbank::load(filterbank_path)?;
-        Ok(Self { session, fbank })
+        Ok(Self {
+            session,
+            requires_feature_lengths,
+            fbank,
+        })
     }
 
     /// Compute the 192-dimensional TSE conditioning vector from mono 16 kHz audio.
@@ -77,15 +86,20 @@ impl Ecapa {
         let features = Array3::from_shape_vec((1, frame_count, MEL_BANDS), features)
             .map_err(|error| EnrollmentError::Shape(error.to_string()))?;
         let feature_lengths = Array1::from_vec(vec![1.0_f32]);
-        let outputs = self
-            .session
-            .run(ort::inputs![
+        let outputs = if self.requires_feature_lengths {
+            self.session.run(ort::inputs![
                 "features" => TensorRef::from_array_view(&features)
                     .map_err(|error| EnrollmentError::Onnx(error.to_string()))?,
                 "feature_lens" => TensorRef::from_array_view(&feature_lengths)
                     .map_err(|error| EnrollmentError::Onnx(error.to_string()))?
             ])
-            .map_err(|error| EnrollmentError::Onnx(error.to_string()))?;
+        } else {
+            self.session.run(ort::inputs![
+                "features" => TensorRef::from_array_view(&features)
+                    .map_err(|error| EnrollmentError::Onnx(error.to_string()))?
+            ])
+        }
+        .map_err(|error| EnrollmentError::Onnx(error.to_string()))?;
         let (shape, values) = outputs["embedding"]
             .try_extract_tensor::<f32>()
             .map_err(|error| EnrollmentError::Onnx(error.to_string()))?;

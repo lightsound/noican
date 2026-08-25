@@ -65,8 +65,10 @@ impl DpdfNetVariant {
             kind: StageKind::NoiseSuppression,
             sample_rate: SAMPLE_RATE,
             frame_samples: FRAME_SAMPLES,
-            algorithmic_delay_samples: FRAME_SAMPLES,
-            tail_frames: 1,
+            // The official streaming wrapper aligns valid content by four
+            // hops; returning an earlier block does not make it time-aligned.
+            algorithmic_delay_samples: FRAME_SAMPLES * 4,
+            tail_frames: 4,
             enrollment: EnrollmentRequirement::None,
         }
     }
