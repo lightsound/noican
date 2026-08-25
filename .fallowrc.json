@@ -1,0 +1,72 @@
+// fallow configuration — https://docs.fallow.tools/configuration/overview
+//
+// Policy: every rule starts at "error" (CI-gating). A rule may only be demoted
+// or disabled here with an explicit reason comment, and inline suppressions
+// must carry a `-- <reason>` suffix (enforced by require-suppression-reason).
+{
+  "$schema": "./node_modules/fallow/schema.json",
+  "rules": {
+    // Defaults to error — restated for explicitness.
+    "unused-files": "error",
+    "unused-exports": "error",
+    "unused-types": "error",
+    "unused-dependencies": "error",
+    "unused-enum-members": "error",
+    "unused-class-members": "error",
+    "unresolved-imports": "error",
+    "unlisted-dependencies": "error",
+    "duplicate-exports": "error",
+    "circular-dependencies": "error",
+    "boundary-violation": "error",
+    "unresolved-catalog-references": "error",
+    "misconfigured-dependency-overrides": "error",
+    "route-collision": "error",
+    "dynamic-segment-name-conflict": "error",
+
+    // Promoted from the warn default.
+    "unused-dev-dependencies": "error",
+    "unused-optional-dependencies": "error",
+    "unused-store-members": "error",
+    "unprovided-injects": "error",
+    "unrendered-components": "error",
+    "unused-component-props": "error",
+    "unused-component-emits": "error",
+    "unused-component-inputs": "error",
+    "unused-component-outputs": "error",
+    "unused-svelte-events": "error",
+    "unused-server-actions": "error",
+    "unused-load-data-keys": "error",
+    "css-token-drift": "error",
+    "css-duplicate-block": "error",
+    "css-selector-complexity": "error",
+    "css-dead-surface": "error",
+    "css-broken-reference": "error",
+    "type-only-dependencies": "error",
+    "test-only-dependencies": "error",
+    "dev-dependencies-in-production": "error",
+    "re-export-cycle": "error",
+    "stale-suppressions": "error",
+    "unused-catalog-entries": "error",
+    "empty-catalog-groups": "error",
+    "unused-dependency-overrides": "error",
+    "policy-violation": "error",
+    "invalid-client-export": "error",
+    "mixed-client-server-barrel": "error",
+    "misplaced-directive": "error",
+
+    // Promoted from the off default (opt-in rules).
+    "private-type-leaks": "error",
+    "prop-drilling": "error",
+    "thin-wrapper": "error",
+    "duplicate-prop-shape": "error",
+    "feature-flags": "error",
+    "require-suppression-reason": "error",
+    "security-client-server-leak": "error",
+    "security-sink": "error",
+
+    // Carve-out: requires runtime execution coverage from Fallow Runtime (the
+    // optional paid layer), which this project does not use. There is no data
+    // for the rule to check, so it stays off.
+    "coverage-gaps": "off"
+  }
+}

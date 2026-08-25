@@ -12,6 +12,17 @@ Design / research phase. No implementation yet.
 
 ## Scope
 
-- macOS only (Apple Silicon first), personal use only.
-- No distribution, licensing, or multi-user concerns; a paid Apple Developer Program membership is available for Developer ID signing.
+- macOS only (Apple Silicon first). Built for personal use first, with a possible future sale in mind (free/open stack only; publishing source is acceptable).
+- A paid Apple Developer Program membership is available for Developer ID signing.
 - Target: ~20–30 ms end-to-end latency, < 100 MB memory, 48 kHz native audio path.
+
+## Development
+
+### Lint policy
+
+Two TS/JS quality gates are wired in from day one so they apply the moment any TypeScript/JavaScript enters the repository (the core is planned in Rust + SwiftUI; Rust-side equivalents like `cargo clippy -- -D warnings` will be added with the Rust workspace):
+
+- **[fallow](https://github.com/fallow-rs/fallow)** (`npm run lint:fallow`) — dead code, circular dependencies, duplication, complexity, boundaries. **Every rule is set to `error`** in `.fallowrc.json`; a rule may only be demoted/disabled there with a written reason (currently only `coverage-gaps`, which requires the paid Fallow Runtime). Inline suppressions must carry a `-- <reason>` suffix (enforced by `require-suppression-reason`).
+- **[ImportLint](https://github.com/uhyo/import-lint)** (`npm run lint:imports`) — directory-level encapsulation: a `*.package` directory's exports are importable from outside only when tagged `@public`. Config in `.importlintrc.jsonc`, severity `error`.
+
+Both run in CI on every push/PR (`.github/workflows/lint.yml`). Run everything locally with `npm run lint`.

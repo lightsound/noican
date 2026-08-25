@@ -1,0 +1,13 @@
+{
+  "name": "noican",
+  "private": true,
+  "scripts": {
+    "lint": "npm run lint:fallow && npm run lint:imports",
+    "lint:fallow": "fallow",
+    "lint:imports": "import-lint"
+  },
+  "devDependencies": {
+    "@import-lint/cli": "0.1.9",
+    "fallow": "3.18.0"
+  }
+}

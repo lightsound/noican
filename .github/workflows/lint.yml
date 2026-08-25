@@ -1,0 +1,30 @@
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Codebase intelligence for TS/JS: dead code, circular dependencies,
+      # duplication, health. All rules are promoted to error (see .fallowrc.json).
+      - name: fallow
+        run: npx fallow
+
+      # Directory-level encapsulation for TS/JS imports (see .importlintrc.jsonc).
+      - name: import-lint
+        run: npx import-lint --format github
