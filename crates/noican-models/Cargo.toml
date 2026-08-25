@@ -6,12 +6,18 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+default = ["download"]
+# HTTP weight downloading (ureq/rustls). Disabled by the FFI/app build,
+# which only reads already-downloaded files.
+download = ["dep:ureq", "dep:sha2"]
+
 [dependencies]
 noican-core = { workspace = true }
 thiserror = { workspace = true }
 ort = { workspace = true }
-ureq = { workspace = true }
-sha2 = { workspace = true }
+ureq = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
 realfft = { workspace = true }
 deep_filter = { workspace = true }
 ndarray = { workspace = true }

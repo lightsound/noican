@@ -827,6 +827,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "noican-ffi"
+version = "0.1.0"
+dependencies = [
+ "noican-core",
+ "noican-models",
+ "noican-rt",
+]
+
+[[package]]
 name = "noican-models"
 version = "0.1.0"
 dependencies = [
@@ -838,6 +847,15 @@ dependencies = [
  "sha2",
  "thiserror 2.0.20",
  "ureq",
+]
+
+[[package]]
+name = "noican-rt"
+version = "0.1.0"
+dependencies = [
+ "noican-core",
+ "rtrb",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

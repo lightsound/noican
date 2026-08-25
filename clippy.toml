@@ -21,4 +21,6 @@ doc-valid-idents = [
     "MenuBarExtra",
     "sherpa-onnx",
     "tse-conv-tasnet-48k",
+    "IOProc",
+    "AVAudioEngine",
 ]

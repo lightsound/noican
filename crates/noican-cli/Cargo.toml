@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 noican-core = { workspace = true }
-noican-models = { workspace = true }
+noican-models = { workspace = true, features = ["download"] }
 anyhow = { workspace = true }
 clap = { workspace = true }
 hound = { workspace = true }

@@ -1,0 +1,15 @@
+[package]
+name = "noican-rt"
+description = "Real-time macOS pipeline: AUHAL-direct I/O, private aggregate device, lock-free model switching"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+noican-core = { workspace = true }
+rtrb = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

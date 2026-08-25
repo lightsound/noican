@@ -1,8 +1,10 @@
-//! Downloading and verifying model weights.
+//! Locating (and, with the `download` feature, fetching) model weights.
 
+#[cfg(feature = "download")]
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "download")]
 use sha2::{Digest as _, Sha256};
 
 use crate::manifest::ModelSpec;
@@ -11,6 +13,7 @@ use crate::manifest::ModelSpec;
 #[derive(Debug, thiserror::Error)]
 pub enum FetchError {
     /// Network or HTTP failure.
+    #[cfg(feature = "download")]
     #[error("download of {url} failed: {source}")]
     Http {
         /// URL that failed.
@@ -60,6 +63,7 @@ pub fn is_fetched(models_dir: &Path, model: &ModelSpec) -> bool {
 /// # Errors
 ///
 /// Returns [`FetchError`] on network, filesystem, or checksum failure.
+#[cfg(feature = "download")]
 pub fn fetch_model(
     models_dir: &Path,
     model: &ModelSpec,
@@ -112,6 +116,7 @@ pub fn fetch_model(
 /// Returns a Hugging Face access token from the environment
 /// (`NOICAN_HF_TOKEN` or `HF_TOKEN`), if any. Needed only for gated/private
 /// repos (see docs/models.md).
+#[cfg(feature = "download")]
 fn hf_token() -> Option<String> {
     std::env::var("NOICAN_HF_TOKEN")
         .or_else(|_| std::env::var("HF_TOKEN"))
@@ -119,6 +124,7 @@ fn hf_token() -> Option<String> {
         .filter(|t| !t.is_empty())
 }
 
+#[cfg(feature = "download")]
 fn download(url: &str) -> Result<Vec<u8>, FetchError> {
     let wrap = |source: ureq::Error| FetchError::Http {
         url: url.to_owned(),
@@ -140,6 +146,7 @@ fn download(url: &str) -> Result<Vec<u8>, FetchError> {
     Ok(bytes)
 }
 
+#[cfg(feature = "download")]
 fn hex_sha256(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     let digest = Sha256::digest(bytes);
@@ -150,7 +157,7 @@ fn hex_sha256(bytes: &[u8]) -> String {
     out
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "download"))]
 mod tests {
     use super::*;
 

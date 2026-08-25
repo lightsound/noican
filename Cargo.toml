@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["crates/noican-core", "crates/noican-models", "crates/noican-cli"]
+members = [
+    "crates/noican-core",
+    "crates/noican-models",
+    "crates/noican-cli",
+    "crates/noican-rt",
+    "crates/noican-ffi",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,7 +16,8 @@ publish = false
 
 [workspace.dependencies]
 noican-core = { path = "crates/noican-core" }
-noican-models = { path = "crates/noican-models" }
+noican-models = { path = "crates/noican-models", default-features = false }
+noican-rt = { path = "crates/noican-rt" }
 thiserror = "2.0"
 ort = "=2.0.0-rc.13"
 ureq = "3.4"

@@ -1,0 +1,21 @@
+[package]
+name = "noican-ffi"
+description = "C ABI for embedding the noican engine in the SwiftUI menu-bar app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "noican_ffi"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+noican-core = { workspace = true }
+# No `download` feature: the app only reads already-downloaded weights,
+# and dropping the HTTP stack keeps the macOS cross-check pure-Rust.
+noican-models = { workspace = true }
+noican-rt = { workspace = true }
+
+[lints]
+workspace = true
