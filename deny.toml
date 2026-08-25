@@ -24,6 +24,8 @@ allow = [
   "BSD-2-Clause",
   "BSD-3-Clause",
   "BSL-1.0",
+  # Covers the Mozilla CA root certificate *data* in webpki-roots, not code.
+  "CDLA-Permissive-2.0",
   "CC0-1.0",
   "ISC",
   "MIT",
