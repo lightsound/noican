@@ -6,7 +6,7 @@ The physical microphone signal is captured, cleaned in real time (noise suppress
 
 ## Status
 
-Phase 0 in progress: the engine runs, eleven models are selectable, and the offline comparison tool works. Nothing has been tested on a Mac yet.
+Phase 0 in progress: the engine runs, thirteen models are selectable, and the offline comparison tool works. Nothing has been tested on a Mac yet.
 
 - [docs/tech-research.md](docs/tech-research.md) — the single source of truth: candidate evaluation for every layer, the chosen stack, the roadmap, and what measurement has and has not confirmed.
 - [docs/models.md](docs/models.md) — the model catalog, how to fetch weights, and how to run a comparison.
