@@ -1,0 +1,19 @@
+[package]
+name = "noican-core"
+description = "Real-time-safe audio primitives and the processing-stage abstraction for noican"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+realfft.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
