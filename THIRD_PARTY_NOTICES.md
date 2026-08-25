@@ -41,6 +41,19 @@ models, adapted code, and vendored assets.
   itself: MIT).
 - `deep_filter` / DeepFilterNet (MIT OR Apache-2.0), including its tract
   inference stack (MIT OR Apache-2.0).
+- `symphonia` (MPL-2.0) — CLI decoding of AIFF/AIFC, CAF, and M4A
+  (AAC/ALAC) inputs. MPL-2.0 is file-level weak copyleft: unmodified use
+  imposes no obligations on this application beyond source availability
+  of the MPL-covered files.
+- `crossbeam-queue` and `rtrb` (MIT OR Apache-2.0) — lock-free queues for
+  the real-time path (stage switching, audio I/O rings).
+
+## Adapted code (macOS transport and control plane)
+
+- `crates/noican-coreaudio`, `crates/noican-ffi`, and `macos/` are ported
+  from this repository's Phase 0 transport candidate branch
+  (`cursor/phase-zero-engine-4f79`, same project/license), rewired onto
+  the current engine crates.
 
 ## Policy notes
 

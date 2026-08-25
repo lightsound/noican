@@ -49,6 +49,18 @@ clap = { version = "4.6", features = ["derive"] }
 hound = "3.5"
 rubato = "5.0"
 audioadapter-buffers = "5.2"
+# CLI input formats beyond WAV. The formats/codecs we need are all
+# default-disabled in symphonia, so they must be listed explicitly:
+# AIFF/AIFC (aiff), CAF (caf), M4A container (isomp4), AAC + ALAC codecs,
+# and pcm for the uncompressed/µ-law/A-law payloads of AIFF-C and CAF.
+symphonia = { version = "0.5", default-features = false, features = [
+    "aiff",
+    "caf",
+    "isomp4",
+    "aac",
+    "alac",
+    "pcm",
+] }
 
 # Quality-gate policy (docs/tech-research.md §12): everything starts at
 # `deny`. Exceptions must be introduced with a narrowly scoped

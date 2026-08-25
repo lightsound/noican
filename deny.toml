@@ -39,6 +39,11 @@ allow = [
     "CDLA-Permissive-2.0",
     # Public-domain dedication (tiny-keccak via tract); no obligations.
     "CC0-1.0",
+    # File-level weak copyleft (symphonia, CLI input decoding only). We do
+    # not modify symphonia sources, so the only obligation is source
+    # availability of the MPL-covered files themselves; it does not extend
+    # to the application (docs/tech-research.md §11).
+    "MPL-2.0",
 ]
 confidence-threshold = 0.8
 

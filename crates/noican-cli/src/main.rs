@@ -10,8 +10,8 @@
     reason = "user-facing CLI output is this binary's job"
 )]
 
+mod audio;
 mod process;
-mod wav;
 
 use std::path::PathBuf;
 
@@ -38,10 +38,10 @@ enum Command {
         /// Model ids to fetch (default: all).
         ids: Vec<String>,
     },
-    /// Process WAV files through models; outputs are organized per input
+    /// Process audio files through models; outputs are organized per input
     /// file for side-by-side comparison.
     Process {
-        /// Input WAV files.
+        /// Input audio files (WAV, AIFF/AIFC, CAF, M4A; output is WAV).
         #[arg(required = true)]
         inputs: Vec<PathBuf>,
         /// Output directory (default: out).
@@ -70,7 +70,7 @@ fn enrollment_embedding(
     if !noican_models::fetch::is_fetched(models_dir, spec) {
         anyhow::bail!("ecapa-tdnn model not fetched; run: noican fetch ecapa-tdnn");
     }
-    let audio_48k = wav::read_mono_48k(wav_path)?;
+    let audio_48k = audio::read_mono_48k(wav_path)?;
     let mut decimator = noican_core::resample::Decimator::new(3, audio_48k.len().max(3));
     let mut audio_16k = Vec::with_capacity(audio_48k.len() / 3);
     let usable = audio_48k.len() - audio_48k.len() % 3;
