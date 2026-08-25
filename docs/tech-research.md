@@ -1,7 +1,8 @@
 # Technology Research: JoyCast-Style Noise-Cancelling Virtual Microphone for macOS
 
 - **Date**: 2026-08-24 (five research rounds conducted on this date; round 5 was a zero-based sweep for alternative architectures and produced no stack changes — the stack below is final)
-- **Status**: Research complete; implementation not started
+- **Model availability re-checked**: 2026-08-25 — see §5.4 for the two artefacts that could not be obtained
+- **Status**: Research complete; Phase 0 implementation under way (§12)
 - **Scope**: macOS only, personal use, fully on-device, Apple Developer Program membership available (Developer ID signing is possible)
 
 This document consolidates the review of two earlier AI-generated design documents ("design1" and "design2") and three rounds of follow-up research. It records every candidate that was evaluated — including rejected ones and the reasons for rejection — so that later decisions can be revisited with full context and rejected options can serve as fallbacks.
@@ -54,7 +55,8 @@ Two AI-generated design documents were used as the starting point (Japanese, kep
 | AEC | Headphones-only; VoiceProcessingIO "needs testing" | Barely addressed | Headphones for v0 confirmed; a real solution exists now: process tap + WebRTC AEC3 (§7) |
 | "Sidon" model (design2) | — | Proposed as high-quality option | Real but offline-only (dataset cleansing); not usable live (§8) |
 | "NNA Virtual Audio" (design2) | — | Proposed as BlackHole upgrade | Real (free, renamable, closed-source); superseded by the signed BlackHole fork |
-| UI | None initially (CLI + launchd) | SwiftUI menu bar from Phase 2 | Menu bar UI deferred but planned (design2's Phase 2 feature list adopted) |
+| UI | None initially (CLI + launchd) | SwiftUI menu bar from Phase 2 | Menu bar UI pulled forward to Phase 0, because run-time model switching needs a control surface (§12) |
+| Model choice | Pick one after an offline listening test | Pick one | Neither: every candidate ships behind one trait and is switchable at run time (§12) |
 
 Overall: design1 was the technically reliable backbone; design2 contributed the product/UI phasing. Every layer was subsequently upgraded by the research below.
 
@@ -144,6 +146,26 @@ design1 concluded the Rust `df` crate was the only practical route because DeepF
 | "DeepFilterNet4" ([sealad886 fork](https://github.com/sealad886/DeepFilterNet4)) | Community fork with native MLX implementation; unofficial, single contributor — monitor only |
 | FRCRN / MossFormerGAN (16 k) | Offline-oriented ClearerVoice models; not streaming |
 
+### 5.4 Availability re-check (2026-08-25)
+
+Every artefact named above was fetched and its ONNX signature inspected before implementation started. Two entries in the original research do not exist as published:
+
+| Artefact | Expected | Found |
+|---|---|---|
+| `dpdfnet8_48khz_hr` | 48 kHz high-resolution DPDFNet-8 | **Not published.** The sherpa-onnx `speech-enhancement-models` release contains exactly one 48 kHz variant, `dpdfnet2_48khz_hr.onnx`. The other five assets (`dpdfnet2`, `dpdfnet4`, `dpdfnet8`, `dpdfnet_baseline`, `gtcrn_simple`) are all 16 kHz. The 16 kHz DPDFNet-8 is still worth comparing as the heaviest variant of the family |
+| `penta2himajin/tse-conv-tasnet-48k` | Enrollment-conditioned 48 kHz TSE | **Repository removed from Hugging Face** (the API returns an authentication error for it, while the same author's `deepfilternet3-onnx` and `ecapa-tdnn-onnx` still resolve). The research already flagged this as a solo-developer proof of concept after two broken releases, so its disappearance is consistent. The enrollment-based route therefore falls back to the DIY gate of §6.2, for which the missing piece — a 192-dim ECAPA-TDNN — *is* available (`penta2himajin/ecapa-tdnn-onnx`, and sherpa-onnx's speaker-recognition models) |
+
+Signatures of what *is* available, as verified against the downloaded graphs:
+
+| Model | ONNX inputs | ONNX outputs | Transform done outside the graph |
+|---|---|---|---|
+| FastEnhancer `t`/`s`/`b`/`m`/`l` (48 k) | `wav_in[1,512]`, `cache_in_0..3` | `wav_out[1,512]`, `cache_out_0..3` | **None** — the graph contains its own `DFT`. Cache shapes differ per variant, so they must be read from the session rather than hard-coded |
+| DPDFNet (all variants) | `spec[1,1,F,2]`, `state_in[S]` | `spec_e[1,1,F,2]`, `state_out[S]` | STFT/ISTFT only; ERB and normalisation are inside the graph. All parameters (`n_fft`, `hop_length`, `window_type`, `state_size`, and the `erb_norm_init` / `spec_norm_init` seeds) are carried in the model's own metadata |
+| GTCRN `simple` (16 k) | `mix[1,257,1,2]`, `conv_cache`, `tra_cache`, `inter_cache` | `enh`, three caches | STFT/ISTFT with a square-root Hann window, `n_fft` 512 / hop 256 |
+| UL-UNAS `stream` (16 k) | `mix[1,257,1,2]`, `conv_cache[1,5358]`, `tfa_cache[1,402]`, `inter_cache[1,1056]` | `enh`, three caches | STFT/ISTFT with a plain Hann window, `n_fft` 512 / hop 256. Same shape family as GTCRN, flat caches |
+| DeepFilterNet3 (`penta2himajin/deepfilternet3-onnx`) | `spec`, `feat_erb`, `feat_spec`, `enc_h`, `erb_h`, `df_h` | `enhanced_spec`, three new states | STFT/ISTFT **plus** ERB band energies and exponential normalisation. Better than the upstream export: recurrent state is threaded explicitly and the ERB mask and deep filter are applied inside the graph |
+| Hush (16 k) | three graphs: `enc(feat_erb, feat_spec)`, `erb_dec`, `df_dec` | `m` (ERB mask), `coefs` (deep-filter coefficients) | Everything: STFT/ISTFT, ERB, normalisation, mask application, and the order-5 deep filter. **Recurrent state is not exposed as graph I/O**, so this export processes a whole sequence with zero-initialised state and is a block stage, not a streaming one |
+
 ---
 
 ## 6. Background-Speaker Suppression (the differentiator)
@@ -184,7 +206,7 @@ Known tuning risk (from design1): gate fade time constant — too short clips th
 
 ### 6.4 Decision
 
-Listening-test **Hush (16 k, no enrollment)** vs. **tse-conv-tasnet-48k (48 k, enrollment)** on recordings that include real family/background speech. If neither satisfies, build the DIY gate (§6.2) on sherpa-onnx primitives. Combining is also possible (e.g., FastEnhancer 48 k for NS + gate for speakers).
+Ship **Hush (16 k, no enrollment)** as a selectable stage and compare it in live use against the plain NS models. The enrollment-based alternative is now the DIY gate of §6.2 rather than tse-conv-tasnet-48k, which has been withdrawn from Hugging Face (§5.4); the ECAPA-TDNN embedding it needed is still published and is what the gate uses. Combining remains possible and is the likely end state (e.g. FastEnhancer 48 k for NS followed by a gate for speakers), which is another reason the pipeline is a chain of interchangeable stages rather than a single model slot.
 
 ---
 
@@ -289,9 +311,9 @@ As of 2026, **Microsoft Teams ships personalized voice isolation** (30-second vo
 | Virtual device | BlackHole fork via joycast.driver pattern, Developer ID signed | Stock BlackHole or NNA (no build); libASPL / tympan-aspl (full custom) |
 | Capture & output | AUHAL direct (`AudioDeviceCreateIOProcIDWithBlock`), 128–256 frame buffers | — (AVAudioEngine is not an option for device-targeted I/O) |
 | Drift | Private Aggregate Device with drift compensation | DIY adaptive resampler |
-| NS model (quality) | FastEnhancer 48 k **or** DPDFNet 48 k HR — decided by listening test | DeepFilterNet3 (`df` crate); CoreML DFN3 route |
-| NS model (low-latency mode) | UL-UNAS | GTCRN (easier integration via sherpa-onnx) |
-| Background speakers | Hush 16 k vs. tse-conv-tasnet-48k — decided by listening test | DIY VAD + ECAPA gate (mellonella/voce design) |
+| NS model (quality) | FastEnhancer 48 k **and** DPDFNet 48 k HR, both shipped and switchable at run time | DeepFilterNet3 (as a shipped baseline); CoreML DFN3 route |
+| NS model (low-latency mode) | UL-UNAS | GTCRN (also shipped; the simpler graph of the two) |
+| Background speakers | Hush 16 k (block stage until re-exported with state I/O) | DIY VAD + ECAPA gate (mellonella/voce design) — now the primary enrollment route, since tse-conv-tasnet-48k was withdrawn (§5.4) |
 | AEC | None in v0 (headphones) | Process tap + `aec3` (WebRTC AEC3) with macOS 26 watchdog |
 | Inference runtime | ONNX Runtime (FastEnhancer, TSE); sherpa-onnx (DPDFNet/GTCRN, VAD, speaker embeddings) | tract via `df` crate |
 | Core language | Rust (audio engine, inference, gating) | — |
@@ -318,29 +340,39 @@ tse-conv-tasnet-48k model weights (HF card lacks an explicit license; trained on
 
 ## 12. Roadmap
 
-### Phase -1 — Listening test (before any plumbing)
+### The decision that shapes everything: no single model is chosen up front
 
-The single largest uncertainty is **whether these models satisfy the ear in the actual room with the actual noise sources** (including family speech). Record WAVs in the real environment, process offline, and compare:
+The original plan opened with a separate offline listening test ("Phase -1") whose job was to pick *one* noise-suppression model and *one* speaker-suppression approach before any plumbing was written. That ordering has been abandoned, for two reasons:
 
-1. FastEnhancer 48 k (T/B/S variants)
-2. DPDFNet 48 k HR (`dpdfnet2_48khz_hr`, `dpdfnet8_48khz_hr`)
-3. DeepFilterNet3 (reference baseline)
-4. Hush 16 k (with background-speech recordings)
-5. tse-conv-tasnet-48k (with enrollment from own voice)
-6. MossFormer2_SE_48K (offline quality ceiling, for calibration only)
+1. **An offline listening test answers the wrong question.** What matters is how a model sounds in a real meeting, on the real machine, with the real noise sources — including how it behaves when the room changes mid-call. That can only be judged in live use.
+2. **Committing to one model is a worse position than being able to switch.** Once the engine can hold any model, choosing between them costs nothing, adding a newly published model costs one trait implementation, and the "which model?" question stops blocking the plumbing.
 
-Exit criteria: pick one NS model and one speaker-suppression approach; or conclude the quality is insufficient and fall back to buying JoyCast.
+So the architectural requirement replaces the phase: **every processing step is a `Stage`, models are interchangeable at run time, and both the live path and the offline comparison run the same engine.** The listening test becomes something done *with* the product rather than before it, and it is now part of Phase 0.
 
-### Phase 0 — Minimal usable pipeline with a minimal UI
+Concretely, that means:
 
-- Rust engine: physical mic → chosen NS model → BlackHole (stock, unmodified). Private aggregate device for drift.
-- Minimal SwiftUI `MenuBarExtra` from day one: on/off toggle, input device picker, running status. The Rust engine is embedded as a static library behind a C ABI (single app bundle) or launched as a child/daemon process with a small IPC control plane — decided during implementation.
-- Select BlackHole as input in Zoom. Already usable daily.
+- **One trait, one registration.** A model is a `Stage`: a native sample rate, a block size, an algorithmic delay, and a `process` call. Rate conversion and block-size adaptation are handled once, by the runner that wraps every stage, so a 16 kHz / 160-sample model and a 48 kHz / 512-sample model are equally drop-in.
+- **Switching is a UI affordance, not a rebuild.** A select box in the menu bar picks the active model. Switching must not click: the outgoing and incoming stages are crossfaded (or, where their latencies differ enough that a crossfade would comb, briefly muted), and the swap itself is lock-free — the audio thread never takes a lock, never allocates, and never drops the retired stage (it is handed back to the control plane for disposal).
+- **The CLI runs the same engine.** A file-processing mode pushes a WAV through the identical stage implementations and writes one output per model, so a strict same-input comparison is available whenever a subjective judgement needs backing up. This is the old Phase -1, kept as a tool instead of a milestone.
+- **Latency is reported, not guessed.** Each stage declares its algorithmic delay and each runner reports the end-to-end figure, which lets the offline comparison align outputs sample-exactly and makes the live latency budget (§9) measurable rather than assumed.
+
+### Phase 0 — Switchable engine, offline comparison, minimal UI
+
+Deliverables, in dependency order:
+
+0. **Quality gates, from the first commit** (see below). Non-negotiable and set up together with the workspace, not retrofitted.
+1. **Rust workspace**: the `Stage` trait, real-time-safe primitives (fixed-capacity queues, polyphase rational resampling, streaming STFT/ISTFT), and the runner that adapts any stage to the 48 kHz host path.
+2. **Model stages and weight acquisition**: FastEnhancer (all published variants), the DPDFNet family, GTCRN, UL-UNAS, DeepFilterNet3, and Hush, plus a downloader that fetches and checksums the weights on demand.
+3. **CLI file-processing mode**: one WAV in, one output per model, organised for A/B listening, with latency alignment so the files line up.
+4. **Real-time pipeline**: AUHAL capture from the physical mic → active stage → BlackHole (stock, unmodified), inside a private aggregate device for drift compensation.
+5. **Minimal SwiftUI `MenuBarExtra`**: on/off, input-device picker, model select box, status. The Rust engine is embedded as a static library behind a C ABI.
+
+Exit criteria: the virtual device is selectable in Zoom and usable daily, and the model select box makes A/B comparison a matter of a click. There is no longer an exit criterion of the form "pick one model" — that decision is deferred indefinitely by design.
 
 ### Phase 1 — Own the device + differentiator
 
 - Build, sign, and install the renamed BlackHole fork (joycast.driver pattern).
-- Add the speaker-suppression stage (Hush / TSE / DIY gate per Phase -1 results).
+- Add the speaker-suppression stages: Hush as a streaming stage (which requires re-exporting its ONNX graphs with recurrent state as explicit I/O — see §5.4), and the DIY VAD + ECAPA-TDNN gate of §6.2 as the enrollment-based option, now that `tse-conv-tasnet-48k` has been withdrawn.
 
 ### Phase 2 — Menu bar app, full version
 
@@ -353,13 +385,29 @@ Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level 
 - Light EQ/compressor polish; offline Sidon cleanup for recordings.
 - Re-evaluate generative restoration (Stream.FM-class) for Apple Silicon, and audio-visual enhancement (RAVEN-class) if visual-encoder latency drops.
 
+### Quality gates
+
+The policy is **start every check at "error" and carve out only what is genuinely impossible, with a written reason at the exact place it is carved out**. A relaxed configuration file is not an acceptable exception; a narrowly scoped `#[expect(..., reason = "...")]` is.
+
+| Gate | Configuration |
+|---|---|
+| clippy | `[workspace.lints.clippy]` denies `all`, `pedantic`, `nursery`, and `cargo` as groups, and CI additionally passes `-D warnings`. The `restriction` group is the one deliberate omission: clippy documents it as a set of mutually exclusive opinions, so enabling it wholesale cannot pass by construction |
+| `rustc` / `rustdoc` | `unsafe_code`, `missing_docs`, `missing_debug_implementations`, `unused`, `future_incompatible`, `rust_2018_idioms`, and the rustdoc link lints all denied. `unsafe_code` is re-enabled per crate, with a reason, only where a C ABI or a Core Audio call makes it unavoidable |
+| toolchain | Pinned in `rust-toolchain.toml`. `pedantic` and `nursery` gain lints on every release, so an unpinned toolchain would turn `rustup update` into an unexplained CI failure |
+| `cargo-deny` | Licences (permissive allow-list only), advisories, yanked crates, and source registries. Copyleft is confined to the virtual-audio driver, which is a separate GPL-3.0 program loaded by `coreaudiod` and never linked into the app |
+| `cargo-machete` | Unused dependency detection |
+| `cargo fmt` | Checked, not merely available |
+| SwiftLint | To be added in `--strict` mode (warnings become errors) together with the first Swift code |
+
+Historical note: PR #2 introduced `fallow` + ImportLint for TypeScript/JavaScript and was closed because the repository contains no TS/JS. If TS/JS ever lands, revive that branch (`cursor/lint-tooling-3722`) rather than reinventing it.
+
 ---
 
 ## 13. Open Questions
 
-1. Listening-test outcomes (§12 Phase -1) — the entire stack pivots on these.
+1. Which model wins in live use. No longer a blocking question: the engine ships every candidate and switches between them at run time (§12), so this is answered continuously rather than once.
 2. Hush's behavior when the background speaker is *louder* than the user (trained at 12–24 dB SIR below primary).
-3. tse-conv-tasnet-48k real-world quality given its small training set (VCTK + DEMAND).
+3. Whether Hush's published ONNX export can be re-exported with its recurrent state as explicit graph I/O, which is what stands between it and being a streaming stage (§5.4).
 4. Long-session (2 h+) stability of aggregate-device drift compensation.
 5. DIY gate fade time constant (if the DIY route is needed): onset clipping vs. interferer leakage.
 6. How meeting apps treat the virtual device's reported latency/safety offsets (BlackHole reports zero).
@@ -395,7 +443,9 @@ Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level 
 
 ### Speaker suppression / TSE
 - Hush: https://github.com/pulp-vision/Hush (model: https://huggingface.co/weya-ai/hush)
-- tse-conv-tasnet-48k: https://huggingface.co/penta2himajin/tse-conv-tasnet-48k
+- tse-conv-tasnet-48k: https://huggingface.co/penta2himajin/tse-conv-tasnet-48k — **withdrawn**, see §5.4
+- ECAPA-TDNN (192-dim speaker embedding, for the DIY gate): https://huggingface.co/penta2himajin/ecapa-tdnn-onnx
+- DeepFilterNet3 ONNX with explicit recurrent state: https://huggingface.co/penta2himajin/deepfilternet3-onnx
 - mellonella: https://github.com/penta2himajin/mellonella / voce: https://github.com/espetro/voce
 - TargetVoice (Interspeech 2025), SpeakerBeam-SS (Interspeech 2024) / OpenSpeakerBeam-SS: https://github.com/helloooideeeeea/openspeakerbeam-ss
 - D-LGTSE: https://github.com/isHuangZiling/D-LGTSE / SEF-PNet family: https://github.com/isHuangZiling/SEF-PNet
