@@ -15,6 +15,7 @@ authors = ["noican contributors"]
 noican-core = { path = "crates/noican-core" }
 noican-models = { path = "crates/noican-models" }
 thiserror = "2.0"
+crossbeam-queue = "0.3"
 # `tls-native` (an `ort` default) pulls in `openssl-sys`, which needs a
 # system OpenSSL; rustls keeps the build self-contained on every runner.
 # The remaining features mirror the crate's defaults.
