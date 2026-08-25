@@ -86,6 +86,10 @@ speakers within a frame but cannot be told who you are.
 
 ### Two of them are block stages
 
+The catalog marks these two as not live-capable, and the menu bar picker says
+"offline only, seconds of latency" next to them. Without that, choosing one
+looks indistinguishable from the app hanging.
+
 `deepfilternet3` and `hush` ship as *sequence* graphs whose recurrent state is
 not exposed, so they cannot be driven frame by frame. They run a block at a time
 instead, with a warm-up context long enough that the result matches
