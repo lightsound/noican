@@ -105,9 +105,12 @@ model needs to fill its pipeline, and fades back in. The dip is roughly
 (50 ms of delay) should be noticeably longer than switching between the
 FastEnhancer variants (10.7 ms).
 
-**Listen specifically for a click at either end of the dip.** The ramp is unit
-tested, but the interaction between the ramp and a real model's priming is not,
-and it is the part most likely to be subtly wrong.
+**Listen specifically for a click at either end of the dip.** CI switches
+between two real models — one at 48 kHz, one resampled from 16 kHz — while audio
+flows, and fails if any sample-to-sample step exceeds the steady state by much;
+removing the ramp makes that test fail. What CI cannot judge is whether the dip
+*sounds* like a deliberate change rather than a fault, which is what you are
+listening for.
 
 ## 8. The speaker gate, which needs enrolling first
 

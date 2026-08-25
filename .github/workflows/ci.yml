@@ -187,6 +187,26 @@ jobs:
           print("the gate kept the enrolled speaker and attenuated the other")
           EOF
 
+  # The engine's switching tests against real models are ignored by default
+  # because they need weights on disk. They are the only coverage of a switch
+  # that crosses a sample rate, so CI has to ask for them explicitly.
+  realtime:
+    name: switching real models
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Fetch the two models the tests switch between
+        run: cargo run --release -p noican-cli -- fetch fastenhancer-t gtcrn
+      - name: Switch between them while audio flows
+        # Single-threaded: both tests pace themselves against a real clock, and
+        # sharing cores with each other makes the pacing meaningless.
+        run: |
+          cargo test --release -p noican-engine --test switching_real_models \
+            -- --ignored --test-threads=1 --nocapture
+
   macos:
     name: macOS build
     runs-on: macos-latest

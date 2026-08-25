@@ -500,6 +500,7 @@ name = "noican-engine"
 version = "0.1.0"
 dependencies = [
  "noican-core",
+ "noican-models",
  "rtrb",
  "thiserror",
  "tracing",
