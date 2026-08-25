@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = ["crates/noican-core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[workspace.dependencies]
+noican-core = { path = "crates/noican-core" }
+thiserror = "2.0"
+
+# Quality-gate policy (docs/tech-research.md §12): everything starts as an
+# error; opt-outs require `#[allow]` / `#[expect]` with a written reason.
+[workspace.lints.rust]
+warnings = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+# Enforce the "reason comment required" half of the policy mechanically.
+allow_attributes_without_reason = "deny"
+unwrap_used = "deny"
+dbg_macro = "deny"
+todo = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[profile.release]
+lto = "thin"

@@ -1,0 +1,5 @@
+[toolchain]
+# Pinned so that clippy lint sets (pedantic/nursery are moving targets) do not
+# break CI on unrelated days. Bump deliberately.
+channel = "1.98.0"
+components = ["clippy", "rustfmt"]

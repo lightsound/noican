@@ -1,0 +1,38 @@
+# cargo-deny configuration (quality gate; see docs/tech-research.md §12).
+# Everything is as strict as practical; exceptions need a reason comment.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+# Workspace crates are unpublished (publish = false) and the project's own
+# distribution licensing is decided at ship time (§11); skip them here.
+private = { ignore = true }
+# Permissive licenses only: the app side may be sold closed-source
+# (docs/tech-research.md §11 licensing notes). GPL code is confined to the
+# driver repository and must never appear in this dependency graph.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
