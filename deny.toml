@@ -32,6 +32,9 @@ confidence-threshold = 0.8
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Internal workspace path dependencies carry no version; that is not the
+# supply-chain risk this rule targets.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"

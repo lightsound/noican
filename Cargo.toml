@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/noican-core"]
+members = ["crates/noican-core", "crates/noican-models", "crates/noican-cli"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,7 +10,16 @@ publish = false
 
 [workspace.dependencies]
 noican-core = { path = "crates/noican-core" }
+noican-models = { path = "crates/noican-models" }
 thiserror = "2.0"
+ort = "=2.0.0-rc.13"
+ureq = "3.4"
+sha2 = "0.11"
+anyhow = "1.0"
+clap = { version = "4.6", features = ["derive"] }
+hound = "3.5"
+rubato = "5.0"
+audioadapter-buffers = "5.2"
 
 # Quality-gate policy (docs/tech-research.md §12): everything starts as an
 # error; opt-outs require `#[allow]` / `#[expect]` with a written reason.

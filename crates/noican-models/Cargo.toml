@@ -1,0 +1,17 @@
+[package]
+name = "noican-models"
+description = "Model registry, weight fetching, and ONNX-based stage implementations"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+noican-core = { workspace = true }
+thiserror = { workspace = true }
+ort = { workspace = true }
+ureq = { workspace = true }
+sha2 = { workspace = true }
+
+[lints]
+workspace = true
