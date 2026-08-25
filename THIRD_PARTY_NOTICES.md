@@ -22,6 +22,8 @@ for the exact URLs and SHA-256 digests.
 | DPDFNet 2 / 4 / 8 and the 48 kHz HR variant | Apache-2.0 | Ceva Inc., redistributed via the sherpa-onnx `speech-enhancement-models` release — <https://github.com/k2-fsa/sherpa-onnx> |
 | GTCRN (`gtcrn_simple`) | Apache-2.0 | Xiaobin Rong — <https://github.com/Xiaobin-Rong/gtcrn>, redistributed via sherpa-onnx |
 | UL-UNAS (`ulunas_stream_simple`) | Apache-2.0 | Xiaobin Rong — <https://github.com/Xiaobin-Rong/ul-unas> (IEEE TASLP 2026, arXiv:2503.00340) |
+| DeepFilterNet3 (`DeepFilterNet3_onnx.tar.gz`) | MIT OR Apache-2.0 | Hendrik Schröter et al. — <https://github.com/Rikorose/DeepFilterNet> |
+| Hush | Apache-2.0 | Weya AI — <https://huggingface.co/weya-ai/hush> |
 
 ## Reference implementations consulted
 
@@ -30,7 +32,7 @@ from, and each is credited at the point of use in the code.
 
 | Project | Licence | What was taken |
 |---|---|---|
-| [DeepFilterNet](https://github.com/Rikorose/DeepFilterNet) (`libDF`) | MIT OR Apache-2.0 | The ERB filter-bank construction, the exponential feature normalisation and its seed values, and the analysis window scaling, ported to `crates/noican-models` |
+| [DeepFilterNet](https://github.com/Rikorose/DeepFilterNet) (`libDF`) | MIT OR Apache-2.0 | The whole `DeepFilterNet` front-end in `crates/noican-models/src/dfn`: the ERB filter-bank construction, the exponential feature normalisation and its seed values, the analysis window scaling, the ERB mask interpolation, and the order-5 complex deep filter. Its `tract` runtime was also built locally and used as the reference our output is verified against |
 | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) | Apache-2.0 | How a DPDFNet graph is driven: the metadata contract, the layout of its state tensor, and where the normalisation seeds go inside it |
 | [kaldi-native-fbank](https://github.com/csukuangfj/kaldi-native-fbank) | Apache-2.0 | The weighted-overlap-add normalisation used by the streaming inverse transform, and the Vorbis window definition |
 | [GTCRN](https://github.com/Xiaobin-Rong/gtcrn) / [UL-UNAS](https://github.com/Xiaobin-Rong/ul-unas) | Apache-2.0 | The per-frame cache-threading protocol and each model's analysis window |

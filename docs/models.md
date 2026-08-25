@@ -9,7 +9,7 @@ failure.
 ## Getting the weights
 
 ```bash
-# Everything in the catalog (~62 MB).
+# Everything in the catalog (~78 MB).
 cargo run -p noican-cli -- fetch
 
 # Or just what you need.
@@ -41,6 +41,8 @@ interrupted transfer can never be mistaken for a usable model.
 | `dpdfnet8-16k` | 16 kHz | 160 | 800 smp (50.0 ms) | Heaviest DPDFNet published |
 | `gtcrn` | 16 kHz | 256 | 256 smp (16.0 ms) | 48K parameters; the simplest graph in the catalog |
 | `ul-unas` | 16 kHz | 256 | 256 smp (16.0 ms) | GTCRN's successor; the low-latency-mode candidate |
+| `deepfilternet3` | 48 kHz | 384000 | 1440 smp (30.0 ms) | The reference baseline. A **block stage**: ~8 s of latency, offline use only |
+| `hush` | 16 kHz | 128000 | 160 smp (10.0 ms) | The only speaker-suppression model. Also a block stage. Attenuates ~14 dB even on clean speech, which is the model's own behaviour |
 
 Delays were measured rather than assumed — no published export declares one.
 Reproduce with:
@@ -58,6 +60,19 @@ substitute.
 analysis/synthesis round trip. It does not include the block accumulation and
 resampling that `StageRunner` adds on top; `noican process` reports the
 end-to-end figure per model.
+
+### Two of them are block stages
+
+`deepfilternet3` and `hush` ship as *sequence* graphs whose recurrent state is
+not exposed, so they cannot be driven frame by frame. They run a block at a time
+instead, with a warm-up context long enough that the result matches
+`DeepFilterNet`'s own runtime exactly — which costs about eight seconds of
+latency and 50 % more compute than the audio strictly needs. That is fine for
+the comparison they exist for, and it rules them out of the live path until the
+graphs are re-exported with explicit state (`docs/tech-research.md` §5.5).
+
+Because of that block size they also need at least ~8 seconds of input before
+they produce anything.
 
 ## Comparing models
 
