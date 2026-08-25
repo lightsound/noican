@@ -53,7 +53,7 @@ pub fn run(args: &ProcessArgs) -> Result<()> {
     let mut models = selected_models(&args.models, args.all_models);
     deduplicate(&mut models);
     let token = std::env::var("NOICAN_HF_TOKEN").ok();
-    let embedding = enrollment_embedding(&args, &store, token.as_deref())?;
+    let embedding = enrollment_embedding(args, &store, token.as_deref())?;
     let delay_compensation = if args.preserve_delay {
         DelayCompensation::Preserve
     } else {
@@ -66,7 +66,7 @@ pub fn run(args: &ProcessArgs) -> Result<()> {
             &args.output_dir,
             &store,
             &models,
-            &embedding,
+            embedding.as_ref(),
             token.as_deref(),
             delay_compensation,
         )?;
@@ -84,7 +84,7 @@ fn process_input(
     output_root: &Path,
     store: &ModelStore,
     models: &[ModelId],
-    embedding: &Option<[f32; EMBEDDING_DIMENSIONS]>,
+    embedding: Option<&[f32; EMBEDDING_DIMENSIONS]>,
     token: Option<&str>,
     delay_compensation: DelayCompensation,
 ) -> Result<usize> {
@@ -103,7 +103,7 @@ fn process_input(
             model: *model,
             store,
             hugging_face_token: token,
-            speaker_embedding: embedding.as_ref(),
+            speaker_embedding: embedding,
         };
         let result = process_model(&run_directory, *model, &request, &input, delay_compensation);
         results.push(match result {
