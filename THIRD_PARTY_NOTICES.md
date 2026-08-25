@@ -35,6 +35,14 @@ from, and each is credited at the point of use in the code.
 | [kaldi-native-fbank](https://github.com/csukuangfj/kaldi-native-fbank) | Apache-2.0 | The weighted-overlap-add normalisation used by the streaming inverse transform, and the Vorbis window definition |
 | [GTCRN](https://github.com/Xiaobin-Rong/gtcrn) / [UL-UNAS](https://github.com/Xiaobin-Rong/ul-unas) | Apache-2.0 | The per-frame cache-threading protocol and each model's analysis window |
 | [FastEnhancer](https://github.com/aask1357/fastenhancer) | MIT | The waveform streaming protocol: a hop-sized input chunk, an `n_fft - hop` output delay, and which caches hold the overlap buffers |
+| [CoreAudioTapKit](https://github.com/CJStanfield/CoreAudioTapKit) | MIT | The aggregate-device creation dictionary and the wait-for-`DeviceIsAlive` handshake |
+| [cubeb-coreaudio-rs](https://github.com/mozilla/cubeb-coreaudio-rs) | ISC | That drift compensation belongs on the non-clock sub-device only |
+| [NoNoise-Mac](https://github.com/ivalsaraj/NoNoise-Mac) | MIT | That a device's channel count must be summed from its stream configuration rather than inferred from the property's size, and that the nominal sample rate must be read back after being set |
+
+Read but deliberately **not** drawn on: [voce](https://github.com/espetro/voce) is
+AGPL-3.0, which would force this entire application open. No code, structure, or
+comment from it appears here, and it is listed only so that the exclusion is on
+the record.
 
 ## Rust dependencies
 
