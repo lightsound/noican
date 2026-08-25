@@ -10,6 +10,61 @@ use crate::{
     PIPELINE_SAMPLE_RATE,
 };
 
+/// Resample a complete mono clip with delay-compensated FFT conversion.
+///
+/// This helper is intended for file input and enrollment preparation. Live
+/// model adaptation uses [`RateAdapter`] so converter state persists across
+/// frames.
+///
+/// # Errors
+///
+/// Returns [`StageError::InvalidConfiguration`] for a zero sample rate and
+/// [`StageError::Resampling`] if Rubato rejects the conversion.
+pub fn resample_clip(
+    input: &[f32],
+    input_sample_rate: u32,
+    output_sample_rate: u32,
+) -> Result<Vec<f32>, StageError> {
+    if input_sample_rate == 0 || output_sample_rate == 0 {
+        return Err(StageError::InvalidConfiguration {
+            stage: "file-resampler",
+            message: "sample rates must be non-zero".to_owned(),
+        });
+    }
+    if input_sample_rate == output_sample_rate {
+        return Ok(input.to_vec());
+    }
+    let input_rate =
+        usize::try_from(input_sample_rate).map_err(|error| StageError::InvalidConfiguration {
+            stage: "file-resampler",
+            message: error.to_string(),
+        })?;
+    let output_rate =
+        usize::try_from(output_sample_rate).map_err(|error| StageError::InvalidConfiguration {
+            stage: "file-resampler",
+            message: error.to_string(),
+        })?;
+    let adapter = InterleavedOwned::new_from(input.to_vec(), 1, input.len())
+        .map_err(|error| StageError::Resampling(error.to_string()))?;
+    let mut resampler = Fft::<f32>::new(input_rate, output_rate, 1_024, 1, FixedSync::Input)
+        .map_err(|error| StageError::Resampling(error.to_string()))?;
+    let mut output = resampler
+        .process_all(&adapter, input.len(), None)
+        .map_err(|error| StageError::Resampling(error.to_string()))?
+        .take_data();
+    let expected = input
+        .len()
+        .checked_mul(output_rate)
+        .ok_or_else(|| StageError::InvalidConfiguration {
+            stage: "file-resampler",
+            message: "output length overflow".to_owned(),
+        })?
+        .div_ceil(input_rate);
+    output.resize(expected, 0.0);
+    output.truncate(expected);
+    Ok(output)
+}
+
 /// Adapts a native model stage to noican's fixed 48 kHz, 10 ms contract.
 ///
 /// The adapter retains both resampler state and partial model frames. All
