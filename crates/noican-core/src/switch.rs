@@ -83,6 +83,11 @@ impl std::fmt::Debug for SwitchingEngine {
     }
 }
 
+/// Longest supported fade half. Bounds the fade so [`ratio`] is exact
+/// arithmetic (`u16` → `f32` is lossless); ~1.37 s at 48 kHz, orders of
+/// magnitude above any sensible switch fade.
+pub const MAX_FADE_SAMPLES: usize = u16::MAX as usize;
+
 impl SwitchingEngine {
     /// Creates a switching engine and its producer-side publisher.
     ///
@@ -93,7 +98,8 @@ impl SwitchingEngine {
     ///
     /// # Errors
     ///
-    /// Returns [`StageError::Unsupported`] when `fade_samples` is zero.
+    /// Returns [`StageError::Unsupported`] when `fade_samples` is zero or
+    /// exceeds [`MAX_FADE_SAMPLES`].
     pub fn new(
         initial: Box<dyn Stage>,
         fade_samples: usize,
@@ -103,6 +109,12 @@ impl SwitchingEngine {
             return Err(StageError::Unsupported(
                 "switch fade must contain at least one sample".to_owned(),
             ));
+        }
+        if fade_samples > MAX_FADE_SAMPLES {
+            return Err(StageError::Unsupported(format!(
+                "switch fade of {fade_samples} samples exceeds the supported \
+                 maximum of {MAX_FADE_SAMPLES}"
+            )));
         }
         let queue = Arc::new(ArrayQueue::new(1));
         let publisher = StagePublisher {
@@ -200,7 +212,11 @@ impl SwitchingEngine {
     }
 }
 
+/// Exact fade gain: both operands fit `u16` (enforced by
+/// [`MAX_FADE_SAMPLES`] in [`SwitchingEngine::new`]) and `u16` → `f32` is
+/// lossless, so no precision-loss opt-out is needed.
 fn ratio(numerator: usize, denominator: usize) -> f32 {
+    debug_assert!(denominator <= MAX_FADE_SAMPLES);
     let numerator = u16::try_from(numerator.min(denominator)).unwrap_or(u16::MAX);
     let denominator = u16::try_from(denominator).unwrap_or(u16::MAX);
     f32::from(numerator) / f32::from(denominator)
@@ -250,6 +266,16 @@ mod tests {
             SwitchingEngine::new(boxed("a", 1.0), 0, 480),
             Err(StageError::Unsupported(_))
         ));
+    }
+
+    #[test]
+    fn oversized_fade_is_rejected() {
+        assert!(matches!(
+            SwitchingEngine::new(boxed("a", 1.0), MAX_FADE_SAMPLES + 1, 480),
+            Err(StageError::Unsupported(_))
+        ));
+        let bounded = SwitchingEngine::new(boxed("a", 1.0), MAX_FADE_SAMPLES, 480);
+        assert!(bounded.is_ok());
     }
 
     #[test]
