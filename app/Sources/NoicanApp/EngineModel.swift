@@ -47,7 +47,7 @@ final class EngineModel: ObservableObject {
     @Published var lastError: String?
 
     private var handle: OpaquePointer?
-    private var timer: Timer?
+    private var pollTask: Task<Void, Never>?
 
     /// Model weights directory: ~/Library/Application Support/noican/models
     /// (override with the NOICAN_MODELS_DIR environment variable).
@@ -123,8 +123,8 @@ final class EngineModel: ObservableObject {
         noican_stop(rawHandle)
         isRunning = false
         statusLine = "stopped"
-        timer?.invalidate()
-        timer = nil
+        pollTask?.cancel()
+        pollTask = nil
     }
 
     func switchModel(to modelID: String) {
@@ -140,9 +140,10 @@ final class EngineModel: ObservableObject {
     }
 
     private func startPolling() {
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+        pollTask?.cancel()
+        pollTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
                 self?.pollStatus()
             }
         }
