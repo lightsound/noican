@@ -42,27 +42,7 @@ enum AudioDeviceCatalog {
                 operation: "AudioObjectGetPropertyData(devices)"
             )
         }
-        return identifiers.compactMap { identifier in
-            guard
-                let uid = try? stringProperty(
-                    identifier,
-                    selector: kAudioDevicePropertyDeviceUID
-                ),
-                let name = try? stringProperty(
-                    identifier,
-                    selector: kAudioObjectPropertyName
-                )
-            else {
-                return nil
-            }
-            return AudioDeviceInfo(
-                id: identifier,
-                uid: uid,
-                name: name,
-                inputChannels: channelCount(identifier, scope: kAudioObjectPropertyScopeInput),
-                outputChannels: channelCount(identifier, scope: kAudioObjectPropertyScopeOutput)
-            )
-        }
+        return identifiers.compactMap(deviceInfo)
     }
 
     static func virtualOutput(in devices: [AudioDeviceInfo]) -> AudioDeviceInfo? {
@@ -73,6 +53,28 @@ enum AudioDeviceCatalog {
             let normalized = device.name.lowercased()
             return normalized.contains("noican") || normalized.contains("blackhole")
         }
+    }
+
+    private static func deviceInfo(_ identifier: AudioObjectID) -> AudioDeviceInfo? {
+        guard
+            let uid = try? stringProperty(
+                identifier,
+                selector: kAudioDevicePropertyDeviceUID
+            ),
+            let name = try? stringProperty(
+                identifier,
+                selector: kAudioObjectPropertyName
+            )
+        else {
+            return nil
+        }
+        return AudioDeviceInfo(
+            id: identifier,
+            uid: uid,
+            name: name,
+            inputChannels: channelCount(identifier, scope: kAudioObjectPropertyScopeInput),
+            outputChannels: channelCount(identifier, scope: kAudioObjectPropertyScopeOutput)
+        )
     }
 
     private static func stringProperty(

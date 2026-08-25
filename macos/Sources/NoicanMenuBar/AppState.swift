@@ -42,7 +42,11 @@ final class AppState: ObservableObject {
     }
 
     func setEnabled(_ enabled: Bool) {
-        enabled ? start() : stop()
+        if enabled {
+            start()
+        } else {
+            stop()
+        }
     }
 
     func applySelectedModel() {

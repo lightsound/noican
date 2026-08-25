@@ -16,12 +16,12 @@ final class AggregateDevice {
         let subdevices: [[String: Any]] = [
             [
                 kAudioSubDeviceUIDKey: input.uid,
-                kAudioSubDeviceDriftCompensationKey: false,
+                kAudioSubDeviceDriftCompensationKey: false
             ],
             [
                 kAudioSubDeviceUIDKey: virtualOutput.uid,
-                kAudioSubDeviceDriftCompensationKey: true,
-            ],
+                kAudioSubDeviceDriftCompensationKey: true
+            ]
         ]
         let description: [String: Any] = [
             kAudioAggregateDeviceNameKey: "noican Private Aggregate",
@@ -30,7 +30,7 @@ final class AggregateDevice {
             kAudioAggregateDeviceClockDeviceKey: input.uid,
             kAudioAggregateDeviceIsPrivateKey: true,
             kAudioAggregateDeviceIsStackedKey: false,
-            kAudioAggregateDeviceSubDeviceListKey: subdevices,
+            kAudioAggregateDeviceSubDeviceListKey: subdevices
         ]
         var aggregate = AudioObjectID(kAudioObjectUnknown)
         try check(
