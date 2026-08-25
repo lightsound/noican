@@ -18,7 +18,9 @@ pub mod error;
 pub mod framed;
 pub mod resample;
 pub mod stage;
+pub mod switch;
 
 pub use error::StageError;
 pub use framed::FramedStage;
 pub use stage::{ENGINE_SAMPLE_RATE, FrameProcessor, Passthrough, Stage};
+pub use switch::{StageSwitcher, SwitchHandle};
