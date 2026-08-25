@@ -34,13 +34,15 @@ final class EngineController {
     }
 
     /// What the engine is doing, refreshed on a timer while running.
+    ///
+    /// Deliberately excludes the level meters. This value is observed by the
+    /// menu bar label, so anything that changes at meter rate would re-render
+    /// the label ten times a second even while the popover is closed.
     struct Status: Equatable {
         var running = false
         var bypassed = false
         var switching = false
         var dropouts: UInt64 = 0
-        var inputPeak: Float = 0
-        var outputPeak: Float = 0
         var latencyMilliseconds: Float = 0
     }
 
@@ -49,6 +51,10 @@ final class EngineController {
     private(set) var outputDevices: [Device] = []
     private(set) var status = Status()
     private(set) var lastError: String?
+
+    /// Peak levels, kept apart from `status` so only the meter views observe
+    /// them. See `Status` for why that separation matters.
+    let meters = MeterModel()
 
     /// UID of the microphone to capture. Persisted across launches.
     var selectedInputUID: String? {
@@ -243,15 +249,22 @@ final class EngineController {
         guard let engine else { return }
         var raw = NoicanStatus()
         noican_engine_status(engine, &raw)
-        status = Status(
+
+        meters.inputPeak = raw.input_peak
+        meters.outputPeak = raw.output_peak
+
+        // Assign only on a real change: `status` drives the menu bar label, and
+        // an unconditional write would invalidate it on every poll.
+        let updated = Status(
             running: raw.running,
             bypassed: raw.bypassed,
             switching: raw.switching,
             dropouts: raw.dropouts,
-            inputPeak: raw.input_peak,
-            outputPeak: raw.output_peak,
             latencyMilliseconds: raw.latency_ms
         )
+        if updated != status {
+            status = updated
+        }
     }
 
     // MARK: - Bridging helpers

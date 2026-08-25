@@ -87,8 +87,8 @@ struct MenuContent: View {
 
     private var statusSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            LevelMeter(title: "In", level: controller.status.inputPeak)
-            LevelMeter(title: "Out", level: controller.status.outputPeak)
+            LevelMeter(title: "In", level: controller.meters.inputPeak)
+            LevelMeter(title: "Out", level: controller.meters.outputPeak)
             HStack {
                 Text(latencyText)
                 Spacer()
