@@ -325,7 +325,7 @@ pub unsafe extern "C" fn noican_model_display_name(
     capacity: usize,
 ) -> usize {
     catalog().nth(index).map_or(0, |spec| {
-        let name = spec.map_or("Off (bypass)", |spec| spec.display_name);
+        let name = spec.map_or("Passthrough (no processing)", |spec| spec.display_name);
         unsafe { copy_string(name, buffer, capacity) }
     })
 }
@@ -423,7 +423,7 @@ mod tests {
         let name = unsafe { CStr::from_ptr(buffer.as_ptr()) }
             .to_str()
             .expect("display names are UTF-8");
-        assert_eq!(name, "Off (bypass)");
+        assert_eq!(name, "Passthrough (no processing)");
         assert_eq!(noican_model_needs_enrollment(0), 0);
 
         // tse-48k is the only enrollment-gated stage in the registry today.
