@@ -109,7 +109,33 @@ FastEnhancer variants (10.7 ms).
 tested, but the interaction between the ramp and a real model's priming is not,
 and it is the part most likely to be subtly wrong.
 
-## 8. Use it in a real call
+## 8. The speaker gate, which needs enrolling first
+
+Two of the fourteen models carry conditions the others do not.
+
+`speaker-gate` needs to know whose voice to keep. Enrol before selecting it, or
+the picker will show "no profile ...; run `noican enroll` first" — which is the
+intended message, not a bug:
+
+```sh
+noican enroll me-talking.wav        # 10-20 s of just you, several files is better
+```
+
+Then select it and have somebody else talk while you stay quiet. Expect your own
+voice to pass untouched and theirs to drop by about 24 dB — but not instantly.
+The gate needs about 1.5 s of speech to recognise anyone, so it suppresses a
+sustained other voice and will not catch a single interjected word
+(`docs/tech-research.md` §6.4). **This is the part most likely to disappoint in a
+real room**: the thresholds come from corpus recordings, and a noisy room, a
+different microphone, or a family member with a similar voice could narrow the
+margin they rely on. If your own voice gets gated, say so — that is the failure
+that matters and the one this cannot be tuned for without your recordings.
+
+`deepfilternet3` and `hush` are block stages with about eight seconds of
+latency. They are for offline comparison; do not expect them to be usable in a
+call until their graphs are re-exported with explicit recurrent state.
+
+## 9. Use it in a real call
 
 Select BlackHole as the microphone in Zoom, Meet, or Discord and have a
 conversation. Watch for:
@@ -118,7 +144,7 @@ conversation. Watch for:
 - Whether meeting apps object to the device's reported latency
   (`docs/tech-research.md` §13, open question 6).
 
-## 9. Long-session drift
+## 10. Long-session drift
 
 The reason for the private aggregate device is that the microphone and the
 virtual device run on different clocks; unhandled drift produces a click every
