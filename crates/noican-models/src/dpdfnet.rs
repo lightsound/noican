@@ -81,9 +81,12 @@ impl DpdfNet {
     pub fn load(path: impl AsRef<Path>, variant: DpdfNetVariant) -> Result<Self, StageError> {
         let descriptor = variant.descriptor();
         let session = Session::builder()
-            .and_then(|builder| builder.with_intra_threads(1))
-            .and_then(|builder| builder.with_inter_threads(1))
-            .and_then(|builder| builder.commit_from_file(path))
+            .map_err(|error| backend_error(descriptor, error))?
+            .with_intra_threads(1)
+            .map_err(|error| backend_error(descriptor, error))?
+            .with_inter_threads(1)
+            .map_err(|error| backend_error(descriptor, error))?
+            .commit_from_file(path)
             .map_err(|error| backend_error(descriptor, error))?;
         validate_metadata(&session, variant)?;
         let state_size = metadata_usize(&session, descriptor, "state_size")?;
@@ -145,7 +148,7 @@ impl AudioStage for DpdfNet {
             let (shape, values) = outputs["spec_e"]
                 .try_extract_tensor::<f32>()
                 .map_err(|error| backend_error(descriptor, error))?;
-            if shape.as_ref() != [1, 1, SPECTRUM_BINS as i64, 2] {
+            if shape.as_ref() != [1, 1, 481, 2] {
                 return Err(StageError::Backend {
                     stage: descriptor.id,
                     message: format!("unexpected spec_e shape {shape:?}"),

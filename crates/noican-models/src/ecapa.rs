@@ -45,9 +45,12 @@ impl Ecapa {
         filterbank_path: impl AsRef<Path>,
     ) -> Result<Self, EnrollmentError> {
         let session = Session::builder()
-            .and_then(|builder| builder.with_intra_threads(1))
-            .and_then(|builder| builder.with_inter_threads(1))
-            .and_then(|builder| builder.commit_from_file(model_path))
+            .map_err(|error| EnrollmentError::Onnx(error.to_string()))?
+            .with_intra_threads(1)
+            .map_err(|error| EnrollmentError::Onnx(error.to_string()))?
+            .with_inter_threads(1)
+            .map_err(|error| EnrollmentError::Onnx(error.to_string()))?
+            .commit_from_file(model_path)
             .map_err(|error| EnrollmentError::Onnx(error.to_string()))?;
         let fbank = Fbank::load(filterbank_path)?;
         Ok(Self { session, fbank })

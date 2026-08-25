@@ -369,6 +369,7 @@ fn sha256_file(path: &Path) -> Result<String, AssetError> {
 }
 
 fn sha256_reader(mut reader: impl Read) -> io::Result<String> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     loop {
@@ -378,7 +379,13 @@ fn sha256_reader(mut reader: impl Read) -> io::Result<String> {
         }
         hasher.update(&buffer[..count]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    let digest = hasher.finalize();
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    Ok(encoded)
 }
 
 #[cfg(test)]

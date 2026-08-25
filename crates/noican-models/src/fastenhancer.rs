@@ -94,9 +94,12 @@ impl FastEnhancer {
     pub fn load(path: impl AsRef<Path>, variant: FastEnhancerVariant) -> Result<Self, StageError> {
         let descriptor = variant.descriptor();
         let session = Session::builder()
-            .and_then(|builder| builder.with_intra_threads(1))
-            .and_then(|builder| builder.with_inter_threads(1))
-            .and_then(|builder| builder.commit_from_file(path))
+            .map_err(|error| backend_error(descriptor, error))?
+            .with_intra_threads(1)
+            .map_err(|error| backend_error(descriptor, error))?
+            .with_inter_threads(1)
+            .map_err(|error| backend_error(descriptor, error))?
+            .commit_from_file(path)
             .map_err(|error| backend_error(descriptor, error))?;
         let caches = make_caches(variant);
         Ok(Self {
@@ -141,7 +144,7 @@ impl AudioStage for FastEnhancer {
             let (shape, values) = outputs["wav_out"]
                 .try_extract_tensor::<f32>()
                 .map_err(|error| backend_error(descriptor, error))?;
-            if shape.as_ref() != [1, FRAME_SAMPLES] {
+            if shape.as_ref() != [1, 512] {
                 return Err(StageError::Backend {
                     stage: descriptor.id,
                     message: format!("unexpected wav_out shape {shape:?}"),

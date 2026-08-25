@@ -53,9 +53,12 @@ impl UlUnas {
     /// Returns [`StageError::Backend`] if ONNX Runtime rejects the graph.
     pub fn load(path: impl AsRef<Path>) -> Result<Self, StageError> {
         let session = Session::builder()
-            .and_then(|builder| builder.with_intra_threads(1))
-            .and_then(|builder| builder.with_inter_threads(1))
-            .and_then(|builder| builder.commit_from_file(path))
+            .map_err(backend_error)?
+            .with_intra_threads(1)
+            .map_err(backend_error)?
+            .with_inter_threads(1)
+            .map_err(backend_error)?
+            .commit_from_file(path)
             .map_err(backend_error)?;
         let stft =
             StreamingStft::new(FFT_SIZE, FRAME_SAMPLES, Window::Hann).map_err(backend_error)?;

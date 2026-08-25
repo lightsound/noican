@@ -59,9 +59,12 @@ impl Tse {
     ) -> Result<Self, StageError> {
         validate_embedding(&embedding)?;
         let session = Session::builder()
-            .and_then(|builder| builder.with_intra_threads(1))
-            .and_then(|builder| builder.with_inter_threads(1))
-            .and_then(|builder| builder.commit_from_file(path))
+            .map_err(backend_error)?
+            .with_intra_threads(1)
+            .map_err(backend_error)?
+            .with_inter_threads(1)
+            .map_err(backend_error)?
+            .commit_from_file(path)
             .map_err(backend_error)?;
         Ok(Self {
             session,
@@ -125,7 +128,7 @@ impl AudioStage for Tse {
             let (shape, values) = outputs["extracted_chunk"]
                 .try_extract_tensor::<f32>()
                 .map_err(backend_error)?;
-            if shape.as_ref() != [1, FRAME_SAMPLES as i64] {
+            if shape.as_ref() != [1, 480] {
                 return Err(StageError::Backend {
                     stage: DESCRIPTOR.id,
                     message: format!("unexpected extracted_chunk shape {shape:?}"),

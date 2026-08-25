@@ -1,6 +1,10 @@
 //! DeepFilterNet3 baseline and Hush stages using the upstream Rust runtime.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::mpsc::{sync_channel, Receiver, SyncSender},
+    thread::{self, JoinHandle},
+};
 
 use df::tract::{DfParams, DfTract, ReduceMask, RuntimeParams};
 use ndarray015::{ArrayView2, ArrayViewMut2};
@@ -61,9 +65,10 @@ enum ModelSource {
 /// Stateful DeepFilterNet-family stage.
 pub struct DeepFilterStage {
     variant: DeepFilterVariant,
-    source: ModelSource,
     descriptor: StageDescriptor,
-    model: DfTract,
+    commands: SyncSender<WorkerCommand>,
+    responses: Receiver<WorkerResponse>,
+    worker: Option<JoinHandle<()>>,
 }
 
 impl DeepFilterStage {
@@ -90,34 +95,30 @@ impl DeepFilterStage {
     }
 
     fn build(variant: DeepFilterVariant, source: ModelSource) -> Result<Self, StageError> {
-        let params = load_params(variant, &source)?;
-        let runtime = runtime_params(variant);
-        let model =
-            DfTract::new(params, &runtime).map_err(|error| backend_error(variant, error))?;
-        let sample_rate = u32::try_from(model.sr).map_err(|error| backend_error(variant, error))?;
-        let algorithmic_delay_samples = model
-            .lookahead
-            .checked_add(1)
-            .and_then(|frames| frames.checked_mul(model.hop_size))
-            .ok_or_else(|| StageError::InvalidConfiguration {
-                stage: variant.id(),
-                message: "DeepFilterNet latency overflow".to_owned(),
-            })?;
-        let descriptor = StageDescriptor {
-            id: variant.id(),
-            display_name: variant.display_name(),
-            kind: variant.kind(),
-            sample_rate,
-            frame_samples: model.hop_size,
-            algorithmic_delay_samples,
-            tail_frames: model.lookahead + 1,
-            enrollment: EnrollmentRequirement::None,
+        let (command_sender, command_receiver) = sync_channel(1);
+        let (response_sender, response_receiver) = sync_channel(1);
+        let worker = thread::Builder::new()
+            .name(format!("noican-{}", variant.id()))
+            .spawn(move || run_worker(variant, source, command_receiver, response_sender))
+            .map_err(|error| backend_error(variant, error))?;
+        let descriptor = match response_receiver.recv() {
+            Ok(WorkerResponse::Ready(result)) => {
+                result.map_err(|message| backend_error(variant, message))?
+            }
+            Ok(_unexpected) => {
+                return Err(backend_error(
+                    variant,
+                    "worker returned a processing response before readiness",
+                ));
+            }
+            Err(error) => return Err(backend_error(variant, error)),
         };
         Ok(Self {
             variant,
-            source,
             descriptor,
-            model,
+            commands: command_sender,
+            responses: response_receiver,
+            worker: Some(worker),
         })
     }
 }
@@ -129,22 +130,153 @@ impl AudioStage for DeepFilterStage {
 
     fn process_frame(&mut self, input: &[f32], output: &mut [f32]) -> Result<(), StageError> {
         validate_frame_lengths(self.descriptor, input, output)?;
-        let input = ArrayView2::from_shape((1, input.len()), input)
+        self.commands
+            .send(WorkerCommand::Process(input.to_vec()))
             .map_err(|error| backend_error(self.variant, error))?;
-        let output = ArrayViewMut2::from_shape((1, output.len()), output)
-            .map_err(|error| backend_error(self.variant, error))?;
-        self.model
-            .process(input, output)
-            .map_err(|error| backend_error(self.variant, error))?;
+        let processed = match self.responses.recv() {
+            Ok(WorkerResponse::Processed(result)) => {
+                result.map_err(|message| backend_error(self.variant, message))?
+            }
+            Ok(_unexpected) => {
+                return Err(backend_error(
+                    self.variant,
+                    "worker returned a non-processing response",
+                ));
+            }
+            Err(error) => return Err(backend_error(self.variant, error)),
+        };
+        if processed.len() != output.len() {
+            return Err(backend_error(
+                self.variant,
+                format!(
+                    "worker returned {} samples, expected {}",
+                    processed.len(),
+                    output.len()
+                ),
+            ));
+        }
+        output.copy_from_slice(&processed);
         Ok(())
     }
 
     fn reset(&mut self) -> Result<(), StageError> {
-        let params = load_params(self.variant, &self.source)?;
-        self.model = DfTract::new(params, &runtime_params(self.variant))
+        self.commands
+            .send(WorkerCommand::Reset)
             .map_err(|error| backend_error(self.variant, error))?;
-        Ok(())
+        match self.responses.recv() {
+            Ok(WorkerResponse::Reset(result)) => {
+                result.map_err(|message| backend_error(self.variant, message))
+            }
+            Ok(_unexpected) => Err(backend_error(
+                self.variant,
+                "worker returned a non-reset response",
+            )),
+            Err(error) => Err(backend_error(self.variant, error)),
+        }
     }
+}
+
+impl Drop for DeepFilterStage {
+    fn drop(&mut self) {
+        let _ignored = self.commands.send(WorkerCommand::Shutdown);
+        if let Some(worker) = self.worker.take() {
+            let _ignored = worker.join();
+        }
+    }
+}
+
+enum WorkerCommand {
+    Process(Vec<f32>),
+    Reset,
+    Shutdown,
+}
+
+enum WorkerResponse {
+    Ready(Result<StageDescriptor, String>),
+    Processed(Result<Vec<f32>, String>),
+    Reset(Result<(), String>),
+}
+
+fn run_worker(
+    variant: DeepFilterVariant,
+    source: ModelSource,
+    commands: Receiver<WorkerCommand>,
+    responses: SyncSender<WorkerResponse>,
+) {
+    let built = build_worker_model(variant, &source);
+    let (mut model, descriptor) = match built {
+        Ok(value) => value,
+        Err(message) => {
+            let _ignored = responses.send(WorkerResponse::Ready(Err(message)));
+            return;
+        }
+    };
+    if responses
+        .send(WorkerResponse::Ready(Ok(descriptor)))
+        .is_err()
+    {
+        return;
+    }
+    while let Ok(command) = commands.recv() {
+        match command {
+            WorkerCommand::Process(input) => {
+                let result = process_worker_frame(&mut model, descriptor, &input);
+                if responses.send(WorkerResponse::Processed(result)).is_err() {
+                    return;
+                }
+            }
+            WorkerCommand::Reset => {
+                let result = build_worker_model(variant, &source)
+                    .map(|(replacement, _descriptor)| model = replacement);
+                if responses.send(WorkerResponse::Reset(result)).is_err() {
+                    return;
+                }
+            }
+            WorkerCommand::Shutdown => return,
+        }
+    }
+}
+
+fn build_worker_model(
+    variant: DeepFilterVariant,
+    source: &ModelSource,
+) -> Result<(DfTract, StageDescriptor), String> {
+    let params = load_params(variant, source).map_err(|error| error.to_string())?;
+    let model =
+        DfTract::new(params, &runtime_params(variant)).map_err(|error| error.to_string())?;
+    let sample_rate = u32::try_from(model.sr).map_err(|error| error.to_string())?;
+    let algorithmic_delay_samples = model
+        .lookahead
+        .checked_add(1)
+        .and_then(|frames| frames.checked_mul(model.hop_size))
+        .ok_or_else(|| "DeepFilterNet latency overflow".to_owned())?;
+    let descriptor = StageDescriptor {
+        id: variant.id(),
+        display_name: variant.display_name(),
+        kind: variant.kind(),
+        sample_rate,
+        frame_samples: model.hop_size,
+        algorithmic_delay_samples,
+        tail_frames: model.lookahead + 1,
+        enrollment: EnrollmentRequirement::None,
+    };
+    Ok((model, descriptor))
+}
+
+fn process_worker_frame(
+    model: &mut DfTract,
+    descriptor: StageDescriptor,
+    input: &[f32],
+) -> Result<Vec<f32>, String> {
+    let input =
+        ArrayView2::from_shape((1, input.len()), input).map_err(|error| error.to_string())?;
+    let mut output = vec![0.0_f32; descriptor.frame_samples];
+    let output_view = ArrayViewMut2::from_shape((1, output.len()), &mut output)
+        .map_err(|error| error.to_string())?;
+    model
+        .process(input, output_view)
+        .map_err(|error| error.to_string())?;
+    Ok(output)
 }
 
 fn load_params(variant: DeepFilterVariant, source: &ModelSource) -> Result<DfParams, StageError> {
