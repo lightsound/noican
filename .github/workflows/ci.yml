@@ -1,8 +1,10 @@
 name: CI
 
 on:
+  # Every branch, not just main: the gates are only useful if they run before a
+  # pull request exists.
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
   workflow_dispatch:
 
