@@ -38,10 +38,20 @@ impl DpdfNetVariant {
         }
     }
 
-    const fn expected_profile(self) -> &'static str {
+    const fn metadata_profile(self) -> &'static str {
         match self {
             Self::DpdfNet2 => "dpdfnet2_48khz_hr",
-            Self::DpdfNet8 => "dpdfnet8_48khz_hr",
+            // The official Ceva-IP dpdfnet8_48khz_hr file at revision
+            // dd6818d incorrectly retains the DPDFNet2 profile string. Its
+            // larger state tensor and pinned file digest identify the graph.
+            Self::DpdfNet8 => "dpdfnet2_48khz_hr",
+        }
+    }
+
+    const fn expected_state_size(self) -> usize {
+        match self {
+            Self::DpdfNet2 => 56_436,
+            Self::DpdfNet8 => 90_228,
         }
     }
 
@@ -90,6 +100,15 @@ impl DpdfNet {
             .map_err(|error| backend_error(descriptor, error))?;
         validate_metadata(&session, variant)?;
         let state_size = metadata_usize(&session, descriptor, "state_size")?;
+        if state_size != variant.expected_state_size() {
+            return Err(StageError::Backend {
+                stage: descriptor.id,
+                message: format!(
+                    "metadata state_size={state_size}, expected {}",
+                    variant.expected_state_size()
+                ),
+            });
+        }
         let erb_state_size = metadata_usize(&session, descriptor, "erb_norm_state_size")?;
         let spec_state_size = metadata_usize(&session, descriptor, "spec_norm_state_size")?;
         let erb = metadata_floats(&session, descriptor, "erb_norm_init")?;
@@ -190,7 +209,7 @@ fn validate_metadata(session: &Session, variant: DpdfNetVariant) -> Result<(), S
     let descriptor = variant.descriptor();
     for (key, expected) in [
         ("model_type", "dpdfnet"),
-        ("profile", variant.expected_profile()),
+        ("profile", variant.metadata_profile()),
         ("sample_rate", "48000"),
         ("n_fft", "960"),
         ("hop_length", "480"),
