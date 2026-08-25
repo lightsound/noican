@@ -128,12 +128,14 @@ final class EngineController {
         inputDevices = readDevices(noican_input_devices)
         outputDevices = readDevices(noican_output_devices)
 
-        if selectedInputUID == nil || !inputDevices.contains(where: { $0.id == selectedInputUID }) {
+        // A remembered device can disappear between launches, so a selection
+        // that no longer matches anything has to be replaced rather than kept.
+        let inputIsStale = !inputDevices.contains { $0.id == selectedInputUID }
+        if selectedInputUID == nil || inputIsStale {
             selectedInputUID = readString(noican_default_input_uid) ?? inputDevices.first?.id
         }
-        if selectedOutputUID == nil
-            || !outputDevices.contains(where: { $0.id == selectedOutputUID })
-        {
+        let outputIsStale = !outputDevices.contains { $0.id == selectedOutputUID }
+        if selectedOutputUID == nil || outputIsStale {
             selectedOutputUID = readString(noican_suggested_output_uid)
         }
     }
@@ -157,7 +159,7 @@ final class EngineController {
     var canStart: Bool {
         guard let input = selectedInputUID, let output = selectedOutputUID else { return false }
         guard !input.isEmpty, !output.isEmpty, input != output else { return false }
-        return models.first(where: { $0.id == selectedModelID })?.downloaded == true
+        return models.first { $0.id == selectedModelID }?.downloaded == true
     }
 
     /// Starts or stops the audio path.
@@ -179,7 +181,11 @@ final class EngineController {
             output.withCString { outputPointer in
                 selectedModelID.withCString { modelPointer in
                     noican_engine_start(
-                        UnsafeMutablePointer(engine), inputPointer, outputPointer, modelPointer)
+                        UnsafeMutablePointer(engine),
+                        inputPointer,
+                        outputPointer,
+                        modelPointer
+                    )
                 }
             }
         }
@@ -209,8 +215,8 @@ final class EngineController {
 
     private func applyModel(_ modelID: String) {
         guard let engine else { return }
-        let ok = modelID.withCString {
-            noican_engine_set_model(UnsafeMutablePointer(engine), $0)
+        let ok = modelID.withCString { pointer in
+            noican_engine_set_model(UnsafeMutablePointer(engine), pointer)
         }
         lastError = ok ? nil : Self.lastEngineError()
     }
@@ -285,8 +291,11 @@ final class EngineController {
 /// array, so they have to be read through a pointer to the whole tuple.
 private func withCString<T>(_ field: inout T) -> String {
     withUnsafePointer(to: &field) { pointer in
-        pointer.withMemoryRebound(to: CChar.self, capacity: Int(NOICAN_STRING_CAPACITY)) {
-            String(cString: $0)
+        pointer.withMemoryRebound(
+            to: CChar.self,
+            capacity: Int(NOICAN_STRING_CAPACITY)
+        ) { rebound in
+            String(cString: rebound)
         }
     }
 }

@@ -62,7 +62,7 @@ mod imp {
         operation: &'static str,
     ) -> Result<T> {
         let mut value = mem::MaybeUninit::<T>::uninit();
-        let mut size = u32::try_from(mem::size_of::<T>()).unwrap_or(u32::MAX);
+        let mut size = u32::try_from(size_of::<T>()).unwrap_or(u32::MAX);
         // SAFETY: `value` has room for exactly `size` bytes, and Core Audio
         // writes at most that much because it is told the size.
         let status = unsafe {
@@ -131,7 +131,7 @@ mod imp {
     fn channel_count(object: AudioObjectId, scope: u32) -> Result<u32> {
         let address = AudioObjectPropertyAddress::scoped(DEVICE_STREAM_CONFIGURATION, scope);
         let buffer = property_bytes(object, &address, "reading the stream configuration")?;
-        if buffer.len() < mem::size_of::<u32>() {
+        if buffer.len() < size_of::<u32>() {
             return Ok(0);
         }
         // SAFETY: the buffer holds an `AudioBufferList` that Core Audio just
@@ -190,7 +190,7 @@ mod imp {
         let address = AudioObjectPropertyAddress::global(HARDWARE_DEVICES);
         let buffer = property_bytes(SYSTEM_OBJECT, &address, "listing audio devices")?;
         let ids: Vec<AudioObjectId> = buffer
-            .chunks_exact(mem::size_of::<AudioObjectId>())
+            .chunks_exact(size_of::<AudioObjectId>())
             .map(|chunk| AudioObjectId::from_ne_bytes(chunk.try_into().unwrap_or([0; 4])))
             .collect();
 

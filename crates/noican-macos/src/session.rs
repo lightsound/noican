@@ -169,7 +169,17 @@ impl Session {
     }
 
     /// Discards buffered audio, for use after the device restarts.
-    pub const fn flush(&mut self) {
+    // `allow` rather than `expect`: clippy only suggests `const` here away from
+    // macOS, where the stub's `flush` happens to be const-compatible. On macOS
+    // it calls into Core Audio and cannot be.
+    #[cfg_attr(
+        not(target_os = "macos"),
+        allow(
+            clippy::missing_const_for_fn,
+            reason = "the macOS implementation of IoStream::flush is not const"
+        )
+    )]
+    pub fn flush(&mut self) {
         if let Some(stream) = self.stream.as_mut() {
             stream.flush();
         }

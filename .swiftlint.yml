@@ -12,10 +12,22 @@ opt_in_rules:
   - all
 
 disabled_rules:
-  # Contradicts `explicit_type_interface`, which is also in `all`: one wants the
-  # type written out, the other wants it inferred. `explicit_type_interface` is
-  # the one kept, so this has to go.
-  - redundant_type_annotation
+  # Directly contradicts `opening_brace`, a default rule: one wants `{` on the
+  # declaration's line, the other on its own. `opening_brace` matches the
+  # official Swift style and every Apple sample, so it is the one kept.
+  - contrasted_opening_brace
+  # Contradicts `redundant_type_annotation`, and demands an annotation on every
+  # local binding, which fights Swift's type inference everywhere rather than
+  # only where the type is unclear. `redundant_type_annotation` is the one kept.
+  - explicit_type_interface
+  # Forbids `guard let x else { return }` on one line, which is the most
+  # idiomatic construct in the language.
+  - conditional_returns_on_newline
+  # Prescribes a fixed order for the members of a type. SwiftUI views read best
+  # grouped by what they render — `body` and the view fragments it composes
+  # together, then the bindings — which this rule forbids.
+  - type_contents_order
+  - file_types_order
   # Requires a doc comment on every declaration including private helpers and
   # trivial computed properties, which buries the comments that matter.
   - missing_docs
