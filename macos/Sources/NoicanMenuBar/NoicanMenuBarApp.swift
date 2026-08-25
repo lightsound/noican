@@ -8,43 +8,48 @@ struct NoicanMenuBarApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            Toggle(
-                "Noise cancellation",
-                isOn: Binding(
-                    get: { state.isEnabled },
-                    set: { state.setEnabled($0) }
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle(
+                    "Noise cancellation",
+                    isOn: Binding(
+                        get: { state.isEnabled },
+                        set: { state.setEnabled($0) }
+                    )
                 )
-            )
 
-            Picker("Input", selection: $state.selectedInputUID) {
-                ForEach(state.inputDevices) { device in
-                    Text(device.name).tag(device.uid)
+                Picker("Input", selection: $state.selectedInputUID) {
+                    ForEach(state.inputDevices) { device in
+                        Text(device.name).tag(device.uid)
+                    }
+                }
+                .disabled(state.isEnabled)
+
+                Picker("Model", selection: $state.selectedModel) {
+                    ForEach(state.models, id: \.self) { model in
+                        Text(model).tag(model)
+                    }
+                }
+                .onChange(of: state.selectedModel) {
+                    state.applySelectedModel()
+                }
+
+                Divider()
+                Text(state.status)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Button("Refresh devices") {
+                    state.refreshDevices()
+                }
+                .disabled(state.isEnabled)
+
+                Divider()
+                Button("Quit") {
+                    NSApplication.shared.terminate(nil)
                 }
             }
-            .disabled(state.isEnabled)
-
-            Picker("Model", selection: $state.selectedModel) {
-                ForEach(state.models, id: \.self) { model in
-                    Text(model).tag(model)
-                }
-            }
-            .onChange(of: state.selectedModel) {
-                state.applySelectedModel()
-            }
-
-            Divider()
-            Text(state.status)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Button("Refresh devices") {
-                state.refreshDevices()
-            }
-            .disabled(state.isEnabled)
-
-            Divider()
-            Button("Quit") {
-                NSApplication.shared.terminate(nil)
+            .onReceive(statusTimer) { _ in
+                state.updateStatus()
             }
         } label: {
             Label(
@@ -53,8 +58,5 @@ struct NoicanMenuBarApp: App {
             )
         }
         .menuBarExtraStyle(.window)
-        .onReceive(statusTimer) { _ in
-            state.updateStatus()
-        }
     }
 }

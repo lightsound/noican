@@ -30,6 +30,12 @@ enum AudioDeviceCatalog {
         let count = Int(byteCount) / MemoryLayout<AudioObjectID>.size
         var identifiers = [AudioObjectID](repeating: 0, count: count)
         try identifiers.withUnsafeMutableBytes { bytes in
+            guard let baseAddress = bytes.baseAddress else {
+                throw CoreAudioControlError(
+                    operation: "Core Audio returned an empty device list",
+                    status: kAudioHardwareBadPropertySizeError
+                )
+            }
             try check(
                 AudioObjectGetPropertyData(
                     AudioObjectID(kAudioObjectSystemObject),
@@ -37,7 +43,7 @@ enum AudioDeviceCatalog {
                     0,
                     nil,
                     &byteCount,
-                    bytes.baseAddress
+                    baseAddress
                 ),
                 operation: "AudioObjectGetPropertyData(devices)"
             )
