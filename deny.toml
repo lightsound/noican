@@ -10,12 +10,16 @@ confidence-threshold = 0.93
 allow = [
     "Apache-2.0",
     "MIT",
+    "Unicode-3.0",
 ]
 
 [bans]
 multiple-versions = "deny"
 wildcards = "deny"
 highlight = "all"
+skip = [
+    { crate = "syn@2.0.119", reason = "rubato 5 uses visibility's syn 2 API while thiserror 2 has moved to syn 3; neither direct dependency can unify this transitive pair yet" },
+]
 
 [sources]
 unknown-registry = "deny"
