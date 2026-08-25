@@ -1,0 +1,30 @@
+[package]
+name = "noican-models"
+description = "Model implementations and verified assets for noican"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet.git", tag = "v0.5.6", version = "0.5.6", default-features = false, features = ["tract", "default-model", "transforms"] }
+dirs = "6.0.0"
+ndarray = "0.17.2"
+ndarray015 = { version = "0.15.6", package = "ndarray" }
+noican-engine = { version = "0.1.0", path = "../noican-engine" }
+ort = "2.0.0-rc.13"
+rustfft = "6.4.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+thiserror = "2.0.20"
+ureq = "3.4.0"
+
+[dev-dependencies]
+tempfile = "3.27.0"
