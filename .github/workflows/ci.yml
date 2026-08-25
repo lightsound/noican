@@ -103,6 +103,90 @@ jobs:
             exit 1
           fi
 
+  # The speaker gate is checked separately because it is the one model whose
+  # correctness is a claim about *who is talking*, which a synthetic probe cannot
+  # test. These three files are a labelled pair of speakers, so the gate can be
+  # enrolled on one utterance and then asked about a held-out one.
+  speaker-gate:
+    name: speaker gate (held-out speakers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Fetch labelled speaker recordings
+        run: |
+          base=https://github.com/csukuangfj/sr-data/raw/main/test/3d-speaker
+          for f in speaker1_a_cn_16k speaker1_b_cn_16k speaker2_a_cn_16k; do
+            curl -sSLf -o "$f.wav" "$base/$f.wav"
+          done
+      - name: Fetch the model
+        run: cargo run --release -p noican-cli -- fetch speaker-gate
+      - name: Enrol speaker 1 from one utterance only
+        run: cargo run --release -p noican-cli -- enroll speaker1_a_cn_16k.wav
+      - name: Gate a held-out utterance and a different speaker
+        run: |
+          for f in speaker1_b_cn_16k speaker2_a_cn_16k; do
+            cargo run --release -p noican-cli -- process "$f.wav" \
+              -o out -m speaker-gate --rate 16000 --align none
+          done
+      - name: The enrolled speaker must pass and the other must not
+        run: |
+          python3 - <<'EOF'
+          import math, struct, sys
+
+          def read(path):
+              """Reads a mono float32 WAV by walking its chunks.
+
+              Python's `wave` module refuses the extensible format that float
+              WAVs are usually written in, so the header is parsed here instead.
+              """
+              blob = open(path, "rb").read()
+              assert blob[:4] == b"RIFF" and blob[8:12] == b"WAVE", f"{path} is not a WAV"
+              offset, bits, samples = 12, None, None
+              while offset + 8 <= len(blob):
+                  chunk, size = blob[offset : offset + 4], struct.unpack("<I", blob[offset + 4 : offset + 8])[0]
+                  body = blob[offset + 8 : offset + 8 + size]
+                  if chunk == b"fmt ":
+                      bits = struct.unpack("<H", body[14:16])[0]
+                  elif chunk == b"data":
+                      samples = body
+                  offset += 8 + size + (size & 1)
+              assert bits == 32, f"{path} is {bits}-bit, expected 32"
+              assert samples is not None, f"{path} has no data chunk"
+              return list(struct.unpack(f"<{len(samples) // 4}f", samples))
+
+          def rms(values):
+              return (sum(v * v for v in values) / max(len(values), 1)) ** 0.5
+
+          # Comparing against the reference `process` writes alongside each
+          # output, rather than the source file, keeps the format and the rate
+          # identical on both sides.
+          delay = 1608  # the runner reports 100.5 ms at 16 kHz
+          failures = []
+          for name, expected in (("speaker1_b_cn_16k", "pass"), ("speaker2_a_cn_16k", "gate")):
+              reference = read(f"out/{name}/00-reference-unprocessed.wav")
+              gated = read(f"out/{name}/speaker-gate.wav")[delay:]
+              n = min(len(reference), len(gated))
+              # The last second, by which point the gate has long decided.
+              tail = slice(max(n - 16000, 0), n)
+              ratio = rms(gated[tail]) / max(rms(reference[tail]), 1e-12)
+              decibels = 20 * math.log10(max(ratio, 1e-12))
+              print(f"{name}: {decibels:+.1f} dB (expected to {expected})")
+              if expected == "pass" and decibels < -1.0:
+                  failures.append(
+                      f"{name} is the enrolled speaker but was attenuated {decibels:+.1f} dB"
+                  )
+              if expected == "gate" and decibels > -12.0:
+                  failures.append(
+                      f"{name} is a different speaker but only reached {decibels:+.1f} dB"
+                  )
+          if failures:
+              sys.exit("\n".join(failures))
+          print("the gate kept the enrolled speaker and attenuated the other")
+          EOF
+
   macos:
     name: macOS build
     runs-on: macos-latest
