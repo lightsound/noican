@@ -502,6 +502,7 @@ dependencies = [
  "flate2",
  "noican-core",
  "ort",
+ "realfft",
  "sha2",
  "tar",
  "thiserror",
