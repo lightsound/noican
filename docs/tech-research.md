@@ -168,35 +168,44 @@ Signatures of what *is* available, as verified against the downloaded graphs:
 
 ### 5.5 Implementation status and what measurement showed (2026-08-25)
 
-Every shipped stage was checked against an independent reference before being trusted. The check that mattered most was the simplest one: **feed the model clean speech and confirm it is transparent.** A denoiser that attenuates clean speech is misdriven, and the magnitude of the attenuation says how badly.
+Every shipped stage was checked against an independent reference before being trusted. Two checks did the work. The cheap one: **feed the model clean speech and confirm it is roughly transparent** — a denoiser that attenuates clean speech is either misdriven or unusually aggressive, and the size of the attenuation says how much. The expensive one, for the `DeepFilterNet` family: **run the model through its own reference runtime and compare waveforms**, which is the only way to distinguish "we are driving it wrong" from "this is what it does".
 
-| Model | Status | Evidence |
+| Model | Evidence | Result |
 |---|---|---|
-| FastEnhancer T/S/B/M/L | Shipped | Bit-exact against the upstream ONNX driving script (residual −135 dB). Within 0.3 dB of transparent across 100 Hz–6 kHz on real 48 kHz speech |
-| DPDFNet ×4 | Shipped | Transparent to 0.2 dB on clean speech; +9.9 dB SI-SDR improvement on a noisy/clean pair (−4.4 dB in, +5.5 dB out) |
-| UL-UNAS | Shipped | Matches the author's own published enhanced output to 0.02 dB SI-SDR (0.53 dB vs. 0.55 dB) |
-| GTCRN | Shipped | +2.0 dB SI-SDR improvement, consistent with it being the weakest model in the set |
-| DeepFilterNet3 | **Not shipped** | See below |
-| Hush | Not yet implemented | Needs the three-graph front-end (below), so it lands with it |
+| FastEnhancer T/S/B/M/L | Against the upstream ONNX driving script | Bit-exact, residual −135 dB. Within 0.3 dB of transparent across 100 Hz–6 kHz on real 48 kHz speech |
+| DPDFNet ×4 | Per-band response on clean speech; SI-SDR on a clean/noisy pair | Transparent to 0.2 dB; −4.4 dB in, **+5.5 dB** out |
+| UL-UNAS | Against the author's own published enhanced output | Matches to 0.02 dB SI-SDR (0.53 vs. 0.55 dB) |
+| GTCRN | SI-SDR on the same pair | −4.4 dB in, −2.4 dB out, consistent with it being the weakest model in the set |
+| DeepFilterNet3 | Against `DeepFilterNet`'s own tract runtime on the same file | **Correlation 0.99998, residual −43.2 dB.** Band response −0.3/−0.5/−0.6/−0.2/−1.9 dB against the reference's −0.3/−0.5/−0.6/−0.3/−2.0 |
+| Hush | Same runtime, which loads Hush's bundle unmodified | **Correlation 1.0000, residual −42.2 dB** |
 
-**The `DeepFilterNet` family does not work yet, and the reason is the feature front-end.** Two independent exports were tried and both fail the same way, which localises the problem to our derivation of the features rather than to either export.
+#### The `DeepFilterNet` family: what the reference runtime settled
 
-*The single-graph export* (`penta2himajin/deepfilternet3-onnx`) is attractive because it threads recurrent state explicitly and applies the ERB mask and deep filter inside the graph. Sixteen combinations of the documented feature-pipeline choices were tried (spectrum scaled by `2·hop/n_fft²` or unscaled; ERB feature in power-dB or magnitude-dB; unit normalisation over magnitude or power; normalisation history seeded from the reference's ramps or from zero) and **every one attenuates the speech band by 2–13 dB on real 48 kHz speech**, where DPDFNet is transparent to 0.2 dB on the same input.
+Both `DeepFilterNet3` and Hush ship the same three-graph bundle — `enc.onnx`, `erb_dec.onnx`, `df_dec.onnx`, and a `config.ini` — so one front-end serves both. Getting it right took building `DeepFilterNet`'s own runtime (`libDF` with its `tract` feature) locally and diffing against it, because three separate conclusions drawn from reading the source alone were wrong:
 
-*The three-graph export* (`enc` / `erb_dec` / `df_dec` plus `config.ini`, which is what Hush ships and what `DeepFilterNet` publishes officially) was then implemented end to end against Hush at 16 kHz, where a clean/noisy pair makes the result measurable. It improves SI-SDR on the noisy input by 3.1 dB — so it is not garbage — but it attenuates *clean* speech by 11–16 dB across the band, which a denoiser must not do. Isolating the stages shows the ERB mask alone accounts for about 9.5 dB of it: its mean value over a clean recording is 0.336, meaning the encoder is being told the speech is noise.
+1. **A first attempt used the third-party single-graph export** (`penta2himajin/deepfilternet3-onnx`), which threads recurrent state explicitly and applies the mask and filter inside the graph. Sixteen combinations of the documented feature choices were tried and every one attenuated the speech band by 2–13 dB. That export remains undrivable and is not used; the official three-graph bundle is.
+2. **The three-graph pipeline was then judged broken because it attenuates clean speech by 14 dB.** It is not broken. `DeepFilterNet`'s own runtime, given Hush and the same clean recording, attenuates by 14.1–14.9 dB. **That is Hush's behaviour, not our bug** — unsurprising for a model trained to suppress a competing speaker 12–24 dB below the primary. Diagnosing a model as broken because it is aggressive cost a full investigation; comparing against the reference would have cost an afternoon.
+3. **Block size and warm-up context are not free parameters.** These exports are *sequence* graphs whose GRUs take no initial state, so they cannot be driven frame by frame — `DeepFilterNet`'s runtime sidesteps this with tract's pulse transformation, which ONNX Runtime has no equivalent of. Running them a block at a time restarts the recurrence at every boundary, and the embedding GRUs remember for seconds:
 
-What that investigation did establish, so the next attempt need not rediscover it:
+   | Warm-up context | Block | Correlation with the reference | Residual |
+   |---|---|---|---|
+   | 32 frames | 100 | 0.718 | −0.3 dB |
+   | 100 frames | 200 | 0.895 | −4.6 dB |
+   | 200 frames | 400 | 0.979 | −13.3 dB |
+   | **400 frames** | **800** | **1.0000** | **−42.2 dB** |
 
-| Question | Answer |
-|---|---|
-| Deep-filter coefficient layout | `coefs` of shape `[1, S, nb_df, df_order·2]` reshapes to `[S, nb_df, df_order, 2]` — complex on the **last** axis. The three alternatives are 6–16 dB worse |
-| Deep-filter tap order | Coefficient index 0 pairs with the **oldest** frame in the window and index `df_order − 1` with the current one. Reversing it costs 17 dB |
-| Stage order | ERB mask over the whole spectrum first, then the deep filter **replacing** the first `nb_df` bins, computed from the *noisy* spectrum rather than the masked one |
-| `enc`'s `feat_spec` layout | `[1, 2, S, nb_df]` — real and imaginary as separate **channels**, not interleaved on a trailing axis. This differs from the single-graph export, which wants `[1, 1, S, nb_df, 2]` |
-| Is `lsnr` gating the missing piece? | **No.** The reference skips processing entirely when the local SNR estimate exceeds `max_db_erb_thresh` (35 dB by default), which would explain transparency on clean input — but the measured `lsnr` on real speech spans −12 to +15 dB, so the gate never fires and the reference would apply both stages exactly as we do |
-| Where the remaining error is | In `feat_erb`, `feat_spec`, or the analysis scaling — the three things both exports share. The encoder's outputs are numerically plausible (embeddings in the ±4 range, `lsnr` in a believable ±15 dB), so the features are wrong in a subtle way rather than grossly malformed |
+   So both models run as block stages with 400 frames of context and 800-frame blocks — about eight seconds of latency, and 50 % more compute than the audio strictly needs. That is right for the offline comparison they exist for and rules them out of the live path. Promoting them means re-exporting the graphs with their GRU states as explicit inputs and outputs, which is Phase 1 work.
 
-Rather than ship a baseline that is quietly wrong, both `DeepFilterNet3` and Hush wait until the feature front-end is verified against a known-good reference output — the most direct route being to run the upstream `deepFilter` binary on a file and match it frame by frame.
+Conventions the exports do not document, each pinned by measurement because guessing wrong is expensive:
+
+| Question | Answer | Cost of guessing wrong |
+|---|---|---|
+| Deep-filter coefficient layout | `[bin][tap][re, im]` — complex on the **last** axis | 6 dB |
+| Deep-filter tap order | Tap 0 pairs with the **oldest** frame in the window | 17 dB |
+| Stage order | ERB mask over the whole spectrum, then the filter **replacing** the low `nb_df` bins, computed from the *noisy* spectrum | — |
+| `enc`'s `feat_spec` layout | `[1, 2, frames, nb_df]`: real and imaginary as separate **channels**, unlike every other model in the catalog | — |
+| Early frames | The filter always applies, treating missing history as silence. Skipping it until the history fills leaves those frames unsuppressed and much louder | — |
+| Is `lsnr` gating relevant? | No. The reference skips processing above `max_db_erb_thresh` (35 dB), but measured local SNR on real speech spans −12 to +15 dB, so the gate never fires | — |
 
 **Methodology rule that came out of this: evaluate a 48 kHz model on genuinely 48 kHz material.** FastEnhancer attenuates the speech band by 4–16 dB when fed 16 kHz speech upsampled to 48 kHz — a signal with a brick wall at 7.2 kHz and nothing above it — and is within 0.3 dB of transparent on a real 48 kHz recording. Upsampled 16 kHz test files will therefore rank the 48 kHz models below the 16 kHz ones for a reason that has nothing to do with how they will sound in a meeting.
 
@@ -346,9 +355,9 @@ As of 2026, **Microsoft Teams ships personalized voice isolation** (30-second vo
 | Virtual device | BlackHole fork via joycast.driver pattern, Developer ID signed | Stock BlackHole or NNA (no build); libASPL / tympan-aspl (full custom) |
 | Capture & output | AUHAL direct (`AudioDeviceCreateIOProcIDWithBlock`), 128–256 frame buffers | — (AVAudioEngine is not an option for device-targeted I/O) |
 | Drift | Private Aggregate Device with drift compensation | DIY adaptive resampler |
-| NS model (quality) | FastEnhancer 48 k **and** DPDFNet 48 k HR, both shipped and switchable at run time | DeepFilterNet3 (as a shipped baseline); CoreML DFN3 route |
+| NS model (quality) | FastEnhancer 48 k **and** DPDFNet 48 k HR, both shipped and switchable at run time | DeepFilterNet3, shipped as the reference baseline; CoreML DFN3 route |
 | NS model (low-latency mode) | UL-UNAS | GTCRN (also shipped; the simpler graph of the two) |
-| Background speakers | Hush 16 k (block stage until re-exported with state I/O) | DIY VAD + ECAPA gate (mellonella/voce design) — now the primary enrollment route, since tse-conv-tasnet-48k was withdrawn (§5.4) |
+| Background speakers | Hush 16 k — shipped, verified against its reference runtime, but a block stage with ~8 s latency until re-exported with state I/O | DIY VAD + ECAPA gate (mellonella/voce design) — the enrollment route, since tse-conv-tasnet-48k was withdrawn (§5.4) |
 | AEC | None in v0 (headphones) | Process tap + `aec3` (WebRTC AEC3) with macOS 26 watchdog |
 | Inference runtime | ONNX Runtime (FastEnhancer, TSE); sherpa-onnx (DPDFNet/GTCRN, VAD, speaker embeddings) | tract via `df` crate |
 | Core language | Rust (audio engine, inference, gating) | — |
@@ -397,7 +406,7 @@ Deliverables, in dependency order:
 
 0. **Quality gates, from the first commit** (see below). Non-negotiable and set up together with the workspace, not retrofitted.
 1. **Rust workspace**: the `Stage` trait, real-time-safe primitives (fixed-capacity queues, polyphase rational resampling, streaming STFT/ISTFT), and the runner that adapts any stage to the 48 kHz host path.
-2. **Model stages and weight acquisition**: FastEnhancer (all published variants), the DPDFNet family, GTCRN, and UL-UNAS, plus a downloader that fetches and checksums the weights on demand. DeepFilterNet3 and Hush both need the `DeepFilterNet` three-graph front-end and land together with it (§5.5).
+2. **Model stages and weight acquisition**: FastEnhancer (all published variants), the DPDFNet family, GTCRN, UL-UNAS, DeepFilterNet3, and Hush, plus a downloader that fetches, checksums, and unpacks the weights on demand. Thirteen models behind three stage implementations (§5.5).
 3. **CLI file-processing mode**: one WAV in, one output per model, organised for A/B listening, with latency alignment so the files line up.
 4. **Real-time pipeline**: AUHAL capture from the physical mic → active stage → BlackHole (stock, unmodified), inside a private aggregate device for drift compensation.
 5. **Minimal SwiftUI `MenuBarExtra`**: on/off, input-device picker, model select box, status. The Rust engine is embedded as a static library behind a C ABI.
@@ -407,8 +416,7 @@ Exit criteria: the virtual device is selectable in Zoom and usable daily, and th
 ### Phase 1 — Own the device + differentiator
 
 - Build, sign, and install the renamed BlackHole fork (joycast.driver pattern).
-- Finish the `DeepFilterNet` feature front-end, which brings in both the DeepFilterNet3 baseline and Hush. The mask application and deep filter are already pinned down; what is left is verifying `feat_erb`, `feat_spec`, and the analysis scaling against a known-good reference output rather than against the source's prose (§5.5).
-- Promote Hush from a block stage to a streaming one by re-exporting its graphs with recurrent state as explicit I/O (§5.4).
+- Promote `DeepFilterNet3` and Hush from block stages to streaming ones by re-exporting their graphs with the GRU states as explicit inputs and outputs. Both are correct today but carry about eight seconds of latency, which keeps the only speaker-suppression model out of the live path (§5.5).
 - Add the DIY VAD + ECAPA-TDNN gate of §6.2 as the enrollment-based option, now that `tse-conv-tasnet-48k` has been withdrawn.
 
 ### Phase 2 — Menu bar app, full version
@@ -444,7 +452,7 @@ Historical note: PR #2 introduced `fallow` + ImportLint for TypeScript/JavaScrip
 
 1. Which model wins in live use. No longer a blocking question: the engine ships every candidate and switches between them at run time (§12), so this is answered continuously rather than once.
 2. Hush's behavior when the background speaker is *louder* than the user (trained at 12–24 dB SIR below primary).
-3. Whether Hush's published ONNX export can be re-exported with its recurrent state as explicit graph I/O, which is what stands between it and being a streaming stage (§5.4).
+3. Whether the `DeepFilterNet`-family exports can be re-exported with their recurrent state as explicit graph I/O. That is the only thing between Hush and the live path, and Hush is the only speaker-suppression model available (§5.5).
 4. Long-session (2 h+) stability of aggregate-device drift compensation.
 5. DIY gate fade time constant (if the DIY route is needed): onset clipping vs. interferer leakage.
 6. How meeting apps treat the virtual device's reported latency/safety offsets (BlackHole reports zero).
