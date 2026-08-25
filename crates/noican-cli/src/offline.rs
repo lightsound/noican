@@ -104,7 +104,11 @@ pub(crate) fn run(
     }
     let elapsed = started.elapsed().as_secs_f64();
 
-    let measured_delay = measure_delay(&clip.samples, &produced, host_rate);
+    // Search past the delay the runner reports, plus a margin: the reported
+    // figure already accounts for priming and resampling, so the truth is near
+    // it, and a fixed ceiling cannot reach a block stage at all.
+    let search_limit = reported_delay + host_rate as usize / 4;
+    let measured_delay = measure_delay(&clip.samples, &produced, host_rate, search_limit);
     let trimmed = match alignment {
         Alignment::Measured => measured_delay.unwrap_or(reported_delay),
         Alignment::Reported => reported_delay,
@@ -168,17 +172,21 @@ pub(crate) fn resample(clip: &Clip, target_rate: u32) -> Result<Clip> {
 /// Finds the lag at which `processed` best matches `reference`.
 ///
 /// Uses a window from the middle of the clip so that neither the model's
-/// warm-up nor the flush tail dominates, and searches lags up to a quarter of a
-/// second, which comfortably covers every model in the catalog. Returns `None`
-/// when the clip is too short to measure or the correlation is too weak to
-/// trust — an honest "unknown" rather than a plausible wrong number.
+/// warm-up nor the flush tail dominates. Returns `None` when the clip is too
+/// short to measure or the correlation is too weak to trust — an honest
+/// "unknown" rather than a plausible wrong number.
+///
+/// `max_lag` is a parameter rather than a constant because a block stage's
+/// delay is its whole block: the eight-second blocks the `DeepFilterNet` family
+/// needs are far past any plausible fixed ceiling, and a ceiling that cannot
+/// reach the answer reports "unmeasurable" for a model that is working fine.
 #[must_use]
 pub(crate) fn measure_delay(
     reference: &[f32],
     processed: &[f32],
     sample_rate: u32,
+    max_lag: usize,
 ) -> Option<usize> {
-    let max_lag = (sample_rate / 4) as usize;
     let window = (sample_rate as usize * 2).min(reference.len() / 2);
     if window < 1_024 || processed.len() < window + max_lag {
         return None;
@@ -262,6 +270,30 @@ mod tests {
         assert_eq!(scale(7, 48_000, 48_000), 7);
     }
 
+    /// A large delay is found only when the search limit reaches it, which is
+    /// why the limit is derived from the runner's own figure rather than fixed.
+    /// Below the true delay the answer is wrong rather than absent, because a
+    /// quasi-periodic signal correlates with itself at shorter lags — so the
+    /// caller has to supply a range that contains the truth.
+    #[test]
+    fn a_large_delay_needs_a_search_limit_that_reaches_it() {
+        let rate = 48_000;
+        let reference = speech_like(rate, 5);
+        let delay = 30_000;
+        let mut processed = vec![0.0; delay];
+        processed.extend_from_slice(&reference);
+
+        assert_eq!(
+            measure_delay(&reference, &processed, rate, delay + 100),
+            Some(delay)
+        );
+        let short = measure_delay(&reference, &processed, rate, 1_000);
+        assert!(
+            short.is_none_or(|lag| lag <= 1_000),
+            "the reported lag escaped the search limit: {short:?}"
+        );
+    }
+
     #[test]
     fn measures_an_injected_delay() {
         let rate = 48_000;
@@ -269,15 +301,18 @@ mod tests {
         let delay = 1_234;
         let mut processed = vec![0.0; delay];
         processed.extend_from_slice(&reference);
-        assert_eq!(measure_delay(&reference, &processed, rate), Some(delay));
+        assert_eq!(
+            measure_delay(&reference, &processed, rate, 4_000),
+            Some(delay)
+        );
     }
 
     #[test]
     fn refuses_to_guess_on_silence_or_short_clips() {
         let rate = 48_000;
-        assert!(measure_delay(&[0.0; 100], &[0.0; 100], rate).is_none());
+        assert!(measure_delay(&[0.0; 100], &[0.0; 100], rate, 4_000).is_none());
         let silence = vec![0.0f32; rate as usize * 5];
-        assert!(measure_delay(&silence, &silence, rate).is_none());
+        assert!(measure_delay(&silence, &silence, rate, 4_000).is_none());
     }
 
     #[test]
