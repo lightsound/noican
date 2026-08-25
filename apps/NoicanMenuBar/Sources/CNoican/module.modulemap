@@ -1,0 +1,4 @@
+module CNoican {
+    header "include/noican.h"
+    export *
+}
