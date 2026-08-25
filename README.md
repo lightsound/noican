@@ -6,12 +6,47 @@ The physical microphone signal is captured, cleaned in real time (noise suppress
 
 ## Status
 
-Design / research phase. No implementation yet.
+Phase 0 in progress: the engine runs, eleven models are selectable, and the offline comparison tool works. Nothing has been tested on a Mac yet.
 
-- [docs/tech-research.md](docs/tech-research.md) — consolidated technology research: candidate evaluation for every layer, final recommended stack, roadmap, and open questions.
+- [docs/tech-research.md](docs/tech-research.md) — the single source of truth: candidate evaluation for every layer, the chosen stack, the roadmap, and what measurement has and has not confirmed.
+- [docs/models.md](docs/models.md) — the model catalog, how to fetch weights, and how to run a comparison.
+
+## Design in one paragraph
+
+Every processing step is a `Stage`: a native sample rate, a block size, an algorithmic delay, and a `process` call. `StageRunner` adapts any stage to the 48 kHz host path, so a 16 kHz model with a 160-sample block and a 48 kHz model with a 512-sample block are equally drop-in. Models are therefore interchangeable at run time rather than chosen up front, adding one costs a single trait implementation, and the offline comparison runs the same engine as the live path — so what you compare is what you will hear.
+
+## Layout
+
+| Path | What it is |
+|---|---|
+| `crates/noican-core` | The `Stage` abstraction and the real-time-safe DSP under it: fixed-capacity queues, polyphase rational resampling, streaming STFT/ISTFT |
+| `crates/noican-models` | ONNX-backed stages, the model catalog, and weight acquisition |
+| `crates/noican-cli` | `noican`: fetch and verify weights, process WAV files, measure model delay |
+
+## Getting started
+
+```bash
+cargo run -p noican-cli -- list                 # what models exist
+cargo run -p noican-cli -- fetch                # download all weights (~62 MB)
+cargo run --release -p noican-cli -- process recording.wav
+```
+
+That writes `out/recording/`: the unprocessed reference, one WAV per model, and a manifest recording each model's measured delay, speed, and level. See [docs/models.md](docs/models.md).
 
 ## Scope
 
-- macOS only (Apple Silicon first), personal use only.
-- No distribution, licensing, or multi-user concerns; a paid Apple Developer Program membership is available for Developer ID signing.
+- macOS only (Apple Silicon first), personal use first; a paid Apple Developer Program membership is available for Developer ID signing.
 - Target: ~20–30 ms end-to-end latency, < 100 MB memory, 48 kHz native audio path.
+- Third-party licences and attributions are collected in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The GPL-3.0 virtual-audio driver is a separate program loaded by `coreaudiod` and is never linked into this workspace.
+
+## Development
+
+Every check runs at error level; see `docs/tech-research.md` §12 for the policy and its two deliberate exceptions.
+
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+cargo deny --all-features check     # cargo install cargo-deny
+cargo machete                       # cargo install cargo-machete
+```
