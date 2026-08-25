@@ -47,6 +47,11 @@ typedef struct {
   uint32_t sample_rate;
   /* True once the weights are on disk and pass their checksum. */
   bool downloaded;
+  /* False for models that can only run a block at a time, which costs seconds
+   * of latency. They are still selectable -- offline comparison is what they
+   * are for -- but a picker must say so, or a user who chooses one gets
+   * several seconds of silence and assumes the app is broken. */
+  bool live_capable;
 } NoicanModel;
 
 /* What the engine is doing right now. */

@@ -17,10 +17,21 @@ final class EngineController {
         let displayName: String
         let sampleRate: UInt32
         var downloaded: Bool
+        /// False for models that can only run a block at a time.
+        let liveCapable: Bool
 
-        /// Label for the picker, marking anything not yet downloaded.
+        /// Label for the picker, marking anything the user should know before
+        /// choosing it. A block-stage model buys several seconds of latency, so
+        /// picking one unwarned looks exactly like the app hanging.
         var menuLabel: String {
-            downloaded ? displayName : "\(displayName) — not downloaded"
+            var label = displayName
+            if !liveCapable {
+                label += " — offline only, seconds of latency"
+            }
+            if !downloaded {
+                label += " — not downloaded"
+            }
+            return label
         }
     }
 
@@ -122,7 +133,8 @@ final class EngineController {
                 id: readFixedString(&entry.id),
                 displayName: readFixedString(&entry.display_name),
                 sampleRate: entry.sample_rate,
-                downloaded: entry.downloaded
+                downloaded: entry.downloaded,
+                liveCapable: entry.live_capable
             )
         }
         if selectedModelID.isEmpty || !models.contains(where: { $0.id == selectedModelID }) {

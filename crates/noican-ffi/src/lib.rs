@@ -96,6 +96,8 @@ pub struct NoicanModel {
     pub sample_rate: u32,
     /// Whether the weights are present and verified.
     pub downloaded: bool,
+    /// Whether the model is a candidate for the live path. See the header.
+    pub live_capable: bool,
 }
 
 /// What the engine is doing right now.
@@ -192,6 +194,7 @@ pub unsafe extern "C" fn noican_models(out: *mut NoicanModel, capacity: usize) -
             display_name: copy_into(model.display_name),
             sample_rate: model.sample_rate,
             downloaded: store.is_present(model),
+            live_capable: model.live_capable,
         };
     }
     count
@@ -588,6 +591,7 @@ mod tests {
                 display_name: super::copy_into(""),
                 sample_rate: 0,
                 downloaded: false,
+                live_capable: false,
             };
             count
         ];
@@ -595,6 +599,11 @@ mod tests {
         assert_eq!(written, count);
         assert!(!models[0].id.to_string().is_empty());
         assert!(models[0].sample_rate > 0);
+        // The flag has to survive the boundary, or the picker cannot warn.
+        assert!(
+            models.iter().any(|model| !model.live_capable),
+            "no model came across as unfit for live use, though the catalog has two"
+        );
     }
 
     #[test]
@@ -605,6 +614,7 @@ mod tests {
                 display_name: super::copy_into(""),
                 sample_rate: 0,
                 downloaded: false,
+                live_capable: false,
             };
             2
         ];
