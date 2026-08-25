@@ -11,7 +11,7 @@ Physical microphone capture, TCC prompts, aggregate clock behavior, BlackHole ro
 - Apple Silicon Mac running macOS 14.2 or newer.
 - Xcode command-line tools.
 - Rust 1.96.0 with `aarch64-apple-darwin`.
-- Swift 6.2 and SwiftLint.
+- Swift 6.1 or newer and SwiftLint.
 - A Developer ID Application identity for a distributable app build.
 - Stock BlackHole 2ch for Phase 0, or the separately built and Developer-ID-signed noican BlackHole fork.
 - Headphones. Phase 0 has no AEC and must not be evaluated through speakers.
