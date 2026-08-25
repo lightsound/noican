@@ -1,4 +1,4 @@
-//! C ABI used by the SwiftUI menu bar control plane.
+//! C ABI used by the `SwiftUI` menu bar control plane.
 
 #![allow(
     unsafe_code,
@@ -35,6 +35,11 @@ struct EngineHandle {
 /// Create an engine control handle.
 ///
 /// A null `model_directory` selects the platform cache.
+///
+/// # Safety
+///
+/// A non-null `model_directory` must point to a valid NUL-terminated string
+/// for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_create(model_directory: *const c_char) -> *mut c_void {
     let store = if model_directory.is_null() {
@@ -62,6 +67,11 @@ pub unsafe extern "C" fn noican_engine_create(model_directory: *const c_char) ->
 }
 
 /// Stop and destroy an engine handle.
+///
+/// # Safety
+///
+/// `handle` must be null or a live pointer returned by
+/// [`noican_engine_create`], and it must be destroyed at most once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_destroy(handle: *mut c_void) {
     if handle.is_null() {
@@ -76,6 +86,11 @@ pub unsafe extern "C" fn noican_engine_destroy(handle: *mut c_void) {
 }
 
 /// Start AUHAL on an already-created private Aggregate Device.
+///
+/// # Safety
+///
+/// `handle` must be a live engine handle and `model_slug` must point to a
+/// valid NUL-terminated string for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_start(
     handle: *mut c_void,
@@ -127,6 +142,10 @@ pub unsafe extern "C" fn noican_engine_start(
 }
 
 /// Stop AUHAL while preserving the reusable control handle.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_stop(handle: *mut c_void) {
     let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
@@ -143,6 +162,11 @@ pub unsafe extern "C" fn noican_engine_stop(handle: *mut c_void) {
 }
 
 /// Prepare and lock-free publish a replacement model.
+///
+/// # Safety
+///
+/// `handle` must be a live engine handle and `model_slug` must point to a
+/// valid NUL-terminated string for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_set_model(
     handle: *mut c_void,
@@ -167,7 +191,7 @@ pub unsafe extern "C" fn noican_engine_set_model(
         }
     };
     let Some(publisher) = &control.publisher else {
-        control.last_error = "engine is not running".to_owned();
+        "engine is not running".clone_into(&mut control.last_error);
         return FAILURE;
     };
     match publisher.publish(prepared) {
@@ -184,6 +208,10 @@ pub unsafe extern "C" fn noican_engine_set_model(
 }
 
 /// Return 1 while AUHAL is running, otherwise 0.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_is_running(handle: *const c_void) -> i32 {
     let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
@@ -195,6 +223,10 @@ pub unsafe extern "C" fn noican_engine_is_running(handle: *const c_void) -> i32 
 }
 
 /// Return 1 after an audio callback, workgroup, or inference fault.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_is_faulted(handle: *const c_void) -> i32 {
     let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
@@ -208,6 +240,11 @@ pub unsafe extern "C" fn noican_engine_is_faulted(handle: *const c_void) -> i32 
 /// Copy the latest control-plane error as UTF-8.
 ///
 /// Returns the required byte count including the terminating NUL.
+///
+/// # Safety
+///
+/// `handle` must be null or live. A non-null `buffer` must be writable for
+/// `capacity` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_last_error(
     handle: *const c_void,
@@ -225,7 +262,7 @@ pub unsafe extern "C" fn noican_engine_last_error(
 
 /// Number of runtime-selectable models.
 #[unsafe(no_mangle)]
-pub extern "C" fn noican_model_count() -> usize {
+pub const extern "C" fn noican_model_count() -> usize {
     ModelId::ALL.len()
 }
 
@@ -233,6 +270,10 @@ pub extern "C" fn noican_model_count() -> usize {
 ///
 /// Returns the required byte count including the terminating NUL, or zero for
 /// an invalid index.
+///
+/// # Safety
+///
+/// A non-null `buffer` must be writable for `capacity` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_model_slug(
     index: usize,
@@ -302,6 +343,14 @@ mod tests {
         let mut buffer = [0_i8; 4];
         let required = copy_string("hello", buffer.as_mut_ptr(), buffer.len());
         assert_eq!(required, 6);
-        assert_eq!(&buffer, &[b'h' as i8, b'e' as i8, b'l' as i8, 0]);
+        assert_eq!(
+            &buffer,
+            &[
+                b'h'.cast_signed(),
+                b'e'.cast_signed(),
+                b'l'.cast_signed(),
+                0
+            ]
+        );
     }
 }
