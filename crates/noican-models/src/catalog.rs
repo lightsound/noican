@@ -489,6 +489,41 @@ mod tests {
         }
     }
 
+    /// `THIRD_PARTY_NOTICES.md` has to cover every licence and every upstream
+    /// the catalog draws on. The realistic way that breaks is somebody adding a
+    /// model from a new source and forgetting the notice, so this fails the
+    /// build rather than leaving it to review.
+    #[test]
+    fn every_licence_and_source_appears_in_the_notices() {
+        let notices = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../THIRD_PARTY_NOTICES.md"
+        ));
+
+        for model in CATALOG {
+            assert!(
+                notices.contains(model.license),
+                "{} is licensed {} and THIRD_PARTY_NOTICES.md does not mention that licence",
+                model.id,
+                model.license
+            );
+
+            // The repository or dataset the weights come from, without the
+            // scheme or the parenthetical the catalog sometimes appends.
+            let upstream = model
+                .source
+                .split_whitespace()
+                .next()
+                .expect("a source is never blank")
+                .trim_start_matches("https://");
+            assert!(
+                notices.contains(upstream),
+                "{} comes from {upstream} and THIRD_PARTY_NOTICES.md does not mention it",
+                model.id
+            );
+        }
+    }
+
     /// The flag exists so a picker can warn before a user chooses a model that
     /// will hand them seconds of silence, so it has to agree with which stage
     /// implementation the model actually gets.
