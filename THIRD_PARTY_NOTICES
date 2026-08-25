@@ -1,0 +1,79 @@
+noican third-party notices
+===========================
+
+This file records code and model provenance relevant to the application.
+Dependency versions and complete license texts remain available from Cargo.lock
+and the corresponding source distributions.
+
+Application code references and adaptations
+-------------------------------------------
+
+mellonella
+  Source: https://github.com/penta2himajin/mellonella
+  License: Apache License 2.0
+  Use: Reference for the stateful TSE tensor contract and the SpeechBrain-
+       compatible ECAPA filterbank implementation. The noican implementation
+       was rewritten for its common AudioStage API and strict lint policy.
+
+sherpa-onnx
+  Source: https://github.com/k2-fsa/sherpa-onnx
+  License: Apache License 2.0
+  Use: Reference for DPDFNet metadata validation, initial recurrent state,
+       Vorbis-window streaming STFT, and overlap-add behavior.
+
+DeepFilterNet
+  Source: https://github.com/Rikorose/DeepFilterNet
+  Revision: v0.5.6
+  License: MIT OR Apache License 2.0
+  Use: Pinned Rust dependency for the DeepFilterNet3 and Hush spectral
+       pipelines. The default DeepFilterNet3 model is embedded by that crate.
+
+Model assets
+------------
+
+FastEnhancer
+  Source: https://github.com/aask1357/fastenhancer
+  Release: onnx-48khz-v1
+  License: MIT
+  Assets: FastEnhancer Tiny, Base, and Small 48 kHz ONNX graphs.
+
+DPDFNet
+  Source: https://huggingface.co/Ceva-IP/DPDFNet
+  Revision: dd6818d00f50c836fed43a6243ebe49116de5964
+  License: Apache License 2.0
+  Assets: dpdfnet2_48khz_hr and dpdfnet8_48khz_hr ONNX graphs.
+
+UL-UNAS
+  Source: https://github.com/Xiaobin-Rong/ul-unas
+  Revision: 00f7c700da43d38347f30a6ccebd86fcbc798e07
+  License: MIT
+  Asset: ulunas_stream_simple.onnx.
+
+Hush
+  Source: https://huggingface.co/weya-ai/hush
+  Revision: 40812c28145510d8a4b14641bb58c879a7a7b4fe
+  License: Apache License 2.0
+  Asset: advanced_dfnet16k_model_best_onnx.tar.gz.
+
+SpeechBrain ECAPA-TDNN conversion
+  Conversion source:
+    https://huggingface.co/vedk00/ecapa-voxceleb-speaker-embedding-onnx
+  Revision: a9cb9321b07b4ee5b0ea47fdd25242d9cacd824a
+  Upstream model: https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb
+  License: Apache License 2.0
+  Assets: ecapa-speaker-v1.onnx and fbank-80x201-f32.bin.
+
+TSE Conv-TasNet 48 kHz
+  Source: https://huggingface.co/penta2himajin/tse-conv-tasnet-48k
+  License: NOT SPECIFIED by the publisher as of 2026-08-25.
+  Status: No files are redistributed. Authenticated user-supplied assets are
+          accepted only with explicit SHA-256 values. Do not include this model
+          in a commercial distribution until its license is clarified.
+
+GPL separation
+--------------
+
+BlackHole and joycast.driver are GPL-3.0 components of the separate virtual
+audio driver. No GPL source is copied into or linked with the noican
+application. When a renamed driver is distributed, its corresponding driver
+source and GPL notices must be published separately.
