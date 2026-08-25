@@ -318,33 +318,79 @@ tse-conv-tasnet-48k model weights (HF card lacks an explicit license; trained on
 
 ## 12. Roadmap
 
-### Phase -1 — Listening test (before any plumbing)
+> Revised at the start of implementation: the former Phase -1 (offline listening
+> test) is **merged into Phase 0**. Instead of a one-shot offline comparison that
+> picks a single model up front, the engine is built around a **switchable model
+> architecture** from day one, so models are compared both offline (CLI batch
+> mode, strictly identical conditions) and live (switching from the UI during
+> real meetings). A new model is added by implementing one trait.
 
-The single largest uncertainty is **whether these models satisfy the ear in the actual room with the actual noise sources** (including family speech). Record WAVs in the real environment, process offline, and compare:
+### Cross-cutting: quality gates (from the very first commit)
 
-1. FastEnhancer 48 k (T/B/S variants)
-2. DPDFNet 48 k HR (`dpdfnet2_48khz_hr`, `dpdfnet8_48khz_hr`)
-3. DeepFilterNet3 (reference baseline)
-4. Hush 16 k (with background-speech recordings)
-5. tse-conv-tasnet-48k (with enrollment from own voice)
-6. MossFormer2_SE_48K (offline quality ceiling, for calibration only)
+Policy: **start with everything as an error, and demote only what is truly
+impossible, with a written reason.**
 
-Exit criteria: pick one NS model and one speaker-suppression approach; or conclude the quality is insufficient and fall back to buying JoyCast.
+- Rust: `[workspace.lints]` with clippy `warnings = deny` and the `pedantic` /
+  `nursery` groups promoted to error. Local opt-outs require `#[allow]` plus a
+  reason comment.
+- `cargo-deny` (licenses, advisories, duplicate/unknown sources) and
+  `cargo-machete` (unused dependencies) run in CI (GitHub Actions) together
+  with `cargo fmt --check`, clippy, and tests.
+- Swift side (when it appears): SwiftLint in strict mode (warnings promoted to
+  errors).
+- TS/JS: none in the repo today. PR #2 (fallow + ImportLint, branch
+  `cursor/lint-tooling-3722`) was closed for that reason; revive that branch if
+  TS/JS ever enters the repo.
 
-### Phase 0 — Minimal usable pipeline with a minimal UI
+### Phase 0 — Switchable engine + CLI comparison + minimal UI
 
-- Rust engine: physical mic → chosen NS model → BlackHole (stock, unmodified). Private aggregate device for drift.
-- Minimal SwiftUI `MenuBarExtra` from day one: on/off toggle, input device picker, running status. The Rust engine is embedded as a static library behind a C ABI (single app bundle) or launched as a child/daemon process with a small IPC control plane — decided during implementation.
-- Select BlackHole as input in Zoom. Already usable daily.
+Everything the former Phase -1 needed, built as the product itself:
+
+- **Rust workspace** with the quality gates above wired into CI from the first
+  commit.
+- **Common stage abstraction**: every model (denoiser or speaker-suppressor) is
+  a `Stage` trait implementation. The trait absorbs per-model sample-rate and
+  frame-size differences (internal resampling/buffering), so the engine always
+  sees 48 kHz frames. Adding a future model = one new trait impl.
+- **Model lineup** (all via ONNX Runtime unless noted; sources in §14):
+  FastEnhancer 48 k (T/B/S first, M/L optional), DPDFNet 48 k HR
+  (`dpdfnet2_48khz_hr`, `dpdfnet8_48khz_hr`), DeepFilterNet3 (baseline),
+  UL-UNAS (16 k low-latency), Hush 16 k (no enrollment), tse-conv-tasnet-48k
+  (enrollment via an external 192-dim ECAPA-TDNN embedding — the TSE
+  distribution does not include the embedding model; use a public ECAPA ONNX
+  from sherpa-onnx or SpeechBrain).
+- **Model weights**: downloader (or documented manual steps) fetching from the
+  official releases listed in §14; weights are never committed to the repo.
+- **CLI file mode**: batch-process WAV files through any/all models with
+  per-model output directories — the strict same-conditions comparison the old
+  Phase -1 wanted, now reproducible at any time.
+- **Real-time pipeline**: physical mic → currently selected model → BlackHole
+  (stock, unmodified), private aggregate device for drift compensation, AUHAL
+  direct I/O (§4.1). **Runtime model switching is lock-free** (atomic swap of
+  the active stage; the audio thread never blocks) and masked by a short
+  crossfade/mute so switching produces no clicks.
+- **Minimal SwiftUI `MenuBarExtra`** from day one: on/off toggle, input device
+  picker, **model selector** (the live listening-test control), running status.
+  Rust engine embedded as a static library behind a C ABI (single app bundle)
+  or a child/daemon process with a small IPC control plane — decided during
+  implementation.
+- Select BlackHole as input in Zoom. Already usable daily; model comparison
+  happens during real use.
+
+Exit criteria: converge on a preferred NS model and speaker-suppression
+approach from real-world use (the selector stays — it is also the escape hatch
+when a model misbehaves in a specific room); or conclude quality is
+insufficient and fall back to buying JoyCast.
 
 ### Phase 1 — Own the device + differentiator
 
 - Build, sign, and install the renamed BlackHole fork (joycast.driver pattern).
-- Add the speaker-suppression stage (Hush / TSE / DIY gate per Phase -1 results).
+- Promote the best speaker-suppression stage (Hush / TSE / DIY gate per
+  Phase 0 findings) to a default-on, tuned feature.
 
 ### Phase 2 — Menu bar app, full version
 
-Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level + reduction meters (lock-free shared state from the engine), start at login via `SMAppService`.
+Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level + reduction meters (lock-free shared state from the engine), start at login via `SMAppService`. Introduce SwiftLint (strict) no later than this phase.
 
 ### Phase 3 — Optional
 
