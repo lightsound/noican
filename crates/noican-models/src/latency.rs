@@ -96,6 +96,13 @@ static MEASURED: &[Entry] = &[
         id: "hush",
         samples: 160,
     },
+    // The gate applies a gain to the sample in front of it, so it adds no delay
+    // at all. Its *reaction* time is seconds, but that is not latency: audio
+    // still comes out immediately.
+    Entry {
+        id: "speaker-gate",
+        samples: 0,
+    },
 ];
 
 /// The measured algorithmic delay of `model_id`, in samples at its native rate.

@@ -55,6 +55,13 @@ pub enum Error {
         source: std::io::Error,
     },
 
+    /// Speaker enrolment could not produce or use a profile.
+    #[error("speaker enrolment: {detail}")]
+    Enrolment {
+        /// What went wrong, phrased for someone deciding what to do next.
+        detail: String,
+    },
+
     /// ONNX Runtime rejected the model or the inference call.
     #[error("onnx runtime error: {0}")]
     Runtime(#[from] ort::Error),

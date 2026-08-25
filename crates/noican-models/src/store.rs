@@ -141,6 +141,12 @@ impl ModelStore {
         Ok(directory)
     }
 
+    /// Where the enrolled speaker profile lives.
+    #[must_use]
+    pub fn speaker_profile_path(&self) -> PathBuf {
+        crate::speaker::SpeakerProfile::default_path(&self.root)
+    }
+
     /// Recomputes and checks the digest of every artifact of `model`.
     ///
     /// # Errors

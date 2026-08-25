@@ -67,6 +67,9 @@ enum Command {
 
     /// Write the synthetic probe signal to a WAV file, for smoke tests.
     Probe(commands::probe::Args),
+
+    /// Enrol a speaker so the speaker gate knows whose voice to keep.
+    Enroll(commands::enroll::Args),
 }
 
 fn main() -> Result<()> {
@@ -90,6 +93,7 @@ fn main() -> Result<()> {
         Command::Process(args) => commands::process::run(&args, &store),
         Command::Latency(args) => commands::latency::run(&args, &store),
         Command::Probe(args) => commands::probe::run(&args),
+        Command::Enroll(args) => commands::enroll::run(&args, &store),
     }
 }
 
