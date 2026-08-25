@@ -40,11 +40,10 @@ impl DpdfNetVariant {
 
     const fn metadata_profile(self) -> &'static str {
         match self {
-            Self::DpdfNet2 => "dpdfnet2_48khz_hr",
             // The official Ceva-IP dpdfnet8_48khz_hr file at revision
             // dd6818d incorrectly retains the DPDFNet2 profile string. Its
             // larger state tensor and pinned file digest identify the graph.
-            Self::DpdfNet8 => "dpdfnet2_48khz_hr",
+            Self::DpdfNet2 | Self::DpdfNet8 => "dpdfnet2_48khz_hr",
         }
     }
 
