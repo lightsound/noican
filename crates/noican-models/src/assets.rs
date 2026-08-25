@@ -187,7 +187,7 @@ impl ModelStore {
     /// Returns [`AssetError::CacheDirectoryUnavailable`] if the platform has no
     /// configured cache directory.
     pub fn platform_default() -> Result<Self, AssetError> {
-        let root = dirs::cache_dir()
+        let root = platform_cache_directory()
             .ok_or(AssetError::CacheDirectoryUnavailable)?
             .join("noican")
             .join("models");
@@ -293,6 +293,30 @@ impl ModelStore {
             source,
         })
     }
+}
+
+#[cfg(target_os = "macos")]
+fn platform_cache_directory() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join("Library").join("Caches"))
+}
+
+#[cfg(target_os = "windows")]
+fn platform_cache_directory() -> Option<PathBuf> {
+    env::var_os("LOCALAPPDATA").map(PathBuf::from)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn platform_cache_directory() -> Option<PathBuf> {
+    env::var_os("XDG_CACHE_HOME")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var_os("HOME")
+                .map(PathBuf::from)
+                .map(|home| home.join(".cache"))
+        })
 }
 
 /// Asset cache and download failures.

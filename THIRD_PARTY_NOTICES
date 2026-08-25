@@ -23,10 +23,10 @@ sherpa-onnx
 
 DeepFilterNet
   Source: https://github.com/Rikorose/DeepFilterNet
-  Revision: d375b2d8309e0935d165700c91da9de862a99c31 (0.5.7-pre)
+  Revision: v0.5.6
   License: MIT OR Apache License 2.0
-  Use: Pinned Rust dependency for the DeepFilterNet3 and Hush spectral
-       pipelines. The default DeepFilterNet3 model is embedded by that crate.
+  Use: Reference for Vorbis-window STFT, ERB feature construction, and
+       normalization in the DeepFilterNet3 spectral front end.
 
 Model assets
 ------------
@@ -43,6 +43,12 @@ DPDFNet
   License: Apache License 2.0
   Assets: dpdfnet2_48khz_hr and dpdfnet8_48khz_hr ONNX graphs.
 
+DeepFilterNet3 ONNX export
+  Source: https://huggingface.co/penta2himajin/deepfilternet3-onnx
+  Revision: daf50ae97dd051e8455570157cfe68fa69626eb1
+  License: Apache License 2.0 (export code); model derives from DeepFilterNet
+  Asset: dfn3.onnx.
+
 UL-UNAS
   Source: https://github.com/Xiaobin-Rong/ul-unas
   Revision: 00f7c700da43d38347f30a6ccebd86fcbc798e07
@@ -50,10 +56,10 @@ UL-UNAS
   Asset: ulunas_stream_simple.onnx.
 
 Hush
-  Source: https://huggingface.co/weya-ai/hush
-  Revision: 40812c28145510d8a4b14641bb58c879a7a7b4fe
+  Runtime: hush-vani 0.1.1 (https://github.com/Allenmylath/Hush-vani)
+  Upstream model: https://huggingface.co/weya-ai/hush
   License: Apache License 2.0
-  Asset: advanced_dfnet16k_model_best_onnx.tar.gz.
+  Asset: Quantized upstream weights embedded by the hush-vani crate.
 
 SpeechBrain ECAPA-TDNN conversion
   Conversion source:

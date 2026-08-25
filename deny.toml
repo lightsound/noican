@@ -9,6 +9,9 @@ version = 2
 confidence-threshold = 0.93
 allow = [
     "Apache-2.0",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+    "ISC",
     "MIT",
     "Unicode-3.0",
 ]
@@ -19,6 +22,7 @@ wildcards = "deny"
 highlight = "all"
 skip = [
     { crate = "syn@2.0.119", reason = "rubato 5 uses visibility's syn 2 API while thiserror 2 has moved to syn 3; neither direct dependency can unify this transitive pair yet" },
+    { crate = "windows-sys@0.52.0", reason = "ring 0.17 pins the older target-only Windows bindings while current CLI dependencies use windows-sys 0.61; neither is linked on supported macOS builds" },
 ]
 
 [sources]

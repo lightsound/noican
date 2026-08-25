@@ -15,7 +15,7 @@ cargo run --release -- models fetch --all
 
 Every public artifact URL is pinned to an immutable release or repository revision, and `crates/noican-models/src/assets.rs` records its SHA-256. A corrupt or changed cached file is deleted and fetched again; a mismatching download is never promoted from its `.partial` path.
 
-DeepFilterNet3 is embedded by the pinned upstream `deep_filter` dependency, so it has no separate cache file.
+DeepFilterNet3 uses the checksum-pinned stateful ONNX export from mellonella. Hush weights are embedded by the pinned `hush-vani` crate, so Hush has no separate cache file.
 
 ## CLI file comparison
 
@@ -87,9 +87,9 @@ The two required hash variables deliberately prevent a mutable authenticated URL
 |---|---|---|
 | FastEnhancer T/B/S 48 kHz | `aask1357/fastenhancer`, release `onnx-48khz-v1` | MIT |
 | DPDFNet2/8 48 kHz HR | `Ceva-IP/DPDFNet` revision `dd6818d…` | Apache-2.0 |
-| DeepFilterNet3 | `Rikorose/DeepFilterNet` revision `d375b2d…` (`0.5.7-pre`, with patched tract 0.21.17) | MIT OR Apache-2.0 |
+| DeepFilterNet3 | `penta2himajin/deepfilternet3-onnx` revision `daf50ae…`; upstream `Rikorose/DeepFilterNet` | Apache-2.0 export; upstream MIT OR Apache-2.0 |
 | UL-UNAS | `Xiaobin-Rong/ul-unas` revision `00f7c70…` | MIT |
-| Hush | `weya-ai/hush` revision `40812c2…` | Apache-2.0 |
+| Hush | `hush-vani` 0.1.1 with embedded `weya-ai/hush` weights | Apache-2.0 |
 | TSE Conv-TasNet 48 kHz | `penta2himajin/tse-conv-tasnet-48k` | Not specified; do not redistribute |
 | ECAPA-TDNN conversion | `vedk00/ecapa-voxceleb-speaker-embedding-onnx` revision `a9cb932…`; upstream SpeechBrain model | Apache-2.0 |
 
