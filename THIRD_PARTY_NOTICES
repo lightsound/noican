@@ -23,7 +23,7 @@ sherpa-onnx
 
 DeepFilterNet
   Source: https://github.com/Rikorose/DeepFilterNet
-  Revision: v0.5.6
+  Revision: d375b2d8309e0935d165700c91da9de862a99c31 (0.5.7-pre)
   License: MIT OR Apache License 2.0
   Use: Pinned Rust dependency for the DeepFilterNet3 and Hush spectral
        pipelines. The default DeepFilterNet3 model is embedded by that crate.

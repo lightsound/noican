@@ -87,7 +87,7 @@ The two required hash variables deliberately prevent a mutable authenticated URL
 |---|---|---|
 | FastEnhancer T/B/S 48 kHz | `aask1357/fastenhancer`, release `onnx-48khz-v1` | MIT |
 | DPDFNet2/8 48 kHz HR | `Ceva-IP/DPDFNet` revision `dd6818d…` | Apache-2.0 |
-| DeepFilterNet3 | `Rikorose/DeepFilterNet` tag `v0.5.6` | MIT OR Apache-2.0 |
+| DeepFilterNet3 | `Rikorose/DeepFilterNet` revision `d375b2d…` (`0.5.7-pre`, with patched tract 0.21.17) | MIT OR Apache-2.0 |
 | UL-UNAS | `Xiaobin-Rong/ul-unas` revision `00f7c70…` | MIT |
 | Hush | `weya-ai/hush` revision `40812c2…` | Apache-2.0 |
 | TSE Conv-TasNet 48 kHz | `penta2himajin/tse-conv-tasnet-48k` | Not specified; do not redistribute |
