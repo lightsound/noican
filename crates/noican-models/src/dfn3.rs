@@ -238,8 +238,8 @@ impl DeepFilterDsp {
         }
         self.inverse.process(&mut self.spectrum);
         let mut output = vec![0.0_f32; FRAME_SAMPLES];
-        for index in 0..FRAME_SAMPLES {
-            output[index] = self.spectrum[index]
+        for (index, sample) in output.iter_mut().enumerate() {
+            *sample = self.spectrum[index]
                 .re
                 .mul_add(self.window[index], self.synthesis[index]);
             self.synthesis[index] =
@@ -321,6 +321,7 @@ fn linear_state(start: f32, end: f32, count: usize) -> Vec<f32> {
 
 #[allow(
     clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,
     reason = "ERB bin calculations operate on fixed positive FFT dimensions and must match libDF's f32 rounding"
@@ -335,7 +336,7 @@ fn erb_widths() -> Vec<usize> {
     let mut overflow = 0_i32;
     for band in 1..=ERB_BANDS {
         let erb = band as f32 * step;
-        let frequency = 24.7 * 9.265 * ((erb / 9.265).exp() - 1.0);
+        let frequency = 24.7 * 9.265 * (erb / 9.265).exp_m1();
         let frequency_bin = (frequency / frequency_width).round() as i32;
         let mut width = frequency_bin - previous_frequency - overflow;
         if width < MIN_ERB_BINS as i32 {
@@ -371,7 +372,7 @@ fn vorbis_window() -> Vec<f32> {
     clippy::cast_precision_loss,
     reason = "audio frame and band dimensions are far below f32's exact integer range"
 )]
-fn usize_to_f32(value: usize) -> f32 {
+const fn usize_to_f32(value: usize) -> f32 {
     value as f32
 }
 
