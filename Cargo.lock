@@ -499,7 +499,6 @@ dependencies = [
 name = "noican-engine"
 version = "0.1.0"
 dependencies = [
- "flate2",
  "noican-core",
  "rtrb",
  "thiserror",
@@ -535,6 +534,7 @@ dependencies = [
  "flate2",
  "noican-core",
  "ort",
+ "realfft",
  "sha2",
  "tar",
  "thiserror",

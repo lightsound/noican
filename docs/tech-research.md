@@ -251,13 +251,26 @@ Known tuning risk (from design1): gate fade time constant — too short clips th
 
 Ship **Hush (16 k, no enrollment)** as a selectable stage and compare it in live use against the plain NS models. Done, and verified against `DeepFilterNet`'s own runtime (§5.5). Combining remains possible and is the likely end state (e.g. FastEnhancer 48 k for NS followed by a gate for speakers), which is another reason the pipeline is a chain of interchangeable stages rather than a single model slot.
 
-The enrollment-based alternative is the DIY gate of §6.2, since tse-conv-tasnet-48k has been withdrawn from Hugging Face (§5.4). **It is not implemented, and the reason is worth recording: the ECAPA-TDNN embedding it depends on could not be verified.**
+The enrollment-based alternative is the DIY gate of §6.2, since tse-conv-tasnet-48k has been withdrawn from Hugging Face (§5.4). **Shipped as `speaker-gate`, and verified on labelled held-out speakers**: enrolled from a single utterance by speaker 1, it leaves a *different* utterance by the same speaker untouched (+0.0 dB throughout) and attenuates speaker 2 to −24 dB after its warm-up. CI reproduces that check on every push.
 
-The published export (`penta2himajin/ecapa-tdnn-onnx`) takes `[batch, frames, 80]` log-mel features and documents nothing about how to compute them. Forty variants were tried — Hamming, Hann and Povey windows; magnitude and power spectra; natural-log and decibel scaling; Kaldi framing with and without pre-emphasis, DC removal, and the 20 Hz–7.6 kHz band; two amplitude scales; per-utterance mean and mean-variance normalisation — scored by whether embeddings of the same speaker sit closer than embeddings of different speakers across three speakers split into halves.
+The published ECAPA-TDNN export (`penta2himajin/ecapa-tdnn-onnx`, an ONNX export of `SpeechBrain`'s `spkrec-ecapa-voxceleb`) takes `[batch, frames, 80]` log-mel features and documents nothing about how to compute them, so the front-end was found by measuring whether the resulting embeddings separate labelled speakers. Two choices are load-bearing:
 
-The best result separates the *means* usefully (same-speaker cosine 0.69, different-speaker 0.27) but **no variant achieved a positive worst-case margin**: the closest different-speaker pair always beat the furthest same-speaker pair. Published ECAPA on VoxCeleb separates roughly 0.8 against 0.1, so the front-end is close but still wrong, and the amplitude scale turned out not to matter at all — the graph normalises its own input, which rules out a whole family of candidate explanations.
+| Choice | Answer | Evidence |
+|---|---|---|
+| Band scaling | **Decibels**, not the natural logarithm Kaldi uses | Same-speaker cosine 0.59 against different-speaker 0.02, versus 0.82 against 0.53 for the natural logarithm. Lower mean similarity, far better *separation* — and separation is the only property a gate needs |
+| Window length | **At least 1.5 s** | Worst-case margin −0.47 at 0.5 s, −0.16 at 1.0 s, +0.15 at 1.5 s, +0.23 at 2.0 s |
 
-Building a gate on top of that would be building on an unverified front-end, and §5.5 records what that costs. The next attempt should get a reference first, as that section's investigation eventually did: **use sherpa-onnx's speaker-embedding path, whose front-end is `kaldi-native-fbank` with documented parameters and whose output can be diffed directly.** That is a dependency decision this document has not yet made, which is the honest reason it is not in this phase.
+Everything else — Hamming against Hann against Povey windows, pre-emphasis, DC removal, the 20 Hz–7.6 kHz band limit, the amplitude scale — moves the margin by a few hundredths or not at all. The amplitude scale is irrelevant because the graph normalises its own input mean, which is worth knowing because it rules out a whole family of candidate explanations.
+
+The window-length result is the one with design consequences. Different-speaker scores sit near zero at *every* length; it is the same-speaker score that collapses on short windows, so a gate built on them would reject its own user. Hence a gate that decides from a sliding 1.5-second window, reacts in seconds, and suppresses a sustained other voice rather than a single interjected word. It starts open, so audio is never attenuated before the model has decided anything.
+
+Hush and this gate are complementary rather than alternatives. Hush separates overlapping speakers within a frame but cannot be told who you are; the gate can be told, but only resolves seconds.
+
+#### A rule that cost two investigations
+
+An earlier revision of this document concluded that this export could not be driven at all, because forty front-end variants had failed to separate speakers. That conclusion came from an unlabelled test set in which two of three supposed speakers were evidently the same person. Given labelled recordings, the same code separates them cleanly.
+
+That is the second wrong verdict in this phase traceable to a bad reference — §5.5 records the first, where Hush was diagnosed as misdriven when it was merely aggressive. **So: before concluding that a model is broken, verify the thing being measured against.** A labelled test set or a reference implementation is cheap. Both investigations that skipped that step cost far more than obtaining one would have.
 
 ---
 
@@ -414,7 +427,7 @@ Deliverables, in dependency order:
 
 0. **Quality gates, from the first commit** (see below). Non-negotiable and set up together with the workspace, not retrofitted.
 1. **Rust workspace**: the `Stage` trait, real-time-safe primitives (fixed-capacity queues, polyphase rational resampling, streaming STFT/ISTFT), and the runner that adapts any stage to the 48 kHz host path.
-2. **Model stages and weight acquisition**: FastEnhancer (all published variants), the DPDFNet family, GTCRN, UL-UNAS, DeepFilterNet3, and Hush, plus a downloader that fetches, checksums, and unpacks the weights on demand. Thirteen models behind three stage implementations (§5.5).
+2. **Model stages and weight acquisition**: FastEnhancer (all published variants), the DPDFNet family, GTCRN, UL-UNAS, DeepFilterNet3, Hush, and the ECAPA-TDNN enrolment gate, plus a downloader that fetches, checksums, and unpacks the weights on demand. Fourteen models behind four stage implementations (§5.5, §6.4).
 3. **CLI file-processing mode**: one WAV in, one output per model, organised for A/B listening, with latency alignment so the files line up.
 4. **Real-time pipeline**: AUHAL capture from the physical mic → active stage → BlackHole (stock, unmodified), inside a private aggregate device for drift compensation.
 5. **Minimal SwiftUI `MenuBarExtra`**: on/off, input-device picker, model select box, status. The Rust engine is embedded as a static library behind a C ABI.
@@ -425,7 +438,7 @@ Exit criteria: the virtual device is selectable in Zoom and usable daily, and th
 
 - Build, sign, and install the renamed BlackHole fork (joycast.driver pattern).
 - Promote `DeepFilterNet3` and Hush from block stages to streaming ones by re-exporting their graphs with the GRU states as explicit inputs and outputs. Both are correct today but carry about eight seconds of latency, which keeps the only speaker-suppression model out of the live path (§5.5).
-- Add the DIY VAD + ECAPA-TDNN gate of §6.2 as the enrollment-based option, now that `tse-conv-tasnet-48k` has been withdrawn.
+- Put a real VAD in front of the speaker gate. It currently holds its decision through silence judged by frame energy, which a VAD would do better (§6.2).
 
 ### Phase 2 — Menu bar app, full version
 
@@ -460,10 +473,10 @@ Historical note: PR #2 introduced `fallow` + ImportLint for TypeScript/JavaScrip
 
 1. Which model wins in live use. No longer a blocking question: the engine ships every candidate and switches between them at run time (§12), so this is answered continuously rather than once.
 2. Hush's behavior when the background speaker is *louder* than the user (trained at 12–24 dB SIR below primary).
-3. Whether the `DeepFilterNet`-family exports can be re-exported with their recurrent state as explicit graph I/O. That is the only thing between Hush and the live path, and Hush is the only speaker-suppression model available (§5.5).
-4. Which speaker-embedding model to build the enrollment gate on. The published ECAPA-TDNN export's feature front-end could not be verified against anything, and forty variants failed to separate speakers reliably (§6.4). Adopting sherpa-onnx would supply both a documented front-end and a reference to diff against, at the cost of a second inference runtime.
-4. Long-session (2 h+) stability of aggregate-device drift compensation.
-5. DIY gate fade time constant (if the DIY route is needed): onset clipping vs. interferer leakage.
+3. Whether the `DeepFilterNet`-family exports can be re-exported with their recurrent state as explicit graph I/O. That is the only thing between Hush and the live path (§5.5).
+4. Whether the speaker gate's thresholds hold up on real voices in a real room. They come from labelled corpus recordings, where same-speaker windows score around 0.42 and different-speaker windows around 0.02. A noisy room, a different microphone, or a family member with a similar voice could narrow that (§6.4).
+5. Long-session (2 h+) stability of aggregate-device drift compensation.
+6. The speaker gate's ramp time: 150 ms was chosen to be inaudible, but onset clipping against interferer leakage needs a listener to judge.
 6. How meeting apps treat the virtual device's reported latency/safety offsets (BlackHole reports zero).
 7. AEC engine choice, only relevant if AEC is built: `aec3` crate maturity vs. C++ `webrtc-audio-processing` vs. neural LocalVQE v1.4-AEC (16 kHz constraint).
 8. Whether 16 kHz output (Hush path) is subjectively acceptable in meetings vs. the 48 kHz paths.

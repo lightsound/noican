@@ -6,7 +6,7 @@ The physical microphone signal is captured, cleaned in real time (noise suppress
 
 ## Status
 
-Phase 0: the engine runs, thirteen models are selectable at run time, the offline comparison tool works, and the macOS audio path and menu bar app are written and build. **Nothing has been run on a Mac** — CI has no audio devices and no way to hear the result, so what it proves is that the code compiles, links, and signs.
+Phase 0: the engine runs, fourteen models are selectable at run time, the offline comparison tool works, and the macOS audio path and menu bar app are written and build. **Nothing has been run on a Mac** — CI has no audio devices and no way to hear the result, so what it proves is that the code compiles, links, and signs.
 
 - [docs/tech-research.md](docs/tech-research.md) — the single source of truth: candidate evaluation for every layer, the chosen stack, the roadmap, and what measurement has and has not confirmed.
 - [docs/models.md](docs/models.md) — the model catalog, how to fetch weights, and how to run a comparison.
