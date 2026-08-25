@@ -13,9 +13,9 @@ publish.workspace = true
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-noican-coreaudio = { path = "../noican-coreaudio" }
-noican-engine = { path = "../noican-engine" }
-noican-models = { path = "../noican-models" }
+noican-coreaudio = { version = "0.1.0", path = "../noican-coreaudio" }
+noican-engine = { version = "0.1.0", path = "../noican-engine" }
+noican-models = { version = "0.1.0", path = "../noican-models" }
 
 [lints]
 workspace = true

@@ -10,7 +10,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-noican-engine = { path = "../noican-engine" }
+noican-engine = { version = "0.1.0", path = "../noican-engine" }
 rtrb = "0.4.0"
 thiserror = "2.0.20"
 

@@ -76,7 +76,7 @@ impl Tse {
                     .tensor_shape()
                     .is_some_and(|shape| shape.as_ref() == [1, 192])
             })
-            .map(|input| input.name())
+            .map(ort::value::Outlet::name)
             .collect();
         let [condition_input] = condition_inputs.as_slice() else {
             return Err(backend_error(format!(
