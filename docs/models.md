@@ -9,7 +9,7 @@ failure.
 ## Getting the weights
 
 ```bash
-# Everything in the catalog (~78 MB).
+# Everything in the catalog (~158 MB).
 cargo run -p noican-cli -- fetch
 
 # Or just what you need.
@@ -42,7 +42,8 @@ interrupted transfer can never be mistaken for a usable model.
 | `gtcrn` | 16 kHz | 256 | 256 smp (16.0 ms) | 48K parameters; the simplest graph in the catalog |
 | `ul-unas` | 16 kHz | 256 | 256 smp (16.0 ms) | GTCRN's successor; the low-latency-mode candidate |
 | `deepfilternet3` | 48 kHz | 384000 | 1440 smp (30.0 ms) | The reference baseline. A **block stage**: ~8 s of latency, offline use only |
-| `hush` | 16 kHz | 128000 | 160 smp (10.0 ms) | The only speaker-suppression model. Also a block stage. Attenuates ~14 dB even on clean speech, which is the model's own behaviour |
+| `hush` | 16 kHz | 128000 | 160 smp (10.0 ms) | Separates overlapping speakers. Also a block stage. Attenuates ~14 dB even on clean speech, which is the model's own behaviour |
+| `speaker-gate` | 16 kHz | 1600 | none | Attenuates when the dominant speaker is not the enrolled one. Needs `noican enroll` first |
 
 Delays were measured rather than assumed — no published export declares one.
 Reproduce with:
@@ -60,6 +61,28 @@ substitute.
 analysis/synthesis round trip. It does not include the block accumulation and
 resampling that `StageRunner` adds on top; `noican process` reports the
 end-to-end figure per model.
+
+### The speaker gate needs enrolling first
+
+`speaker-gate` is the only model that needs something the catalog cannot
+download: a recording of the voice it should keep.
+
+```sh
+noican fetch speaker-gate
+noican enroll me-talking.wav                 # several recordings are better
+noican process meeting.wav -o out -m speaker-gate
+```
+
+`enroll` averages an embedding over overlapping windows and reports how well
+those windows agree with each other. A low figure almost always means the
+recording had more than one voice in it.
+
+The gate needs about 1.5 seconds of speech before it can recognise anyone, which
+is a property of the embedding model rather than a tuning choice
+(`docs/tech-research.md` §6.4). So it suppresses a sustained other voice, not a
+single interjected word, and it starts open — audio is never gated before the
+model has decided anything. It complements `hush`, which separates overlapping
+speakers within a frame but cannot be told who you are.
 
 ### Two of them are block stages
 

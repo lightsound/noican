@@ -1,5 +1,6 @@
 //! Subcommand implementations.
 
+pub(crate) mod enroll;
 pub(crate) mod fetch;
 pub(crate) mod latency;
 pub(crate) mod list;

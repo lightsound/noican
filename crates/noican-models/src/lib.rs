@@ -20,6 +20,7 @@ pub mod dfn;
 pub mod error;
 pub mod latency;
 pub mod session;
+pub mod speaker;
 pub mod stages;
 pub mod store;
 
@@ -66,6 +67,22 @@ pub fn build_stage(model: &ModelDescriptor, store: &ModelStore) -> Result<Box<dy
             params,
             latency,
         )?),
+        Architecture::SpeakerGate => {
+            let profile_path = store.speaker_profile_path();
+            if !profile_path.is_file() {
+                return Err(Error::Enrolment {
+                    detail: format!(
+                        "no profile at `{}`; run `noican enroll <recording-of-your-voice.wav>` \
+                         first",
+                        profile_path.display()
+                    ),
+                });
+            }
+            let profile = speaker::SpeakerProfile::load(&profile_path)?;
+            Box::new(stages::SpeakerGateStage::new(
+                model.id, &path, profile, latency,
+            )?)
+        }
         Architecture::DeepFilterNet => {
             let directory = store.require_bundle(model)?;
             Box::new(stages::DeepFilterNetStage::load(

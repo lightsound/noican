@@ -24,6 +24,7 @@ for the exact URLs and SHA-256 digests.
 | UL-UNAS (`ulunas_stream_simple`) | Apache-2.0 | Xiaobin Rong — <https://github.com/Xiaobin-Rong/ul-unas> (IEEE TASLP 2026, arXiv:2503.00340) |
 | DeepFilterNet3 (`DeepFilterNet3_onnx.tar.gz`) | MIT OR Apache-2.0 | Hendrik Schröter et al. — <https://github.com/Rikorose/DeepFilterNet> |
 | Hush | Apache-2.0 | Weya AI — <https://huggingface.co/weya-ai/hush> |
+| ECAPA-TDNN (`ecapa_tdnn.onnx`) | Apache-2.0 | ONNX export of SpeechBrain's `spkrec-ecapa-voxceleb` — <https://huggingface.co/penta2himajin/ecapa-tdnn-onnx> |
 
 ## Reference implementations consulted
 

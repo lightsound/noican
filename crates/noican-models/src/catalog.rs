@@ -72,6 +72,13 @@ pub enum Architecture {
     /// with different windows.
     Spectral(SpectralParams),
 
+    /// A speaker-embedding graph driving an enrolment gate.
+    ///
+    /// Unlike every other entry, this one needs state that is not in the
+    /// catalog: an enrolled profile, which the user creates with `noican
+    /// enroll`. Without one there is nobody to recognise.
+    SpeakerGate,
+
     /// A three-graph `DeepFilterNet` bundle: an encoder, an ERB-mask decoder,
     /// and a deep-filter decoder, plus a `config.ini` giving every parameter.
     ///
@@ -354,6 +361,29 @@ pub static CATALOG: &[ModelDescriptor] = &[
                   advanced_dfnet16k_model_best_onnx.tar.gz",
             sha256: "45632ccaa82b71bb743d6caa7c78e983fe2f2790a3af7f6ec48e6ed7ba085df6",
             kind: ArtifactKind::Bundle,
+        }],
+    },
+    ModelDescriptor {
+        id: "speaker-gate",
+        display_name: "Speaker gate (ECAPA-TDNN enrolment)",
+        kind: ModelKind::SpeakerSuppression,
+        architecture: Architecture::SpeakerGate,
+        sample_rate: 16_000,
+        license: "Apache-2.0",
+        source: "https://huggingface.co/penta2himajin/ecapa-tdnn-onnx (SpeechBrain \
+                 spkrec-ecapa-voxceleb, 192-dim)",
+        notes: "Attenuates audio when the dominant speaker is not the enrolled one. Needs \
+                `noican enroll` first, and needs about 1.5 s of speech to decide, so it \
+                suppresses a sustained other voice rather than a single interjected word. \
+                Complementary to Hush, which separates overlapping speakers within a frame but \
+                cannot be told who you are.",
+        artifacts: &[Artifact {
+            file_name: "ecapa_tdnn.onnx",
+            // Pinned to a revision: `main` moves.
+            url: "https://huggingface.co/penta2himajin/ecapa-tdnn-onnx/resolve/\
+                  57bc773c7cc1a8afa117b38b0b2a38c96ffa99a2/ecapa_tdnn.onnx",
+            sha256: "75f5f36d23879c5b2dd73b09221e8727e8e6e6a7cbd1a0655992d7ae81195698",
+            kind: ArtifactKind::Graph,
         }],
     },
 ];
