@@ -199,6 +199,7 @@ pub type AudioDeviceIoProc = unsafe extern "C" fn(
 #[cfg(target_os = "macos")]
 #[link(name = "CoreAudio", kind = "framework")]
 unsafe extern "C" {
+    /// Size, in bytes, of the value of a property.
     pub fn AudioObjectGetPropertyDataSize(
         object: AudioObjectId,
         address: *const AudioObjectPropertyAddress,
@@ -207,6 +208,7 @@ unsafe extern "C" {
         data_size: *mut u32,
     ) -> OsStatus;
 
+    /// Reads the value of a property.
     pub fn AudioObjectGetPropertyData(
         object: AudioObjectId,
         address: *const AudioObjectPropertyAddress,
@@ -216,6 +218,7 @@ unsafe extern "C" {
         data: *mut c_void,
     ) -> OsStatus;
 
+    /// Writes the value of a property.
     pub fn AudioObjectSetPropertyData(
         object: AudioObjectId,
         address: *const AudioObjectPropertyAddress,
@@ -225,18 +228,22 @@ unsafe extern "C" {
         data: *const c_void,
     ) -> OsStatus;
 
+    /// Whether an object has a given property at all.
     pub fn AudioObjectHasProperty(
         object: AudioObjectId,
         address: *const AudioObjectPropertyAddress,
     ) -> bool;
 
+    /// Creates an aggregate device from a description dictionary.
     pub fn AudioHardwareCreateAggregateDevice(
         description: *const c_void,
         device: *mut AudioObjectId,
     ) -> OsStatus;
 
+    /// Destroys an aggregate device created by this process.
     pub fn AudioHardwareDestroyAggregateDevice(device: AudioObjectId) -> OsStatus;
 
+    /// Registers an I/O callback on a device.
     pub fn AudioDeviceCreateIOProcID(
         device: AudioObjectId,
         proc_: AudioDeviceIoProc,
@@ -244,13 +251,16 @@ unsafe extern "C" {
         proc_id: *mut AudioDeviceIoProcId,
     ) -> OsStatus;
 
+    /// Unregisters a callback registered by `AudioDeviceCreateIOProcID`.
     pub fn AudioDeviceDestroyIOProcID(
         device: AudioObjectId,
         proc_id: AudioDeviceIoProcId,
     ) -> OsStatus;
 
+    /// Starts delivering buffers to a registered callback.
     pub fn AudioDeviceStart(device: AudioObjectId, proc_id: AudioDeviceIoProcId) -> OsStatus;
 
+    /// Stops delivering buffers to a registered callback.
     pub fn AudioDeviceStop(device: AudioObjectId, proc_id: AudioDeviceIoProcId) -> OsStatus;
 }
 

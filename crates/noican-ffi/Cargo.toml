@@ -17,7 +17,6 @@ crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 noican-core.workspace = true
-noican-engine.workspace = true
 noican-macos.workspace = true
 noican-models.workspace = true
 tracing.workspace = true

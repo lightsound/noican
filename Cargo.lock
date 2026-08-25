@@ -484,7 +484,6 @@ name = "noican-ffi"
 version = "0.1.0"
 dependencies = [
  "noican-core",
- "noican-engine",
  "noican-macos",
  "noican-models",
  "tracing",
