@@ -53,11 +53,11 @@ const AUDIO_FORMAT_FLAG_IS_PACKED: u32 = 1 << 3;
 
 #[repr(C)]
 struct AudioComponentDescription {
-    component_type: u32,
-    component_subtype: u32,
-    component_manufacturer: u32,
-    component_flags: u32,
-    component_flags_mask: u32,
+    type_id: u32,
+    subtype: u32,
+    manufacturer: u32,
+    flags: u32,
+    flags_mask: u32,
 }
 
 #[repr(C)]
@@ -181,7 +181,7 @@ impl Runtime {
     /// Open an initialized AUHAL on a private Aggregate Device.
     ///
     /// `aggregate_device` must contain the selected physical input and the
-    /// BlackHole output subdevice with drift compensation configured by the
+    /// `BlackHole` output subdevice with drift compensation configured by the
     /// Swift control plane.
     ///
     /// # Errors
@@ -237,8 +237,8 @@ impl Runtime {
                     engine,
                     input_consumer,
                     output_producer,
-                    worker_shutdown,
-                    worker_fault,
+                    &worker_shutdown,
+                    &worker_fault,
                     workgroup,
                 );
             })
@@ -309,11 +309,11 @@ impl Drop for Runtime {
 
 fn create_auhal() -> Result<AudioUnit, CoreAudioError> {
     let description = AudioComponentDescription {
-        component_type: AUDIO_UNIT_TYPE_OUTPUT,
-        component_subtype: AUDIO_UNIT_SUBTYPE_HAL_OUTPUT,
-        component_manufacturer: AUDIO_UNIT_MANUFACTURER_APPLE,
-        component_flags: 0,
-        component_flags_mask: 0,
+        type_id: AUDIO_UNIT_TYPE_OUTPUT,
+        subtype: AUDIO_UNIT_SUBTYPE_HAL_OUTPUT,
+        manufacturer: AUDIO_UNIT_MANUFACTURER_APPLE,
+        flags: 0,
+        flags_mask: 0,
     };
     let component = unsafe { AudioComponentFindNext(ptr::null_mut(), &raw const description) };
     if component.is_null() {
@@ -397,7 +397,7 @@ fn set_property<T>(
                 property,
                 scope,
                 element,
-                (value as *const T).cast(),
+                ptr::from_ref(value).cast(),
                 size_u32::<T>()?,
             )
         },
@@ -433,8 +433,8 @@ fn processing_loop(
     mut engine: SwitchingEngine,
     mut input: Consumer<f32>,
     mut output: Producer<f32>,
-    shutdown: Arc<AtomicBool>,
-    faulted: Arc<AtomicBool>,
+    shutdown: &Arc<AtomicBool>,
+    faulted: &Arc<AtomicBool>,
     workgroup: usize,
 ) {
     let workgroup = workgroup as *mut c_void;
@@ -528,7 +528,7 @@ unsafe extern "C" fn render_callback(
     NO_ERR
 }
 
-fn check_status(status: OSStatus, operation: &'static str) -> Result<(), CoreAudioError> {
+const fn check_status(status: OSStatus, operation: &'static str) -> Result<(), CoreAudioError> {
     if status == NO_ERR {
         Ok(())
     } else {
