@@ -1,7 +1,7 @@
-//! SpeechBrain ECAPA-TDNN enrollment embedding.
+//! `SpeechBrain` ECAPA-TDNN enrollment embedding.
 //!
 //! The feature extraction follows the Apache-2.0 mellonella implementation,
-//! which in turn was parity-tested against SpeechBrain's public
+//! which in turn was parity-tested against `SpeechBrain`'s public
 //! `spkrec-ecapa-voxceleb` model.
 
 use std::{
@@ -190,8 +190,10 @@ impl Fbank {
 fn hamming_window() -> [f32; FFT_SIZE] {
     let mut window = [0.0_f32; FFT_SIZE];
     for (index, value) in window.iter_mut().enumerate() {
-        *value = (0.54 - 0.46 * (2.0 * std::f64::consts::PI * index as f64 / FFT_SIZE as f64).cos())
-            as f32;
+        *value = 0.46_f64.mul_add(
+            -(2.0 * std::f64::consts::PI * index as f64 / FFT_SIZE as f64).cos(),
+            0.54,
+        ) as f32;
     }
     window
 }

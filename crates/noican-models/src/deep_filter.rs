@@ -1,4 +1,4 @@
-//! DeepFilterNet3 baseline and Hush stages using the upstream Rust runtime.
+//! `DeepFilterNet3` baseline and Hush stages using the upstream Rust runtime.
 
 use std::{
     path::{Path, PathBuf},
@@ -18,7 +18,7 @@ use crate::assets::ModelAsset;
 /// DeepFilterNet-family model exposed by this backend.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum DeepFilterVariant {
-    /// Official upstream DeepFilterNet3 model embedded by `libDF`.
+    /// Official upstream `DeepFilterNet3` model embedded by `libDF`.
     DeepFilterNet3,
     /// Weya Hush 16 kHz background-speaker suppression model.
     Hush,
@@ -72,7 +72,7 @@ pub struct DeepFilterStage {
 }
 
 impl DeepFilterStage {
-    /// Load the official embedded DeepFilterNet3 baseline.
+    /// Load the official embedded `DeepFilterNet3` baseline.
     ///
     /// # Errors
     ///
@@ -86,7 +86,7 @@ impl DeepFilterStage {
     /// # Errors
     ///
     /// Returns [`StageError::Backend`] if the bundle is missing, malformed, or
-    /// rejected by the DeepFilterNet runtime.
+    /// rejected by the `DeepFilterNet` runtime.
     pub fn hush(path: impl AsRef<Path>) -> Result<Self, StageError> {
         Self::build(
             DeepFilterVariant::Hush,
@@ -99,7 +99,7 @@ impl DeepFilterStage {
         let (response_sender, response_receiver) = sync_channel(1);
         let worker = thread::Builder::new()
             .name(format!("noican-{}", variant.id()))
-            .spawn(move || run_worker(variant, source, command_receiver, response_sender))
+            .spawn(move || run_worker(variant, &source, &command_receiver, &response_sender))
             .map_err(|error| backend_error(variant, error))?;
         let descriptor = match response_receiver.recv() {
             Ok(WorkerResponse::Ready(result)) => {
@@ -199,11 +199,11 @@ enum WorkerResponse {
 
 fn run_worker(
     variant: DeepFilterVariant,
-    source: ModelSource,
-    commands: Receiver<WorkerCommand>,
-    responses: SyncSender<WorkerResponse>,
+    source: &ModelSource,
+    commands: &Receiver<WorkerCommand>,
+    responses: &SyncSender<WorkerResponse>,
 ) {
-    let built = build_worker_model(variant, &source);
+    let built = build_worker_model(variant, source);
     let (mut model, descriptor) = match built {
         Ok(value) => value,
         Err(message) => {
@@ -226,7 +226,7 @@ fn run_worker(
                 }
             }
             WorkerCommand::Reset => {
-                let result = build_worker_model(variant, &source)
+                let result = build_worker_model(variant, source)
                     .map(|(replacement, _descriptor)| model = replacement);
                 if responses.send(WorkerResponse::Reset(result)).is_err() {
                     return;

@@ -17,17 +17,17 @@ use crate::{
 /// Every model selectable by the CLI and menu bar UI.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ModelId {
-    /// FastEnhancer Tiny 48 kHz.
+    /// `FastEnhancer` Tiny 48 kHz.
     FastEnhancerTiny,
-    /// FastEnhancer Base 48 kHz.
+    /// `FastEnhancer` Base 48 kHz.
     FastEnhancerBase,
-    /// FastEnhancer Small 48 kHz.
+    /// `FastEnhancer` Small 48 kHz.
     FastEnhancerSmall,
-    /// DPDFNet2 48 kHz HR.
+    /// `DPDFNet2` 48 kHz HR.
     DpdfNet2HighResolution,
-    /// DPDFNet8 48 kHz HR.
+    /// `DPDFNet8` 48 kHz HR.
     DpdfNet8HighResolution,
-    /// Official DeepFilterNet3 baseline.
+    /// Official `DeepFilterNet3` baseline.
     DeepFilterNet3,
     /// UL-UNAS 16 kHz.
     UlUnas,
@@ -176,9 +176,9 @@ pub struct LoadRequest<'a> {
 ///
 /// Returns [`ModelLoadError`] for assets, enrollment, or backend failures.
 pub fn load_pipeline_stage(
-    request: LoadRequest<'_>,
+    request: &LoadRequest<'_>,
 ) -> Result<Box<dyn AudioStage>, ModelLoadError> {
-    let native = load_native_stage(&request)?;
+    let native = load_native_stage(request)?;
     Ok(Box::new(RateAdapter::new(native)?))
 }
 
@@ -224,7 +224,7 @@ fn load_native_stage(request: &LoadRequest<'_>) -> Result<Box<dyn AudioStage>, M
             let embedding = request
                 .speaker_embedding
                 .ok_or(ModelLoadError::MissingEnrollment)?;
-            Box::new(Tse::load(graph, embedding)?)
+            Box::new(Tse::load(graph, &embedding)?)
         }
     };
     Ok(stage)

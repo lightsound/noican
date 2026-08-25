@@ -15,25 +15,25 @@ const MAX_ASSET_BYTES: u64 = 512 * 1024 * 1024;
 /// One file required by a model backend.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ModelAsset {
-    /// FastEnhancer Tiny 48 kHz waveform graph.
+    /// `FastEnhancer` Tiny 48 kHz waveform graph.
     FastEnhancerTiny,
-    /// FastEnhancer Base 48 kHz waveform graph.
+    /// `FastEnhancer` Base 48 kHz waveform graph.
     FastEnhancerBase,
-    /// FastEnhancer Small 48 kHz waveform graph.
+    /// `FastEnhancer` Small 48 kHz waveform graph.
     FastEnhancerSmall,
-    /// DPDFNet2 high-resolution 48 kHz graph.
+    /// `DPDFNet2` high-resolution 48 kHz graph.
     DpdfNet2HighResolution,
-    /// DPDFNet8 high-resolution 48 kHz graph.
+    /// `DPDFNet8` high-resolution 48 kHz graph.
     DpdfNet8HighResolution,
     /// UL-UNAS 16 kHz simplified streaming graph.
     UlUnas,
-    /// Hush 16 kHz DeepFilterNet model bundle.
+    /// Hush 16 kHz `DeepFilterNet` model bundle.
     Hush,
     /// Target-speaker extraction graph.
     TseGraph,
     /// External data referenced by the TSE graph.
     TseWeights,
-    /// SpeechBrain ECAPA-TDNN embedding graph.
+    /// `SpeechBrain` ECAPA-TDNN embedding graph.
     Ecapa,
     /// SpeechBrain-compatible 80-band filterbank matrix.
     EcapaFilterbank,
@@ -237,7 +237,7 @@ impl ModelStore {
             source,
         })?;
         let partial = destination.with_extension("partial");
-        let result = self.download(asset, specification, &partial, options.hugging_face_token);
+        let result = Self::download(asset, specification, &partial, options.hugging_face_token);
         if let Err(error) = result {
             let _ignored = fs::remove_file(&partial);
             return Err(error);
@@ -259,7 +259,6 @@ impl ModelStore {
     }
 
     fn download(
-        &self,
         asset: ModelAsset,
         specification: AssetSpecification,
         partial: &Path,
@@ -371,7 +370,7 @@ fn sha256_file(path: &Path) -> Result<String, AssetError> {
 fn sha256_reader(mut reader: impl Read) -> io::Result<String> {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
+    let mut buffer = vec![0_u8; 64 * 1024].into_boxed_slice();
     loop {
         let count = reader.read(&mut buffer)?;
         if count == 0 {
@@ -404,7 +403,7 @@ mod tests {
 
     #[test]
     fn sha256_matches_known_vector() -> Result<(), io::Error> {
-        let actual = sha256_reader("abc".as_bytes())?;
+        let actual = sha256_reader(b"abc".as_slice())?;
         assert_eq!(
             actual,
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"

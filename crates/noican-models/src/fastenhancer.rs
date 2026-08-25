@@ -1,4 +1,4 @@
-//! FastEnhancer 48 kHz T/B/S streaming ONNX stages.
+//! `FastEnhancer` 48 kHz T/B/S streaming ONNX stages.
 
 use std::{borrow::Cow, path::Path};
 
@@ -14,7 +14,7 @@ use crate::assets::ModelAsset;
 const SAMPLE_RATE: u32 = 48_000;
 const FRAME_SAMPLES: usize = 512;
 
-/// Supported FastEnhancer 48 kHz variants.
+/// Supported `FastEnhancer` 48 kHz variants.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum FastEnhancerVariant {
     /// 28K-parameter Tiny model.
@@ -54,7 +54,7 @@ impl FastEnhancerVariant {
         }
     }
 
-    fn cache_shapes(self) -> &'static [&'static [usize]] {
+    const fn cache_shapes(self) -> &'static [&'static [usize]] {
         const TINY: &[&[usize]] = &[&[1, 512], &[1, 512], &[1, 24, 20], &[1, 24, 20]];
         const BASE: &[&[usize]] = &[
             &[1, 512],
@@ -78,7 +78,7 @@ impl FastEnhancerVariant {
     }
 }
 
-/// Stateful FastEnhancer ONNX stage.
+/// Stateful `FastEnhancer` ONNX stage.
 pub struct FastEnhancer {
     variant: FastEnhancerVariant,
     session: Session,

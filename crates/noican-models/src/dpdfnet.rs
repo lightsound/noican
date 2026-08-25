@@ -1,4 +1,4 @@
-//! DPDFNet 48 kHz HR streaming stages.
+//! `DPDFNet` 48 kHz HR streaming stages.
 
 use std::path::Path;
 
@@ -19,12 +19,12 @@ const FFT_SIZE: usize = 960;
 const FRAME_SAMPLES: usize = 480;
 const SPECTRUM_BINS: usize = FFT_SIZE / 2 + 1;
 
-/// Official high-resolution DPDFNet variants.
+/// Official high-resolution `DPDFNet` variants.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum DpdfNetVariant {
-    /// Balanced DPDFNet2 model.
+    /// Balanced `DPDFNet2` model.
     DpdfNet2,
-    /// Higher-quality DPDFNet8 model.
+    /// Higher-quality `DPDFNet8` model.
     DpdfNet8,
 }
 
@@ -63,7 +63,7 @@ impl DpdfNetVariant {
     }
 }
 
-/// Stateful DPDFNet spectral ONNX stage.
+/// Stateful `DPDFNet` spectral ONNX stage.
 pub struct DpdfNet {
     variant: DpdfNetVariant,
     session: Session,
@@ -73,7 +73,7 @@ pub struct DpdfNet {
 }
 
 impl DpdfNet {
-    /// Load an official DPDFNet 48 kHz HR graph and its embedded metadata.
+    /// Load an official `DPDFNet` 48 kHz HR graph and its embedded metadata.
     ///
     /// # Errors
     ///

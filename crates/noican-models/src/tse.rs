@@ -55,9 +55,9 @@ impl Tse {
     /// [`StageError::InvalidConfiguration`] for a non-finite or zero vector.
     pub fn load(
         path: impl AsRef<Path>,
-        embedding: [f32; EMBEDDING_DIMENSIONS],
+        embedding: &[f32; EMBEDDING_DIMENSIONS],
     ) -> Result<Self, StageError> {
-        validate_embedding(&embedding)?;
+        validate_embedding(embedding)?;
         let session = Session::builder()
             .map_err(backend_error)?
             .with_intra_threads(1)
@@ -68,7 +68,7 @@ impl Tse {
             .map_err(backend_error)?;
         Ok(Self {
             session,
-            embedding,
+            embedding: *embedding,
             state: initial_state(),
         })
     }
@@ -81,10 +81,10 @@ impl Tse {
     /// vector.
     pub fn set_embedding(
         &mut self,
-        embedding: [f32; EMBEDDING_DIMENSIONS],
+        embedding: &[f32; EMBEDDING_DIMENSIONS],
     ) -> Result<(), StageError> {
-        validate_embedding(&embedding)?;
-        self.embedding = embedding;
+        validate_embedding(embedding)?;
+        self.embedding = *embedding;
         self.state = initial_state();
         Ok(())
     }

@@ -33,7 +33,7 @@ impl StreamingStft {
     ///
     /// # Errors
     ///
-    /// Returns [`DspError::InvalidGeometry`] unless the hop evenly divides
+    /// Returns [`DspError::Geometry`] unless the hop evenly divides
     /// the FFT size and is no larger than it.
     pub fn new(fft_size: usize, hop_size: usize, window: Window) -> Result<Self, DspError> {
         if fft_size == 0
@@ -41,7 +41,7 @@ impl StreamingStft {
             || hop_size > fft_size
             || !fft_size.is_multiple_of(hop_size)
         {
-            return Err(DspError::InvalidGeometry { fft_size, hop_size });
+            return Err(DspError::Geometry { fft_size, hop_size });
         }
         let mut planner = FftPlanner::new();
         Ok(Self {
@@ -68,10 +68,10 @@ impl StreamingStft {
     ///
     /// # Errors
     ///
-    /// Returns [`DspError::InvalidHop`] for a non-matching input.
+    /// Returns [`DspError::HopLength`] for a non-matching input.
     pub fn analyze(&mut self, input: &[f32]) -> Result<Vec<f32>, DspError> {
         if input.len() != self.hop_size {
-            return Err(DspError::InvalidHop {
+            return Err(DspError::HopLength {
                 expected: self.hop_size,
                 actual: input.len(),
             });
@@ -94,11 +94,11 @@ impl StreamingStft {
     ///
     /// # Errors
     ///
-    /// Returns [`DspError::InvalidSpectrum`] for a non-matching input.
+    /// Returns [`DspError::SpectrumLength`] for a non-matching input.
     pub fn synthesize(&mut self, spectrum: &[f32]) -> Result<Vec<f32>, DspError> {
         let expected = self.bins * 2;
         if spectrum.len() != expected {
-            return Err(DspError::InvalidSpectrum {
+            return Err(DspError::SpectrumLength {
                 expected,
                 actual: spectrum.len(),
             });
@@ -118,8 +118,9 @@ impl StreamingStft {
         let inverse_scale = reciprocal(self.fft_size);
         for index in 0..self.fft_size {
             let window = self.window[index];
-            self.synthesis[index] += self.spectrum[index].re * inverse_scale * window;
-            self.normalization[index] += window * window;
+            self.synthesis[index] =
+                (self.spectrum[index].re * inverse_scale).mul_add(window, self.synthesis[index]);
+            self.normalization[index] = window.mul_add(window, self.normalization[index]);
         }
         let output = self
             .synthesis
@@ -151,7 +152,7 @@ impl StreamingStft {
 pub enum DspError {
     /// FFT and hop sizes cannot form a fixed overlap.
     #[error("invalid STFT geometry: fft_size={fft_size}, hop_size={hop_size}")]
-    InvalidGeometry {
+    Geometry {
         /// FFT size.
         fft_size: usize,
         /// Hop size.
@@ -159,7 +160,7 @@ pub enum DspError {
     },
     /// Analysis received the wrong number of samples.
     #[error("STFT expected {expected} input samples, received {actual}")]
-    InvalidHop {
+    HopLength {
         /// Required hop size.
         expected: usize,
         /// Supplied sample count.
@@ -167,7 +168,7 @@ pub enum DspError {
     },
     /// Synthesis received the wrong number of scalars.
     #[error("ISTFT expected {expected} spectral scalars, received {actual}")]
-    InvalidSpectrum {
+    SpectrumLength {
         /// Required scalar count.
         expected: usize,
         /// Supplied scalar count.
@@ -190,7 +191,10 @@ fn make_window(size: usize, window: Window) -> Vec<f32> {
             .collect(),
         Window::Hann => (0..size)
             .map(|index| {
-                (0.5 - 0.5 * (2.0 * std::f64::consts::PI * index as f64 / size as f64).cos()) as f32
+                0.5_f64.mul_add(
+                    -(2.0 * std::f64::consts::PI * index as f64 / size as f64).cos(),
+                    0.5,
+                ) as f32
             })
             .collect(),
     }
@@ -212,7 +216,7 @@ mod tests {
     fn invalid_geometry_is_rejected() {
         assert!(matches!(
             StreamingStft::new(512, 300, Window::Hann),
-            Err(DspError::InvalidGeometry { .. })
+            Err(DspError::Geometry { .. })
         ));
     }
 
