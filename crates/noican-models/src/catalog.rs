@@ -127,6 +127,14 @@ pub struct ModelDescriptor {
     pub architecture: Architecture,
     /// Native sample rate in hertz.
     pub sample_rate: u32,
+    /// Whether the model is a candidate for the live path.
+    ///
+    /// False for models whose published graphs force block processing, which
+    /// costs seconds of latency (§5.5). They stay selectable because the offline
+    /// comparison is what they are for, but anything offering the choice has to
+    /// say so — a user who picks one unwarned gets several seconds of silence
+    /// and concludes the app is broken.
+    pub live_capable: bool,
     /// Licence of the weights, for `THIRD_PARTY_NOTICES.md`.
     pub license: &'static str,
     /// Where the weights came from, for attribution and re-verification.
@@ -153,6 +161,7 @@ macro_rules! fastenhancer {
             kind: ModelKind::NoiseSuppression,
             architecture: Architecture::Waveform,
             sample_rate: 48_000,
+            live_capable: true,
             license: "MIT",
             source: "https://github.com/aask1357/fastenhancer (release onnx-48khz-v1)",
             notes: $notes,
@@ -179,6 +188,7 @@ macro_rules! dpdfnet {
             kind: ModelKind::NoiseSuppression,
             architecture: Architecture::SpectralSelfDescribing,
             sample_rate: $rate,
+            live_capable: true,
             license: "Apache-2.0",
             source: "https://github.com/k2-fsa/sherpa-onnx \
                      (release speech-enhancement-models; models by Ceva Inc.)",
@@ -281,6 +291,7 @@ pub static CATALOG: &[ModelDescriptor] = &[
             window: WindowKind::HannSqrt,
         }),
         sample_rate: 16_000,
+        live_capable: true,
         license: "Apache-2.0",
         source: "https://github.com/Xiaobin-Rong/gtcrn \
                  (redistributed via sherpa-onnx speech-enhancement-models)",
@@ -304,6 +315,7 @@ pub static CATALOG: &[ModelDescriptor] = &[
             window: WindowKind::Hann,
         }),
         sample_rate: 16_000,
+        live_capable: true,
         license: "Apache-2.0",
         source: "https://github.com/Xiaobin-Rong/ul-unas",
         notes: "GTCRN's successor at ~171K parameters, and the low-latency-mode candidate. \
@@ -325,6 +337,7 @@ pub static CATALOG: &[ModelDescriptor] = &[
         kind: ModelKind::NoiseSuppression,
         architecture: Architecture::DeepFilterNet,
         sample_rate: 48_000,
+        live_capable: false,
         license: "MIT OR Apache-2.0",
         source: "https://github.com/Rikorose/DeepFilterNet (models/DeepFilterNet3_onnx.tar.gz)",
         notes: "The historical baseline and the reference row in comparisons. Runs as a block \
@@ -346,6 +359,7 @@ pub static CATALOG: &[ModelDescriptor] = &[
         kind: ModelKind::SpeakerSuppression,
         architecture: Architecture::DeepFilterNet,
         sample_rate: 16_000,
+        live_capable: false,
         license: "Apache-2.0",
         source: "https://huggingface.co/weya-ai/hush",
         notes: "DeepFilterNet3 retrained with competing speakers, and the only model here that \
@@ -369,6 +383,7 @@ pub static CATALOG: &[ModelDescriptor] = &[
         kind: ModelKind::SpeakerSuppression,
         architecture: Architecture::SpeakerGate,
         sample_rate: 16_000,
+        live_capable: true,
         license: "Apache-2.0",
         source: "https://huggingface.co/penta2himajin/ecapa-tdnn-onnx (SpeechBrain \
                  spkrec-ecapa-voxceleb, 192-dim)",
@@ -401,7 +416,7 @@ pub fn ids() -> impl Iterator<Item = &'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ArtifactKind, CATALOG, ModelKind, find, ids};
+    use super::{Architecture, ArtifactKind, CATALOG, ModelKind, find, ids};
 
     #[test]
     fn ids_are_unique() {
@@ -472,6 +487,25 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The flag exists so a picker can warn before a user chooses a model that
+    /// will hand them seconds of silence, so it has to agree with which stage
+    /// implementation the model actually gets.
+    #[test]
+    fn only_block_stage_models_are_marked_unfit_for_live_use() {
+        for model in CATALOG {
+            let forced_into_blocks = matches!(model.architecture, Architecture::DeepFilterNet);
+            assert_eq!(
+                model.live_capable, !forced_into_blocks,
+                "{} claims live_capable = {} but its architecture disagrees",
+                model.id, model.live_capable
+            );
+        }
+        assert!(
+            CATALOG.iter().any(|model| !model.live_capable),
+            "nothing is marked unfit for live use, so the flag is untested"
+        );
     }
 
     #[test]
