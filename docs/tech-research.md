@@ -54,7 +54,7 @@ Two AI-generated design documents were used as the starting point (Japanese, kep
 | AEC | Headphones-only; VoiceProcessingIO "needs testing" | Barely addressed | Headphones for v0 confirmed; a real solution exists now: process tap + WebRTC AEC3 (§7) |
 | "Sidon" model (design2) | — | Proposed as high-quality option | Real but offline-only (dataset cleansing); not usable live (§8) |
 | "NNA Virtual Audio" (design2) | — | Proposed as BlackHole upgrade | Real (free, renamable, closed-source); superseded by the signed BlackHole fork |
-| UI | None initially (CLI + launchd) | SwiftUI menu bar from Phase 2 | Menu bar UI deferred but planned (design2's Phase 2 feature list adopted) |
+| UI | None initially (CLI + launchd) | SwiftUI menu bar from Phase 2 | Minimal SwiftUI menu bar starts in Phase 0; richer controls remain incremental |
 
 Overall: design1 was the technically reliable backbone; design2 contributed the product/UI phasing. Every layer was subsequently upgraded by the research below.
 
@@ -318,29 +318,28 @@ tse-conv-tasnet-48k model weights (HF card lacks an explicit license; trained on
 
 ## 12. Roadmap
 
-### Phase -1 — Listening test (before any plumbing)
+### Phase 0 — Switchable engine, listening comparison, and minimal usable app
 
-The single largest uncertainty is **whether these models satisfy the ear in the actual room with the actual noise sources** (including family speech). Record WAVs in the real environment, process offline, and compare:
+The former Phase -1 listening test is part of Phase 0. Model selection must be based on both deterministic offline comparisons and day-to-day listening through the same engine used by the live microphone path.
 
-1. FastEnhancer 48 k (T/B/S variants)
-2. DPDFNet 48 k HR (`dpdfnet2_48khz_hr`, `dpdfnet8_48khz_hr`)
-3. DeepFilterNet3 (reference baseline)
-4. Hush 16 k (with background-speech recordings)
-5. tse-conv-tasnet-48k (with enrollment from own voice)
-6. MossFormer2_SE_48K (offline quality ceiling, for calibration only)
+- Establish the Rust workspace and quality gates in the first implementation commit. Workspace lint policy promotes all Rust and Clippy warnings, including `all`, `pedantic`, and `nursery`, to errors. Every exception requires a local `#[allow(..., reason = "...")]`. CI runs formatting, Clippy, tests, `cargo-deny` (licenses, advisories, bans, and sources), and `cargo-machete` (unused dependencies).
+- Define every audio processor behind one stage trait. A stage declares its native sample rate, frame size, latency, state, and enrollment requirements; common adapters perform sample-rate and frame conversion so the pipeline remains 48 kHz externally. Adding a future model requires one new trait implementation plus registry metadata.
+- Implement and compare FastEnhancer 48 kHz (T/B/S first), DPDFNet 48 kHz HR (`dpdfnet2_48khz_hr`, `dpdfnet8_48khz_hr`), DeepFilterNet3 as the baseline, UL-UNAS 16 kHz, Hush 16 kHz, and `tse-conv-tasnet-48k`. TSE enrollment uses a separately sourced public ECAPA-TDNN model that produces the required 192-dimensional embedding; the TSE distribution does not contain that model.
+- Use the engine in a CLI WAV batch mode. One invocation processes the same input through every selected model, writes stable model-specific output paths and a comparison manifest, and records configuration needed to reproduce the run. This replaces a separate throwaway listening-test implementation.
+- Support runtime switching through the model registry. Publish model replacements without locking the real-time path, and apply a bounded crossfade or short mute at the transition so state discontinuities cannot produce a click.
+- Rust live path: physical microphone → selected stage → stock BlackHole during development, using AUHAL directly and a private Aggregate Device with drift compensation. The audio callback only moves samples through preallocated lock-free SPSC buffers; inference never runs in the callback.
+- Minimal SwiftUI `MenuBarExtra` from day one: on/off toggle, physical input-device picker, model picker, and running/error status. The Rust engine is embedded as a static library behind a C ABI; Swift remains a control plane and does not own real-time callbacks.
 
-Exit criteria: pick one NS model and one speaker-suppression approach; or conclude the quality is insufficient and fall back to buying JoyCast.
+Phase 0 exit criteria:
 
-### Phase 0 — Minimal usable pipeline with a minimal UI
-
-- Rust engine: physical mic → chosen NS model → BlackHole (stock, unmodified). Private aggregate device for drift.
-- Minimal SwiftUI `MenuBarExtra` from day one: on/off toggle, input device picker, running status. The Rust engine is embedded as a static library behind a C ABI (single app bundle) or launched as a child/daemon process with a small IPC control plane — decided during implementation.
-- Select BlackHole as input in Zoom. Already usable daily.
+1. Linux CI passes every quality gate and a checked sample WAV produces a valid output WAV for every required model through actual model inference.
+2. Offline comparison output is reproducible, and the model picker changes the active live stage without locking the audio callback or introducing an unbounded discontinuity.
+3. The macOS app and Rust static library build successfully, with AUHAL/Aggregate Device lifecycle and BlackHole routing covered by an Apple-Silicon hardware test plan. Hardware behavior remains explicitly unverified until that plan is run.
 
 ### Phase 1 — Own the device + differentiator
 
 - Build, sign, and install the renamed BlackHole fork (joycast.driver pattern).
-- Add the speaker-suppression stage (Hush / TSE / DIY gate per Phase -1 results).
+- Refine the selected speaker-suppression path from Phase 0 listening results; add the DIY gate only if Hush and TSE are insufficient.
 
 ### Phase 2 — Menu bar app, full version
 
@@ -357,7 +356,7 @@ Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level 
 
 ## 13. Open Questions
 
-1. Listening-test outcomes (§12 Phase -1) — the entire stack pivots on these.
+1. Phase 0 listening-test outcomes (§12) — the preferred default model pivots on these.
 2. Hush's behavior when the background speaker is *louder* than the user (trained at 12–24 dB SIR below primary).
 3. tse-conv-tasnet-48k real-world quality given its small training set (VCTK + DEMAND).
 4. Long-session (2 h+) stability of aggregate-device drift compensation.

@@ -1,0 +1,30 @@
+[workspace]
+members = [
+    "crates/noican-cli",
+    "crates/noican-engine",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.83"
+authors = ["noican contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/lightsound/noican"
+publish = false
+
+[workspace.lints.rust]
+warnings = "deny"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+dbg_macro = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"
