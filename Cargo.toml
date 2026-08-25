@@ -1,7 +1,9 @@
 [workspace]
 members = [
     "crates/noican-cli",
+    "crates/noican-coreaudio",
     "crates/noican-engine",
+    "crates/noican-ffi",
     "crates/noican-models",
 ]
 resolver = "2"
@@ -17,7 +19,7 @@ publish = false
 
 [workspace.lints.rust]
 warnings = "deny"
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
