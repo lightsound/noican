@@ -49,3 +49,29 @@ jobs:
         run: cargo deny --locked check
       - name: Reject unused dependencies
         run: cargo machete
+
+  macos:
+    name: Apple Silicon app build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.0
+          targets: aarch64-apple-darwin
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-arm64
+      - name: Install SwiftLint
+        run: brew install swiftlint
+      - name: Lint Swift control plane strictly
+        run: swiftlint lint --strict --config .swiftlint.yml
+      - name: Lint macOS Rust targets
+        run: cargo clippy --locked --target aarch64-apple-darwin --package noican-coreaudio --package noican-ffi --all-features
+      - name: Build and ad-hoc sign menu bar app
+        run: bash scripts/build-macos-app.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noican-macos-arm64
+          path: dist/noican.app

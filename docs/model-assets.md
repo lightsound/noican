@@ -65,21 +65,16 @@ cargo run -- process input.wav \
 
 ### Current upstream access blocker
 
-As verified on 2026-08-25, both unauthenticated resolve URLs under `penta2himajin/tse-conv-tasnet-48k` return HTTP 401. The repository also still lacks an explicit model-weight license. Therefore noican does not use trust-on-first-use or redistribute those files.
+As verified on 2026-08-25, both unauthenticated resolve URLs under `penta2himajin/tse-conv-tasnet-48k` return HTTP 401. The pinned revision and SHA-256 values are recoverable from an independent verified downloader and are built into noican, but the bytes could not be independently fetched in this cloud run. Therefore noican does not use trust-on-first-use or redistribute those files.
 
 To use assets obtained legitimately from the publisher:
 
-1. Put `tse_prod_48k.onnx` and `tse_prod_48k.onnx.data` together under `<model-dir>/tse/`, or set a Hugging Face token in `NOICAN_HF_TOKEN`.
-2. Obtain the publisher-confirmed digests and set:
+1. Put `tse_prod_48k.onnx` and `tse_prod_48k.onnx.data` together under `<model-dir>/tse/`, or set an authorized Hugging Face token in `NOICAN_HF_TOKEN`.
+2. Re-run `models fetch` or `process`. The cache verifies the pinned graph digest `71490a5a…` and sidecar digest `4b84f54b…` before loading.
 
-   ```bash
-   export NOICAN_TSE_ONNX_SHA256=<sha256-of-tse_prod_48k.onnx>
-   export NOICAN_TSE_DATA_SHA256=<sha256-of-tse_prod_48k.onnx.data>
-   ```
+The model card has been reported as CC BY 4.0, but it is currently inaccessible, and its assertion that all training data is CC BY 4.0 conflicts with DEMAND's CC BY-SA 3.0 metadata. Commercial redistribution requires legal review.
 
-3. Re-run `models fetch` or `process`.
-
-The two required hash variables deliberately prevent a mutable authenticated URL from silently changing executable model content. Commercial distribution must remain disabled until the weight license is explicit.
+The ECAPA weights are Apache-2.0, but VoxCeleb's source-media copyright, publicity, privacy, and biometric-use implications are not resolved merely by the model license. Shipping enrollment requires a separate product/legal review.
 
 ## Model provenance
 
@@ -90,7 +85,7 @@ The two required hash variables deliberately prevent a mutable authenticated URL
 | DeepFilterNet3 | `penta2himajin/deepfilternet3-onnx` revision `daf50ae…`; upstream `Rikorose/DeepFilterNet` | Apache-2.0 export; upstream MIT OR Apache-2.0 |
 | UL-UNAS | `Xiaobin-Rong/ul-unas` revision `00f7c70…` | MIT |
 | Hush | `hush-vani` 0.1.1 with embedded `weya-ai/hush` weights | Apache-2.0 |
-| TSE Conv-TasNet 48 kHz | `penta2himajin/tse-conv-tasnet-48k` | Not specified; do not redistribute |
-| ECAPA-TDNN conversion | `vedk00/ecapa-voxceleb-speaker-embedding-onnx` revision `a9cb932…`; upstream SpeechBrain model | Apache-2.0 |
+| TSE Conv-TasNet 48 kHz | `penta2himajin/tse-conv-tasnet-48k` revision `5d8934d…` | Reported CC BY 4.0; access and DEMAND provenance unresolved |
+| ECAPA-TDNN conversion | `penta2himajin/ecapa-tdnn-onnx` revision `57bc773…`; upstream SpeechBrain model | Apache-2.0; VoxCeleb source-media rights need review |
 
 Re-check every upstream license before distribution. This table is engineering provenance, not legal advice.

@@ -1,4 +1,6 @@
 /target/
+/dist/
+/macos/.build/
 /models/
 /output/
 *.wav

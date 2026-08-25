@@ -1,8 +1,8 @@
 # Technology Research: JoyCast-Style Noise-Cancelling Virtual Microphone for macOS
 
 - **Date**: 2026-08-24 (five research rounds conducted on this date; round 5 was a zero-based sweep for alternative architectures and produced no stack changes — the stack below is final)
-- **Status**: Research complete; implementation not started
-- **Scope**: macOS only, personal use, fully on-device, Apple Developer Program membership available (Developer ID signing is possible)
+- **Status**: Research complete; Phase 0 implementation in progress
+- **Scope**: macOS only, fully on-device, commercial distribution kept possible, Apple Developer Program membership available (Developer ID signing is possible)
 
 This document consolidates the review of two earlier AI-generated design documents ("design1" and "design2") and three rounds of follow-up research. It records every candidate that was evaluated — including rejected ones and the reasons for rejection — so that later decisions can be revisited with full context and rejected options can serve as fallbacks.
 
@@ -269,7 +269,7 @@ Latency budget (target 20–30 ms end-to-end):
 | [joycast.driver](https://github.com/joymacstudio/joycast.driver) | Shell/AppleScript build system around BlackHole submodule | GPL-3.0 | **Adopted** as the virtual-device template (§3) |
 | [roc-vad](https://github.com/roc-streaming/roc-vad) | C++ libASPL driver + gRPC control + CLI | MPL-2.0 | Reference for a fully custom driver with runtime device management, if ever needed |
 | [mellonella](https://github.com/penta2himajin/mellonella) / [voce](https://github.com/espetro/voce) | Rust/Python PoCs of speaker gating | — | Design references for the DIY gate (§6.2) |
-| [speech-swift](https://github.com/soniqo/speech-swift) | Swift toolkit: DFN3 + Sidon (CoreML), Silero/pyannote VAD, WeSpeaker embeddings, diarization, ASR/TTS | MIT | The richest Swift-native parts source if the app side grows (offline denoise, enrollment tooling, VAD/embeddings for the DIY gate). Mic-streaming DFN3 not yet supported (§5.2) |
+| [speech-swift](https://github.com/soniqo/speech-swift) | Swift toolkit: DFN3 + Sidon (CoreML), Silero/pyannote VAD, WeSpeaker embeddings, diarization, ASR/TTS | Apache-2.0 | The richest Swift-native parts source if the app side grows (offline denoise, enrollment tooling, VAD/embeddings for the DIY gate). Mic-streaming DFN3 not yet supported (§5.2) |
 | Buy option | [JoyCast](https://joycast.ai/) ($8/mo), Krisp, macOS Voice Isolation | — | JoyCast remains the shortest path to "quiet meetings" without the speaker-suppression differentiator |
 
 Apple built-in note: macOS **Voice Isolation** mic mode cannot be enabled programmatically (`preferredMicrophoneMode` is read-only; users toggle it per-app in Control Center, and only apps adopting AUVoiceIO expose it). It is not a substitute for a virtual-mic product, but it is a zero-effort baseline for personal calls in supported apps. The macOS 26 **SpeechAnalyzer** framework was also checked: it is speech-to-text only (with a `SpeechDetector` VAD module) and offers nothing for the enhancement path.
@@ -302,17 +302,17 @@ As of 2026, **Microsoft Teams ships personalized voice isolation** (30-second vo
 
 Personal (non-distributed) use carries no obligations. If the app is ever **sold or distributed**, the stack splits as follows (not legal advice; re-verify licenses at ship time):
 
-**Permissive — safe for closed-source commercial use** (attribution/notice files required):
-FastEnhancer (MIT), DPDFNet code + models (Apache-2.0), Hush (Apache-2.0), DeepFilterNet (MIT/Apache-2.0 dual), sherpa-onnx (Apache-2.0), ONNX Runtime (MIT), libASPL (MIT), Sidon (MIT), speech-swift (MIT), JointAEC-NS (MIT), Krasp / NoNoise-Mac / MetalVoice (MIT), webrtc-audio-processing (BSD-3).
+**Permissive code licenses** (attribution/notice files required; model and training-data rights still need separate verification):
+FastEnhancer (MIT), DPDFNet code + models (Apache-2.0), Hush (Apache-2.0), DeepFilterNet (MIT/Apache-2.0 dual), sherpa-onnx (Apache-2.0), ONNX Runtime (MIT), libASPL (MIT), Sidon (MIT), speech-swift (Apache-2.0), JointAEC-NS (MIT), Krasp / NoNoise-Mac / MetalVoice (MIT), webrtc-audio-processing (BSD-3).
 
-**Copyleft but workable — obligations attach to the driver only**:
-The BlackHole-fork driver (GPL-3.0) is a separate program loaded by `coreaudiod`, not linked into the app, so the GPL does not extend to the app itself. Distribution requires publishing the driver source under GPL-3.0 — exactly what JoyCast does with [joycast.driver](https://github.com/joymacstudio/joycast.driver), which is the precedent for this model. Note that the GPL explicitly permits **selling** ("You may charge any price or no price for each copy"); the only obligation is source access for the GPL-covered component. Since publishing source is acceptable for this project, no paid license is needed. Alternatives if source publication ever becomes undesirable: Existential Audio offers commercial BlackHole licenses (no public pricing; individual negotiation via devinroth@existential.audio). Separately from the GPL, the **BlackHole name, logo, and branding are Existential Audio trademarks** (all rights reserved) — the fork must ship under our own name, which the joycast.driver build-time renaming already handles.
+**Copyleft driver, isolated from application code**:
+The BlackHole-fork driver (GPL-3.0) is a separately built program loaded by `coreaudiod`; no GPL source or object is copied into or linked with the app. Distribution requires publishing corresponding driver source and GPL notices. JoyCast demonstrates this packaging pattern, but that precedent is not a legal determination that distributing the driver and proprietary app together is mere aggregation. BlackHole's own README recommends a separate license for use with non-GPL applications. Before commercial distribution, obtain legal review or a commercial BlackHole license from Existential Audio. The GPL permits selling GPL-covered software, but source compliance alone should not be assumed to resolve the combined-distribution question. The **BlackHole name, logo, and branding are Existential Audio trademarks** (all rights reserved), so the fork must ship under noican branding.
 
 **Not usable in a commercial product**:
 NNA Virtual Audio (free *for personal use*; commercial use requires a vendor license with no public pricing — contact@neutralandnaturalaudio.com. Dropped from consideration for any sold version), Stream.FM (AGPL-3.0 — would force open-sourcing the entire app).
 
-**Verify before shipping** (license not yet confirmed):
-tse-conv-tasnet-48k model weights (HF card lacks an explicit license; trained on VCTK CC-BY-4.0 + DEMAND), LocalVQE weights, tympan-aspl, `aec3` crate (upstream WebRTC is BSD-3), UL-UNAS, GTCRN.
+**Verify before shipping** (license or data provenance not yet confirmed):
+tse-conv-tasnet-48k (card reported as CC BY 4.0, but the repository currently requires authentication and DEMAND metadata is CC BY-SA 3.0), ECAPA-TDNN/VoxCeleb source-media and biometric-use rights, FastEnhancer/UL-UNAS weight licensing, LocalVQE weights, tympan-aspl, `aec3` crate (upstream WebRTC is BSD-3), and GTCRN.
 
 ---
 

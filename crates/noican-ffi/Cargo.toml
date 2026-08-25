@@ -1,0 +1,21 @@
+[package]
+name = "noican-ffi"
+description = "C ABI for the noican menu bar control plane"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+noican-coreaudio = { version = "0.1.0", path = "../noican-coreaudio" }
+noican-engine = { version = "0.1.0", path = "../noican-engine" }
+noican-models = { version = "0.1.0", path = "../noican-models" }
+
+[lints]
+workspace = true
