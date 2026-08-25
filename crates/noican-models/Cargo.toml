@@ -1,0 +1,26 @@
+[package]
+name = "noican-models"
+description = "Model implementations and verified assets for noican"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hush-vani = { version = "0.1.1", default-features = false }
+ndarray = "0.17.2"
+noican-engine = { version = "0.1.0", path = "../noican-engine" }
+ort = { version = "2.0.0-rc.13", default-features = false, features = ["std", "ndarray", "download-binaries", "tls-rustls", "copy-dylibs", "api-27"] }
+rustfft = "6.4.1"
+sha2 = "0.11.0"
+thiserror = "2.0.20"
+ureq = "3.4.0"
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -1,7 +1,7 @@
 use noican_engine::{
-    process_clip, validate_frame_lengths, AudioStage, DelayCompensation, EnrollmentRequirement,
-    RateAdapter, StageDescriptor, StageError, StageKind, SwitchingEngine, PIPELINE_FRAME_SAMPLES,
-    PIPELINE_SAMPLE_RATE,
+    process_clip, resample_clip, validate_frame_lengths, AudioStage, DelayCompensation,
+    EnrollmentRequirement, RateAdapter, StageDescriptor, StageError, StageKind, SwitchingEngine,
+    PIPELINE_FRAME_SAMPLES, PIPELINE_SAMPLE_RATE,
 };
 
 struct PassthroughStage {
@@ -110,6 +110,17 @@ fn rate_adapter_absorbs_sixteen_kilohertz_stage() -> Result<(), StageError> {
     }
     assert!(output.iter().all(|sample| sample.is_finite()));
     assert!(output.iter().any(|sample| sample.abs() > 0.01));
+    Ok(())
+}
+
+#[test]
+fn whole_clip_resampling_preserves_duration() -> Result<(), StageError> {
+    let input = vec![0.25_f32; 48_000];
+    let downsampled = resample_clip(&input, 48_000, 16_000)?;
+    assert_eq!(downsampled.len(), 16_000);
+    let restored = resample_clip(&downsampled, 16_000, 48_000)?;
+    assert_eq!(restored.len(), input.len());
+    assert!(restored.iter().all(|sample| sample.is_finite()));
     Ok(())
 }
 

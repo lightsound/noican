@@ -12,7 +12,7 @@ mod r#switch;
 
 pub use offline::{process_clip, DelayCompensation};
 pub use r#switch::{StagePublisher, SwitchingEngine};
-pub use rate::RateAdapter;
+pub use rate::{resample_clip, RateAdapter};
 pub use stage::{
     validate_frame_lengths, AudioStage, EnrollmentRequirement, StageDescriptor, StageError,
     StageKind, PIPELINE_FRAME_SAMPLES, PIPELINE_SAMPLE_RATE,
