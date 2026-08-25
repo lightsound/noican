@@ -1,0 +1,50 @@
+[workspace]
+resolver = "3"
+members = ["crates/noican-core", "crates/noican-models", "crates/noican-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[workspace.dependencies]
+noican-core = { path = "crates/noican-core" }
+noican-models = { path = "crates/noican-models" }
+thiserror = "2.0"
+ort = "=2.0.0-rc.13"
+ureq = "3.4"
+sha2 = "0.11"
+realfft = "3.5"
+# deep_filter on crates.io is stale (0.2.5, pre-DFN3); the maintained crate
+# lives in the DeepFilterNet repo. Pinned to the v0.5.6 release tag.
+deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet.git", tag = "v0.5.6", default-features = false, features = ["tract", "default-model"] }
+# Matches the ndarray version of deep_filter's public API.
+ndarray = "0.15"
+anyhow = "1.0"
+clap = { version = "4.6", features = ["derive"] }
+hound = "3.5"
+rubato = "5.0"
+audioadapter-buffers = "5.2"
+
+# Quality-gate policy (docs/tech-research.md §12): everything starts as an
+# error; opt-outs require `#[allow]` / `#[expect]` with a written reason.
+[workspace.lints.rust]
+warnings = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+# Enforce the "reason comment required" half of the policy mechanically.
+allow_attributes_without_reason = "deny"
+unwrap_used = "deny"
+dbg_macro = "deny"
+todo = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[profile.release]
+lto = "thin"

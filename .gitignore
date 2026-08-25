@@ -1,0 +1,11 @@
+# Rust
+/target
+
+# Downloaded model weights (never committed; see docs/models.md)
+/models
+
+# CLI batch-processing outputs
+/out
+
+# macOS
+.DS_Store

@@ -1,0 +1,24 @@
+# Product / model names that are legitimate prose in doc comments
+# (extends clippy's default doc-valid-idents list via "..").
+doc-valid-idents = [
+    "..",
+    "DPDFNet",
+    "DPDFNet2",
+    "DPDFNet8",
+    "DeepFilterNet",
+    "DeepFilterNet3",
+    "FastEnhancer",
+    "SpeechBrain",
+    "WeSpeaker",
+    "VoxCeleb",
+    "ECAPA-TDNN",
+    "Conv-TasNet",
+    "TasNet",
+    "BlackHole",
+    "JoyCast",
+    "AUHAL",
+    "SwiftUI",
+    "MenuBarExtra",
+    "sherpa-onnx",
+    "tse-conv-tasnet-48k",
+]
