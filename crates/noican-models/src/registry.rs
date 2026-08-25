@@ -219,11 +219,11 @@ fn load_native_stage(request: &LoadRequest<'_>) -> Result<Box<dyn AudioStage>, M
             request.store.ensure(ModelAsset::Hush, fetch)?,
         )?),
         ModelId::TseConvTasNet48k => {
-            let graph = request.store.ensure(ModelAsset::TseGraph, fetch)?;
-            request.store.ensure(ModelAsset::TseWeights, fetch)?;
             let embedding = request
                 .speaker_embedding
                 .ok_or(ModelLoadError::MissingEnrollment)?;
+            let graph = request.store.ensure(ModelAsset::TseGraph, fetch)?;
+            request.store.ensure(ModelAsset::TseWeights, fetch)?;
             Box::new(Tse::load(graph, &embedding)?)
         }
     };
