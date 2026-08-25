@@ -1,8 +1,8 @@
 # Technology Research: JoyCast-Style Noise-Cancelling Virtual Microphone for macOS
 
 - **Date**: 2026-08-24 (five research rounds conducted on this date; round 5 was a zero-based sweep for alternative architectures and produced no stack changes — the stack below is final)
-- **Status**: Research complete; implementation not started
-- **Scope**: macOS only, personal use, fully on-device, Apple Developer Program membership available (Developer ID signing is possible)
+- **Status**: Research complete; Phase 0 implementation in progress
+- **Scope**: macOS only, fully on-device, commercial distribution kept possible, Apple Developer Program membership available (Developer ID signing is possible)
 
 This document consolidates the review of two earlier AI-generated design documents ("design1" and "design2") and three rounds of follow-up research. It records every candidate that was evaluated — including rejected ones and the reasons for rejection — so that later decisions can be revisited with full context and rejected options can serve as fallbacks.
 
