@@ -5,9 +5,16 @@
 //! inference thread through [`noican_core::StagePublisher`]'s lock-free
 //! queue, so no call in this module ever blocks the audio path.
 //!
-//! The model catalog is derived from `noican-models`' registry
-//! ([`noican_models::ALL_MODELS`]) at call time — the UI never hardcodes
-//! model identifiers.
+//! Locking discipline: the control mutex is held only for short state
+//! transitions, never across weight downloads or model construction, so
+//! status queries (`is_running`, `is_faulted`, `last_error`) always return
+//! promptly — regardless of what the UI does. Slow work runs unlocked and
+//! commits its result only when the operation epoch is unchanged (a
+//! concurrent `stop`/`start` supersedes it).
+//!
+//! The model catalog is projected from `noican-models`'
+//! [`noican_models::catalog`] at call time — neither this crate nor the UI
+//! hardcodes model identifiers or names.
 
 #![expect(
     unsafe_code,
@@ -16,6 +23,7 @@
 
 use std::{
     ffi::{CStr, c_char, c_void},
+    panic::{AssertUnwindSafe, catch_unwind},
     path::{Path, PathBuf},
     ptr,
     sync::Mutex,
@@ -23,7 +31,7 @@ use std::{
 
 use noican_core::{Stage, StagePublisher, SwitchingEngine};
 use noican_coreaudio::{Runtime, WORKER_BLOCK_SAMPLES};
-use noican_models::{ModelSpec, PASSTHROUGH_ID, StageOptions};
+use noican_models::{CatalogEntry, ModelSpec, StageOptions};
 
 const SUCCESS: i32 = 0;
 const FAILURE: i32 = -1;
@@ -36,16 +44,13 @@ struct ControlState {
     publisher: Option<StagePublisher>,
     active_model: Option<String>,
     last_error: String,
+    /// Bumped by every `start`/`stop`; slow operations only commit when the
+    /// epoch they claimed is still current.
+    epoch: u64,
 }
 
 struct EngineHandle {
     state: Mutex<ControlState>,
-}
-
-/// The selectable model catalog: the built-in bypass followed by every
-/// registry entry usable as a pipeline stage.
-fn catalog() -> impl Iterator<Item = Option<&'static ModelSpec>> {
-    std::iter::once(None).chain(ModelSpec::stages().map(Some))
 }
 
 fn default_models_dir() -> PathBuf {
@@ -85,6 +90,7 @@ pub unsafe extern "C" fn noican_engine_create(models_directory: *const c_char) -
             publisher: None,
             active_model: None,
             last_error: String::new(),
+            epoch: 0,
         }),
     });
     Box::into_raw(handle).cast()
@@ -111,7 +117,8 @@ pub unsafe extern "C" fn noican_engine_destroy(handle: *mut c_void) {
 
 /// Starts AUHAL on an already-created private Aggregate Device.
 ///
-/// Missing model weights are downloaded first (on this control thread).
+/// Missing model weights are downloaded first (on this control thread,
+/// without holding the control lock).
 ///
 /// # Safety
 ///
@@ -130,43 +137,59 @@ pub unsafe extern "C" fn noican_engine_start(
         Ok(model) => model,
         Err(error) => return set_error(handle, error),
     };
-    let mut control = match handle.state.lock() {
-        Ok(control) => control,
-        Err(error) => return set_error(handle, format!("control state is poisoned: {error}")),
+
+    // Short lock: tear down any running transport and claim an epoch.
+    let (models_dir, epoch, old_runtime) = {
+        let mut control = match handle.state.lock() {
+            Ok(control) => control,
+            Err(error) => return set_error(handle, format!("control state is poisoned: {error}")),
+        };
+        control.epoch += 1;
+        let old_runtime = control.runtime.take();
+        control.publisher = None;
+        control.active_model = None;
+        (control.models_dir.clone(), control.epoch, old_runtime)
     };
-    if let Some(mut runtime) = control.runtime.take() {
+    if let Some(mut runtime) = old_runtime {
         runtime.stop();
     }
-    control.publisher = None;
-    control.active_model = None;
-    let stage = match prepare_stage(&control.models_dir, &model) {
-        Ok(stage) => stage,
+
+    // Slow work, unlocked: download/construct the stage, start the runtime.
+    let built = guard_panics(&model, || {
+        let stage = prepare_stage(&models_dir, &model)?;
+        let (publisher, engine) =
+            SwitchingEngine::new(stage, SWITCH_FADE_SAMPLES, WORKER_BLOCK_SAMPLES)
+                .map_err(|error| error.to_string())?;
+        let runtime =
+            Runtime::start(aggregate_device, engine).map_err(|error| error.to_string())?;
+        Ok((publisher, runtime))
+    });
+    let (publisher, mut runtime) = match built {
+        Ok(value) => value,
+        Err(error) => return set_error(handle, error),
+    };
+
+    // Short lock: commit unless a newer stop/start superseded this epoch.
+    let mut control = match handle.state.lock() {
+        Ok(control) => control,
         Err(error) => {
-            control.last_error = error;
-            return FAILURE;
+            runtime.stop();
+            return set_error(handle, format!("control state is poisoned: {error}"));
         }
     };
-    let (publisher, engine) =
-        match SwitchingEngine::new(stage, SWITCH_FADE_SAMPLES, WORKER_BLOCK_SAMPLES) {
-            Ok(value) => value,
-            Err(error) => {
-                control.last_error = error.to_string();
-                return FAILURE;
-            }
-        };
-    match Runtime::start(aggregate_device, engine) {
-        Ok(runtime) => {
-            control.runtime = Some(runtime);
-            control.publisher = Some(publisher);
-            control.active_model = Some(model);
-            control.last_error.clear();
-            SUCCESS
-        }
-        Err(error) => {
-            control.last_error = error.to_string();
-            FAILURE
-        }
+    if control.epoch != epoch {
+        drop(control);
+        runtime.stop();
+        return set_error(
+            handle,
+            "start was superseded by a newer control operation".to_owned(),
+        );
     }
+    control.runtime = Some(runtime);
+    control.publisher = Some(publisher);
+    control.active_model = Some(model);
+    control.last_error.clear();
+    SUCCESS
 }
 
 /// Stops AUHAL while preserving the reusable control handle.
@@ -179,19 +202,25 @@ pub unsafe extern "C" fn noican_engine_stop(handle: *mut c_void) {
     let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
         return;
     };
-    let Ok(mut state) = handle.state.lock() else {
-        return;
+    let old_runtime = {
+        let Ok(mut state) = handle.state.lock() else {
+            return;
+        };
+        state.epoch += 1;
+        state.publisher = None;
+        state.active_model = None;
+        state.runtime.take()
     };
-    if let Some(mut runtime) = state.runtime.take() {
+    if let Some(mut runtime) = old_runtime {
         runtime.stop();
     }
-    state.publisher = None;
-    state.active_model = None;
 }
 
 /// Prepares and lock-free publishes a replacement model.
 ///
-/// Missing model weights are downloaded first (on this control thread).
+/// Fails fast when the engine is not running; missing model weights are
+/// downloaded first (on this control thread, without holding the control
+/// lock).
 ///
 /// # Safety
 ///
@@ -209,21 +238,35 @@ pub unsafe extern "C" fn noican_engine_set_model(
         Ok(model) => model,
         Err(error) => return set_error(handle, error),
     };
+
+    // Short lock: fail fast when stopped, claim the current epoch.
+    let (models_dir, publisher, epoch) = {
+        let mut control = match handle.state.lock() {
+            Ok(control) => control,
+            Err(error) => return set_error(handle, format!("control state is poisoned: {error}")),
+        };
+        let Some(publisher) = control.publisher.clone() else {
+            "engine is not running".clone_into(&mut control.last_error);
+            return FAILURE;
+        };
+        (control.models_dir.clone(), publisher, control.epoch)
+    };
+
+    // Slow work, unlocked.
+    let stage = match guard_panics(&model, || prepare_stage(&models_dir, &model)) {
+        Ok(stage) => stage,
+        Err(error) => return set_error(handle, error),
+    };
+
+    // Short lock: publish unless the engine was stopped/restarted meanwhile.
     let mut control = match handle.state.lock() {
         Ok(control) => control,
         Err(error) => return set_error(handle, format!("control state is poisoned: {error}")),
     };
-    let stage = match prepare_stage(&control.models_dir, &model) {
-        Ok(stage) => stage,
-        Err(error) => {
-            control.last_error = error;
-            return FAILURE;
-        }
-    };
-    let Some(publisher) = &control.publisher else {
-        "engine is not running".clone_into(&mut control.last_error);
+    if control.epoch != epoch {
+        "engine was stopped while the model was loading".clone_into(&mut control.last_error);
         return FAILURE;
-    };
+    }
     let _superseded = publisher.publish(stage);
     control.active_model = Some(model);
     control.last_error.clear();
@@ -284,10 +327,14 @@ pub unsafe extern "C" fn noican_engine_last_error(
 }
 
 /// Number of runtime-selectable models (bypass included), taken from the
-/// registry.
+/// registry catalog.
 #[unsafe(no_mangle)]
 pub extern "C" fn noican_model_count() -> usize {
-    catalog().count()
+    noican_models::catalog().count()
+}
+
+fn catalog_entry(index: usize) -> Option<CatalogEntry> {
+    noican_models::catalog().nth(index)
 }
 
 /// Copies a model id by catalog index.
@@ -304,9 +351,8 @@ pub unsafe extern "C" fn noican_model_id(
     buffer: *mut c_char,
     capacity: usize,
 ) -> usize {
-    catalog().nth(index).map_or(0, |spec| {
-        let id = spec.map_or(PASSTHROUGH_ID, |spec| spec.id);
-        unsafe { copy_string(id, buffer, capacity) }
+    catalog_entry(index).map_or(0, |entry| unsafe {
+        copy_string(entry.id, buffer, capacity)
     })
 }
 
@@ -324,9 +370,8 @@ pub unsafe extern "C" fn noican_model_display_name(
     buffer: *mut c_char,
     capacity: usize,
 ) -> usize {
-    catalog().nth(index).map_or(0, |spec| {
-        let name = spec.map_or("Passthrough (no processing)", |spec| spec.display_name);
-        unsafe { copy_string(name, buffer, capacity) }
+    catalog_entry(index).map_or(0, |entry| unsafe {
+        copy_string(entry.display_name, buffer, capacity)
     })
 }
 
@@ -334,14 +379,32 @@ pub unsafe extern "C" fn noican_model_display_name(
 /// embedding (not yet supported by the menu bar app), 0 otherwise.
 #[unsafe(no_mangle)]
 pub extern "C" fn noican_model_needs_enrollment(index: usize) -> i32 {
-    catalog().nth(index).map_or(0, |spec| {
-        i32::from(spec.is_some_and(|spec| spec.needs_enrollment))
+    catalog_entry(index).map_or(0, |entry| i32::from(entry.needs_enrollment))
+}
+
+/// Runs slow, panic-capable work (ONNX session construction, tar
+/// extraction, ...) behind a panic guard: a Rust panic crossing the C ABI
+/// would abort the whole app, so it is converted into an error string
+/// instead.
+fn guard_panics<T>(model_id: &str, work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    // Nothing observes the closure's state after a panic; the result is
+    // discarded wholesale, so broken invariants cannot leak.
+    catch_unwind(AssertUnwindSafe(work)).unwrap_or_else(|panic| {
+        let message = panic
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_owned())
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic payload".to_owned());
+        Err(format!(
+            "internal error while preparing {model_id}: {message}"
+        ))
     })
 }
 
 fn prepare_stage(models_dir: &Path, model_id: &str) -> Result<Box<dyn Stage>, String> {
-    if model_id != PASSTHROUGH_ID {
-        let spec = ModelSpec::find(model_id).ok_or_else(|| format!("unknown model: {model_id}"))?;
+    // Registry stages may need weights; the bypass (not in the registry's
+    // ModelSpec list) needs nothing.
+    if let Some(spec) = ModelSpec::find(model_id) {
         if spec.needs_enrollment {
             return Err(format!(
                 "{model_id} needs a speaker enrollment, which the menu bar app does not support yet"
@@ -363,7 +426,7 @@ fn parse_model_id(model_id: *const c_char) -> Result<String, String> {
     let id = unsafe { CStr::from_ptr(model_id) }
         .to_str()
         .map_err(|error| format!("model id is not UTF-8: {error}"))?;
-    if id != PASSTHROUGH_ID && ModelSpec::find(id).is_none() {
+    if !noican_models::catalog().any(|entry| entry.id == id) {
         return Err(format!("unknown model: {id}"));
     }
     Ok(id.to_owned())
@@ -391,24 +454,35 @@ unsafe fn copy_string(value: &str, buffer: *mut c_char, capacity: usize) -> usiz
 
 #[cfg(test)]
 mod tests {
+    use noican_models::PASSTHROUGH_ID;
+
     use super::*;
+
+    fn read_string(copy: impl Fn(*mut c_char, usize) -> usize) -> Option<String> {
+        let mut buffer: [c_char; 64] = [0; 64];
+        let required = copy(buffer.as_mut_ptr(), buffer.len());
+        if required == 0 {
+            return None;
+        }
+        Some(
+            unsafe { CStr::from_ptr(buffer.as_ptr()) }
+                .to_str()
+                .expect("FFI strings are UTF-8")
+                .to_owned(),
+        )
+    }
 
     #[test]
     fn catalog_lists_bypass_and_every_registry_stage() {
         let stage_count = ModelSpec::stages().count();
         assert_eq!(noican_model_count(), stage_count + 1);
 
-        let mut ids = Vec::new();
-        for index in 0..noican_model_count() {
-            let mut buffer = [0_i8; 64];
-            let required = unsafe { noican_model_id(index, buffer.as_mut_ptr(), buffer.len()) };
-            assert!(required > 1, "catalog index {index} has no id");
-            let id = unsafe { CStr::from_ptr(buffer.as_ptr()) }
-                .to_str()
-                .expect("model ids are UTF-8")
-                .to_owned();
-            ids.push(id);
-        }
+        let ids: Vec<String> = (0..noican_model_count())
+            .map(|index| {
+                read_string(|buffer, capacity| unsafe { noican_model_id(index, buffer, capacity) })
+                    .expect("every catalog index has an id")
+            })
+            .collect();
         assert_eq!(ids[0], PASSTHROUGH_ID);
         for spec in ModelSpec::stages() {
             assert!(ids.iter().any(|id| id == spec.id), "{} missing", spec.id);
@@ -417,12 +491,10 @@ mod tests {
 
     #[test]
     fn display_names_and_enrollment_flags_are_exposed() {
-        let mut buffer = [0_i8; 64];
-        let required = unsafe { noican_model_display_name(0, buffer.as_mut_ptr(), buffer.len()) };
-        assert!(required > 1);
-        let name = unsafe { CStr::from_ptr(buffer.as_ptr()) }
-            .to_str()
-            .expect("display names are UTF-8");
+        let name = read_string(|buffer, capacity| unsafe {
+            noican_model_display_name(0, buffer, capacity)
+        })
+        .expect("bypass has a display name");
         assert_eq!(name, "Passthrough (no processing)");
         assert_eq!(noican_model_needs_enrollment(0), 0);
 
@@ -437,19 +509,14 @@ mod tests {
     }
 
     #[test]
-    fn string_copy_reports_required_capacity() {
-        let mut buffer = [0_i8; 4];
+    fn string_copy_reports_required_capacity_and_truncates_with_nul() {
+        let mut buffer: [c_char; 4] = [0; 4];
         let required = unsafe { copy_string("hello", buffer.as_mut_ptr(), buffer.len()) };
         assert_eq!(required, 6);
-        assert_eq!(
-            &buffer,
-            &[
-                b'h'.cast_signed(),
-                b'e'.cast_signed(),
-                b'l'.cast_signed(),
-                0
-            ]
-        );
+        let text = unsafe { CStr::from_ptr(buffer.as_ptr()) }
+            .to_str()
+            .expect("truncated copy is still NUL-terminated UTF-8");
+        assert_eq!(text, "hel");
     }
 
     #[test]
@@ -458,5 +525,18 @@ mod tests {
         assert!(parse_model_id(bogus.as_ptr()).is_err());
         let known = c"dfn3";
         assert_eq!(parse_model_id(known.as_ptr()).as_deref(), Ok("dfn3"));
+        let bypass = c"passthrough";
+        assert_eq!(
+            parse_model_id(bypass.as_ptr()).as_deref(),
+            Ok(PASSTHROUGH_ID)
+        );
+    }
+
+    #[test]
+    fn panics_become_errors_not_aborts() {
+        let result: Result<(), String> = guard_panics("test-model", || panic!("boom"));
+        let error = result.expect_err("panic must map to an error");
+        assert!(error.contains("test-model"), "unhelpful message: {error}");
+        assert!(error.contains("boom"), "payload lost: {error}");
     }
 }

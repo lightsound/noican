@@ -15,6 +15,36 @@ use crate::stages::ulunas::UlunasStage;
 /// Identifier of the built-in bypass stage (always available, no weights).
 pub const PASSTHROUGH_ID: &str = "passthrough";
 
+/// One user-selectable entry of the model catalog.
+///
+/// Covers the built-in bypass and every registry stage. This is the single
+/// source UIs project their model list from (via the C ABI); nothing about
+/// the catalog is defined elsewhere.
+#[derive(Debug, Clone, Copy)]
+pub struct CatalogEntry {
+    /// Stable identifier, valid as [`create_stage`] input.
+    pub id: &'static str,
+    /// Human-readable name for UIs.
+    pub display_name: &'static str,
+    /// True when the entry needs a speaker-enrollment embedding.
+    pub needs_enrollment: bool,
+}
+
+/// The selectable catalog: the bypass followed by every registry stage
+/// (support models such as speaker-embedding extractors are excluded).
+pub fn catalog() -> impl Iterator<Item = CatalogEntry> {
+    std::iter::once(CatalogEntry {
+        id: PASSTHROUGH_ID,
+        display_name: "Passthrough (no processing)",
+        needs_enrollment: false,
+    })
+    .chain(ModelSpec::stages().map(|spec| CatalogEntry {
+        id: spec.id,
+        display_name: spec.display_name,
+        needs_enrollment: spec.needs_enrollment,
+    }))
+}
+
 /// Largest engine block the returned stages are pre-sized for (larger
 /// blocks still work at the cost of a reallocation).
 pub const MAX_BLOCK_LEN: usize = 2048;

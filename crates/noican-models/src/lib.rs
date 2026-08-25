@@ -18,5 +18,7 @@ pub mod manifest;
 pub mod onnx;
 pub mod stages;
 
-pub use factory::{MAX_BLOCK_LEN, PASSTHROUGH_ID, StageOptions, create_stage};
+pub use factory::{
+    CatalogEntry, MAX_BLOCK_LEN, PASSTHROUGH_ID, StageOptions, catalog, create_stage,
+};
 pub use manifest::{ALL_MODELS, FileSpec, ModelFamily, ModelSpec};
