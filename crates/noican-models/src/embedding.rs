@@ -72,14 +72,14 @@ impl Fbank {
         let weights = filterbank();
         assert_eq!(weights.len(), N_STFT * N_MELS, "corrupt filterbank asset");
         // torch.hamming_window default is periodic: divisor N, not N - 1.
-        #[allow(
+        #[expect(
             clippy::cast_precision_loss,
             reason = "window length 400 is exactly representable"
         )]
         let denom = N_FFT as f32;
         let window = (0..N_FFT)
             .map(|i| {
-                #[allow(clippy::cast_precision_loss, reason = "window index is tiny")]
+                #[expect(clippy::cast_precision_loss, reason = "window index is tiny")]
                 let x = i as f32;
                 0.46f32.mul_add(-(2.0 * std::f32::consts::PI * x / denom).cos(), 0.54)
             })

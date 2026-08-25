@@ -28,7 +28,7 @@ fn bessel_i0(x: f64) -> f64 {
 /// has unity DC gain.
 fn design_kaiser_lowpass(num_taps: usize, cutoff: f64, beta: f64) -> Vec<f32> {
     assert!(num_taps >= 3 && cutoff > 0.0 && cutoff < 0.5);
-    #[allow(
+    #[expect(
         clippy::cast_precision_loss,
         reason = "tap counts are tiny (hundreds); exact f64 representation"
     )]
@@ -37,7 +37,7 @@ fn design_kaiser_lowpass(num_taps: usize, cutoff: f64, beta: f64) -> Vec<f32> {
     let mut taps = Vec::with_capacity(num_taps);
     let mut dc_gain = 0.0_f64;
     for i in 0..num_taps {
-        #[allow(
+        #[expect(
             clippy::cast_precision_loss,
             reason = "tap index is tiny; exact f64 representation"
         )]
@@ -52,7 +52,7 @@ fn design_kaiser_lowpass(num_taps: usize, cutoff: f64, beta: f64) -> Vec<f32> {
         dc_gain += sinc * window;
         taps.push(sinc * window);
     }
-    #[allow(
+    #[expect(
         clippy::cast_possible_truncation,
         reason = "filter coefficients are within f32 range by construction"
     )]
@@ -87,7 +87,7 @@ impl Decimator {
     pub fn new(factor: usize, max_input_len: usize) -> Self {
         assert!(factor >= 2);
         let num_taps = taps_for_factor(factor);
-        #[allow(
+        #[expect(
             clippy::cast_precision_loss,
             reason = "factor is tiny; exact f64 representation"
         )]
@@ -162,13 +162,13 @@ impl Interpolator {
     pub fn new(factor: usize, max_input_len: usize) -> Self {
         assert!(factor >= 2);
         let num_taps = taps_for_factor(factor);
-        #[allow(
+        #[expect(
             clippy::cast_precision_loss,
             reason = "factor is tiny; exact f64 representation"
         )]
         let cutoff = 0.45 / factor as f64;
         let taps = design_kaiser_lowpass(num_taps, cutoff, 9.0);
-        #[allow(
+        #[expect(
             clippy::cast_precision_loss,
             reason = "factor is tiny; exact f32 representation"
         )]
@@ -224,7 +224,7 @@ mod tests {
     use super::*;
 
     fn sine(rate: u32, freq: f32, len: usize) -> Vec<f32> {
-        #[allow(clippy::cast_precision_loss, reason = "test signal indices are small")]
+        #[expect(clippy::cast_precision_loss, reason = "test signal indices are small")]
         (0..len)
             .map(|n| (2.0 * std::f32::consts::PI * freq * n as f32 / rate as f32).sin() * 0.5)
             .collect()

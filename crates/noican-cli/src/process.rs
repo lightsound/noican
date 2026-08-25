@@ -10,7 +10,7 @@ use crate::wav;
 
 /// Block size (48 kHz samples) used to drive stages. Mirrors a realistic
 /// real-time block so offline results match live behavior.
-pub const BLOCK_LEN: usize = 480;
+pub(crate) const BLOCK_LEN: usize = 480;
 
 /// Runs `input` through `stage`, compensating the stage's internal buffering
 /// latency so the output is time-aligned with the input.
@@ -18,7 +18,7 @@ pub const BLOCK_LEN: usize = 480;
 /// # Errors
 ///
 /// Propagates stage processing failures.
-pub fn run_stage_aligned(stage: &mut dyn Stage, input: &[f32]) -> anyhow::Result<Vec<f32>> {
+pub(crate) fn run_stage_aligned(stage: &mut dyn Stage, input: &[f32]) -> anyhow::Result<Vec<f32>> {
     let latency = stage.latency_samples();
     let padded_len = input.len() + latency;
     let mut output = vec![0.0_f32; padded_len.next_multiple_of(BLOCK_LEN)];
@@ -45,7 +45,7 @@ pub fn run_stage_aligned(stage: &mut dyn Stage, input: &[f32]) -> anyhow::Result
 /// # Errors
 ///
 /// Fails on I/O errors or when a stage cannot be created/run.
-pub fn process_file(
+pub(crate) fn process_file(
     input_path: &Path,
     out_dir: &Path,
     model_ids: &[String],

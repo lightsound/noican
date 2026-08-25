@@ -7,12 +7,26 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
 publish = false
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/lightsound/noican"
+authors = ["noican contributors"]
 
 [workspace.dependencies]
 noican-core = { path = "crates/noican-core" }
 noican-models = { path = "crates/noican-models" }
 thiserror = "2.0"
-ort = "=2.0.0-rc.13"
+# `tls-native` (an `ort` default) pulls in `openssl-sys`, which needs a
+# system OpenSSL; rustls keeps the build self-contained on every runner.
+# The remaining features mirror the crate's defaults.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = [
+    "std",
+    "ndarray",
+    "tracing",
+    "download-binaries",
+    "tls-rustls",
+    "copy-dylibs",
+    "api-27",
+] }
 ureq = "3.4"
 sha2 = "0.11"
 realfft = "3.5"
@@ -27,19 +41,60 @@ hound = "3.5"
 rubato = "5.0"
 audioadapter-buffers = "5.2"
 
-# Quality-gate policy (docs/tech-research.md §12): everything starts as an
-# error; opt-outs require `#[allow]` / `#[expect]` with a written reason.
+# Quality-gate policy (docs/tech-research.md §12): everything starts at
+# `deny`. Exceptions must be introduced with a narrowly scoped
+# `#[expect(..., reason = "...")]` (or `#[allow]` with a reason where
+# `expect` is impossible, e.g. cfg-dependent code) that states why the lint
+# cannot be satisfied — never by relaxing an entry here.
+#
+# The clippy `restriction` group is deliberately absent: it is documented as
+# a collection of mutually exclusive opinions ("not all of them at once"),
+# so enabling it wholesale cannot pass by construction.
 [workspace.lints.rust]
-warnings = "deny"
+# The broadest net first (lowest priority), then groups, then single lints.
+warnings = { level = "deny", priority = -2 }
+future_incompatible = { level = "deny", priority = -1 }
+keyword_idents = { level = "deny", priority = -1 }
+let_underscore = { level = "deny", priority = -1 }
+nonstandard_style = { level = "deny", priority = -1 }
+refining_impl_trait = { level = "deny", priority = -1 }
+rust_2018_idioms = { level = "deny", priority = -1 }
+unused = { level = "deny", priority = -1 }
+unsafe_code = "deny"
 unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "deny"
 missing_debug_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+variant_size_differences = "deny"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+invalid_codeblock_attributes = "deny"
+bare_urls = "deny"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
-# Enforce the "reason comment required" half of the policy mechanically.
+cargo = { level = "deny", priority = -1 }
+# `ort`, `tract` (via deep_filter), and `symphonia` pin duplicated minor
+# versions in their transitive trees that we do not control; the lint fires
+# on the dependency graph rather than on our code.
+multiple_crate_versions = "allow"
+# Conflicts with `rust.unreachable_pub` (which we deny): the two lints
+# demand opposite visibility spellings for crate-internal items.
+redundant_pub_crate = "allow"
+# Enforce the "reason comment required" half of the policy mechanically,
+# and prefer `#[expect]` so stale opt-outs fail the build.
 allow_attributes_without_reason = "deny"
+allow_attributes = "deny"
 unwrap_used = "deny"
 dbg_macro = "deny"
 todo = "deny"

@@ -16,7 +16,7 @@ use rubato::{Fft, FixedSync, Resampler as _};
 /// # Errors
 ///
 /// Fails on unreadable files, unsupported encodings, or resampler errors.
-pub fn read_mono_48k(path: &Path) -> anyhow::Result<Vec<f32>> {
+pub(crate) fn read_mono_48k(path: &Path) -> anyhow::Result<Vec<f32>> {
     let mut reader = hound::WavReader::open(path)
         .with_context(|| format!("cannot open WAV {}", path.display()))?;
     let spec = reader.spec();
@@ -28,7 +28,7 @@ pub fn read_mono_48k(path: &Path) -> anyhow::Result<Vec<f32>> {
             .collect::<Result<_, _>>()
             .context("bad float sample")?,
         (hound::SampleFormat::Int, bits @ 1..=32) => {
-            #[allow(
+            #[expect(
                 clippy::cast_precision_loss,
                 reason = "power of two up to 2^31 is exactly representable in f64"
             )]
@@ -37,7 +37,7 @@ pub fn read_mono_48k(path: &Path) -> anyhow::Result<Vec<f32>> {
                 .samples::<i32>()
                 .map(|s| {
                     s.map(|v| {
-                        #[allow(
+                        #[expect(
                             clippy::cast_possible_truncation,
                             reason = "normalized samples are within f32 range"
                         )]
@@ -52,7 +52,7 @@ pub fn read_mono_48k(path: &Path) -> anyhow::Result<Vec<f32>> {
     };
 
     // Mix down to mono.
-    #[allow(
+    #[expect(
         clippy::cast_precision_loss,
         reason = "channel counts are tiny; exact f32 representation"
     )]
@@ -94,7 +94,7 @@ pub fn read_mono_48k(path: &Path) -> anyhow::Result<Vec<f32>> {
 /// # Errors
 ///
 /// Fails when the file cannot be written.
-pub fn write_mono_48k(path: &Path, samples: &[f32]) -> anyhow::Result<()> {
+pub(crate) fn write_mono_48k(path: &Path, samples: &[f32]) -> anyhow::Result<()> {
     let spec = hound::WavSpec {
         channels: 1,
         sample_rate: ENGINE_SAMPLE_RATE,
@@ -104,7 +104,7 @@ pub fn write_mono_48k(path: &Path, samples: &[f32]) -> anyhow::Result<()> {
     let mut writer = hound::WavWriter::create(path, spec)
         .with_context(|| format!("cannot create WAV {}", path.display()))?;
     for &sample in samples {
-        #[allow(
+        #[expect(
             clippy::cast_possible_truncation,
             reason = "value is clamped to i16 range before the cast"
         )]

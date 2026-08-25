@@ -16,7 +16,7 @@ pub fn vorbis_window(len: usize) -> Vec<f32> {
         .map(|i| {
             let x = f64::from(u32::try_from(i).unwrap_or(u32::MAX));
             let s = (0.5 * std::f64::consts::PI * (x + 0.5) / half).sin();
-            #[allow(
+            #[expect(
                 clippy::cast_possible_truncation,
                 reason = "window values are in [0, 1]"
             )]
@@ -34,7 +34,7 @@ pub fn periodic_hann_window(len: usize) -> Vec<f32> {
     (0..len)
         .map(|i| {
             let x = f64::from(u32::try_from(i).unwrap_or(u32::MAX));
-            #[allow(
+            #[expect(
                 clippy::cast_possible_truncation,
                 reason = "window values are in [0, 1]"
             )]
@@ -149,7 +149,7 @@ impl FftPair {
                 &mut self.scratch_inv,
             )
             .map_err(|e| StageError::Inference(format!("irfft failed: {e}")))?;
-        #[allow(
+        #[expect(
             clippy::cast_precision_loss,
             reason = "FFT sizes are tiny; exact f32 representation"
         )]
@@ -181,7 +181,7 @@ mod tests {
         let mut pair = FftPair::new(n);
         let frame: Vec<f32> = (0..n)
             .map(|i| {
-                #[allow(clippy::cast_precision_loss, reason = "test indices are small")]
+                #[expect(clippy::cast_precision_loss, reason = "test indices are small")]
                 let x = i as f32 * 0.1;
                 x.sin()
             })

@@ -4,7 +4,7 @@
 //! file mode, giving strictly identical conditions for model comparison
 //! (docs/tech-research.md §12, Phase 0).
 
-#![allow(
+#![expect(
     clippy::print_stdout,
     clippy::print_stderr,
     reason = "user-facing CLI output is this binary's job"
