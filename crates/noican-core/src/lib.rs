@@ -26,7 +26,7 @@ pub use resample::RationalResampler;
 pub use ring::SampleQueue;
 pub use runner::StageRunner;
 pub use stage::{Stage, StageCapability, StageSpec};
-pub use stft::{Spectrum, StftAnalyzer, StftSynthesizer};
+pub use stft::{Complex32, Spectrum, StftAnalyzer, StftConfig, StftSynthesizer};
 pub use window::WindowKind;
 
 /// Sample rate of the host audio path, in hertz.

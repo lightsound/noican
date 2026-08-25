@@ -37,6 +37,7 @@ pub struct StageRunner {
     upsampled: Box<[f32]>,
 
     latency_samples: usize,
+    overhead_latency_samples: usize,
     underruns: u64,
 }
 
@@ -92,10 +93,11 @@ impl StageRunner {
         // Both resampler delays are already expressed at the host rate: the
         // downward converter's in its input rate, the upward one's in its
         // output rate.
-        let latency_samples = priming
+        let overhead_latency_samples = priming
             + to_stage.group_delay_input_samples()
-            + scale_rate(spec.latency_samples, spec.sample_rate, host_rate)
             + from_stage.group_delay_output_samples();
+        let latency_samples = overhead_latency_samples
+            + scale_rate(spec.latency_samples, spec.sample_rate, host_rate);
 
         let mut ready_output = SampleQueue::new(ready_capacity);
         ready_output.push_silence(priming);
@@ -114,6 +116,7 @@ impl StageRunner {
             host_rate,
             max_host_block,
             latency_samples,
+            overhead_latency_samples,
             underruns: 0,
         })
     }
@@ -144,6 +147,18 @@ impl StageRunner {
     #[must_use]
     pub const fn latency_samples(&self) -> usize {
         self.latency_samples
+    }
+
+    /// The part of [`Self::latency_samples`] the runner itself contributes:
+    /// resampler group delays plus priming, excluding the stage's own declared
+    /// delay.
+    ///
+    /// Subtracting this from a measured end-to-end delay isolates the model's
+    /// algorithmic delay, which is how the figures in `noican-models`'s latency
+    /// table are derived — no published export declares it.
+    #[must_use]
+    pub const fn overhead_latency_samples(&self) -> usize {
+        self.overhead_latency_samples
     }
 
     /// End-to-end delay in milliseconds.

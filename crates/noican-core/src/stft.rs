@@ -10,9 +10,10 @@
 //! sum-of-squares envelope, which is exact once `n_fft` samples have been
 //! emitted.
 
-use realfft::num_complex::Complex32;
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 use std::sync::Arc;
+
+pub use realfft::num_complex::Complex32;
 
 use crate::error::{Error, Result};
 use crate::window::WindowKind;
@@ -429,6 +430,57 @@ mod tests {
                     "{window:?} sample {i}: expected {expected}, got {actual}"
                 );
             }
+        }
+    }
+
+    /// Pinned against `numpy.fft.rfft` of the same windowed frame.
+    ///
+    /// Every spectral model in the catalog was trained against a `NumPy` or
+    /// `PyTorch` transform, so agreeing with one to six decimals is the
+    /// property that makes those models usable at all — and a polarity or
+    /// scaling error here is inaudible on its own and only surfaces when
+    /// comparing output against another implementation.
+    #[test]
+    fn analysis_matches_numpy_rfft() {
+        let config = StftConfig {
+            n_fft: 512,
+            hop: 256,
+            window: WindowKind::Hann,
+        };
+        let mut analyzer = StftAnalyzer::new(config).unwrap();
+        let mut frame = Spectrum::zeroed(config.bins());
+
+        // Same deterministic sequence the reference values were generated from:
+        // frac(sin(i * 12.9898) * 43758.5453) mapped to [-1, 1).
+        let input: Vec<f32> = (0..config.hop * 5)
+            .map(|i| {
+                #[expect(clippy::cast_precision_loss, reason = "test fixture")]
+                let x = (i as f64 * 12.9898).sin() * 43758.5453;
+                #[expect(clippy::cast_possible_truncation, reason = "test fixture")]
+                let fraction = (x - x.floor()) as f32;
+                fraction.mul_add(2.0, -1.0)
+            })
+            .collect();
+        for block in input.chunks_exact(config.hop) {
+            analyzer.process(block, &mut frame).unwrap();
+        }
+
+        let expected = [
+            (0.676_762, 0.0),
+            (-1.845_93, 8.304_72),
+            (-4.531_114, -7.977_563),
+            (13.242_738, 9.550_798),
+            (-9.170_159, -12.430_621),
+            (-1.742_136, 5.288_396),
+        ];
+        for (index, (re, im)) in expected.into_iter().enumerate() {
+            let actual = frame.bin(index);
+            assert!(
+                (actual.re - re).abs() < 1e-4 && (actual.im - im).abs() < 1e-4,
+                "bin {index}: expected {re}+{im}i, got {}+{}i",
+                actual.re,
+                actual.im
+            );
         }
     }
 

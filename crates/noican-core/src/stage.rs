@@ -113,9 +113,12 @@ impl StageSpec {
 ///   spec().block_size`. Implementations may assume nothing else about the
 ///   buffers, and must not retain references to them.
 /// * Samples are mono `f32` in `[-1.0, 1.0]`, at `spec().sample_rate`.
-/// * `process` must be real-time safe when [`StageSpec::capability`] is
-///   [`StageCapability::Streaming`]: no allocation, no locks, no I/O. All
-///   scratch space is allocated when the stage is constructed.
+/// * `process` runs on the inference thread, never in the audio I/O callback —
+///   `docs/tech-research.md` §9 forbids inference there, and the callback only
+///   ever moves samples through lock-free queues. Implementations must not
+///   block, lock, or perform I/O, because a stall on the inference thread
+///   becomes a dropout; they should also avoid allocating, though an inference
+///   runtime's own pooled allocations are outside our control.
 /// * [`Stage::reset`] returns the stage to its initial state and may allocate.
 pub trait Stage: Send {
     /// Fixed properties of this stage.
