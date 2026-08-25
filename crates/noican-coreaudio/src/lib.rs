@@ -1,7 +1,9 @@
 //! AUHAL transport between a private Aggregate Device and the Rust engine.
 
-use noican_engine::SwitchingEngine;
 use thiserror::Error;
+
+#[cfg(not(target_os = "macos"))]
+use noican_engine::SwitchingEngine;
 
 #[cfg(target_os = "macos")]
 mod macos;

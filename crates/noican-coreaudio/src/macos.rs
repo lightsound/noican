@@ -406,7 +406,7 @@ fn set_property<T>(
 }
 
 fn audio_workgroup(unit: AudioUnit) -> Result<usize, CoreAudioError> {
-    let mut workgroup = ptr::null_mut();
+    let mut workgroup: *mut c_void = ptr::null_mut();
     let mut size = size_u32::<*mut c_void>()?;
     check_status(
         unsafe {
