@@ -80,12 +80,18 @@ mod imp {
         Ok(unsafe { value.assume_init() })
     }
 
-    /// Reads a variable-size property into a byte buffer.
-    fn property_bytes(
+    /// Reads a variable-size property into a slice of `T`.
+    ///
+    /// Backed by a `Vec<T>` rather than a `Vec<u8>`, because the values Core
+    /// Audio returns here — arrays of `AudioObjectId`, or an `AudioBufferList`
+    /// — need 4- or 8-byte alignment, and a byte vector guarantees neither.
+    /// Reading one through a misaligned pointer is undefined behaviour even
+    /// when it happens to work.
+    fn property_array<T: Copy + Default>(
         object: AudioObjectId,
         address: &AudioObjectPropertyAddress,
         operation: &'static str,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<Vec<T>> {
         let mut size = 0u32;
         // SAFETY: querying the size writes only to `size`.
         let status = unsafe {
@@ -93,9 +99,10 @@ mod imp {
         };
         check(operation, status)?;
 
-        let mut buffer = vec![0u8; size as usize];
-        // SAFETY: `buffer` holds exactly `size` bytes, which is what Core Audio
-        // just said it needs.
+        let elements = (size as usize).div_ceil(size_of::<T>());
+        let mut buffer = vec![T::default(); elements];
+        // SAFETY: `buffer` holds at least `size` bytes at `T`'s alignment,
+        // which is what Core Audio just said it needs.
         let status = unsafe {
             sys::AudioObjectGetPropertyData(
                 object,
@@ -107,7 +114,7 @@ mod imp {
             )
         };
         check(operation, status)?;
-        buffer.truncate(size as usize);
+        buffer.truncate((size as usize) / size_of::<T>());
         Ok(buffer)
     }
 
@@ -130,14 +137,17 @@ mod imp {
     /// Total channels across every stream in `scope`.
     fn channel_count(object: AudioObjectId, scope: u32) -> Result<u32> {
         let address = AudioObjectPropertyAddress::scoped(DEVICE_STREAM_CONFIGURATION, scope);
-        let buffer = property_bytes(object, &address, "reading the stream configuration")?;
-        if buffer.len() < size_of::<u32>() {
+        // An `AudioBufferList` is a `u32` count followed by pointer-bearing
+        // buffers, so a `u64`-backed buffer gives it the alignment it needs.
+        let words: Vec<u64> = property_array(object, &address, "reading the stream configuration")?;
+        if words.is_empty() {
             return Ok(0);
         }
         // SAFETY: the buffer holds an `AudioBufferList` that Core Audio just
-        // wrote, and it is at least as long as the header.
-        let list = unsafe { &*buffer.as_ptr().cast::<sys::AudioBufferList>() };
-        // SAFETY: as above; the trailing buffers are inside `buffer`.
+        // wrote, `u64` alignment covers it, and it is at least as long as the
+        // header.
+        let list = unsafe { &*words.as_ptr().cast::<sys::AudioBufferList>() };
+        // SAFETY: as above; the trailing buffers are inside `words`.
         let buffers = unsafe { list.as_slice() };
         Ok(buffers.iter().map(|buffer| buffer.number_channels).sum())
     }
@@ -186,13 +196,16 @@ mod imp {
     }
 
     /// Every device the HAL knows about.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::CoreAudio`] if the device list cannot be read. A device
+    /// that disappears between the listing and the query is skipped rather than
+    /// failing the whole call.
     pub fn all() -> Result<Vec<Device>> {
         let address = AudioObjectPropertyAddress::global(HARDWARE_DEVICES);
-        let buffer = property_bytes(SYSTEM_OBJECT, &address, "listing audio devices")?;
-        let ids: Vec<AudioObjectId> = buffer
-            .chunks_exact(size_of::<AudioObjectId>())
-            .map(|chunk| AudioObjectId::from_ne_bytes(chunk.try_into().unwrap_or([0; 4])))
-            .collect();
+        let ids: Vec<AudioObjectId> =
+            property_array(SYSTEM_OBJECT, &address, "listing audio devices")?;
 
         let mut devices = Vec::with_capacity(ids.len());
         for id in ids {
@@ -207,8 +220,9 @@ mod imp {
 
     /// Devices that can be used as the microphone.
     ///
-    /// Aggregate devices are excluded: ours is private and should never be
-    /// offered back to the user as an input.
+    /// # Errors
+    ///
+    /// As [`all`].
     pub fn inputs() -> Result<Vec<Device>> {
         let mut devices = all()?;
         devices.retain(Device::can_capture);
@@ -216,6 +230,10 @@ mod imp {
     }
 
     /// Devices that can receive the cleaned signal.
+    ///
+    /// # Errors
+    ///
+    /// As [`all`].
     pub fn outputs() -> Result<Vec<Device>> {
         let mut devices = all()?;
         devices.retain(Device::can_play);
@@ -223,6 +241,10 @@ mod imp {
     }
 
     /// The device the system is currently using as its microphone.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::CoreAudio`] if the default cannot be read or described.
     pub fn default_input() -> Result<Device> {
         let id: AudioObjectId = property(
             SYSTEM_OBJECT,
@@ -233,6 +255,11 @@ mod imp {
     }
 
     /// Looks a device up by its persistent UID.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::DeviceNotFound`] if no device has that UID, or
+    /// [`Error::CoreAudio`] if the device list cannot be read.
     pub fn by_uid(uid: &str) -> Result<Device> {
         all()?
             .into_iter()

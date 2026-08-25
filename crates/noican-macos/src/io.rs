@@ -270,7 +270,7 @@ mod imp {
     /// # Safety
     ///
     /// `buffer.data` must point at `buffer.data_byte_size` bytes of `f32`.
-    unsafe fn as_samples(buffer: &sys::AudioBuffer) -> &[f32] {
+    const unsafe fn as_samples(buffer: &sys::AudioBuffer) -> &[f32] {
         if buffer.data.is_null() {
             return &[];
         }
@@ -288,7 +288,7 @@ mod imp {
     /// # Safety
     ///
     /// As [`as_samples`].
-    unsafe fn as_samples_mut(buffer: &mut sys::AudioBuffer) -> &mut [f32] {
+    const unsafe fn as_samples_mut(buffer: &mut sys::AudioBuffer) -> &mut [f32] {
         if buffer.data.is_null() {
             return &mut [];
         }
@@ -299,6 +299,33 @@ mod imp {
                 buffer.data_byte_size as usize / size_of::<f32>(),
             )
         }
+    }
+
+    /// The microphone's samples and channel count from an input buffer list.
+    ///
+    /// The first buffer is the microphone's, because the aggregate lists
+    /// sub-devices in the order they were given and the microphone is given
+    /// first (see `AggregateDevice::create`). Everything after it belongs to the
+    /// virtual device, which also exposes inputs, and is ignored.
+    ///
+    /// # Safety
+    ///
+    /// `input_data` must be null or a buffer list Core Audio owns for the
+    /// duration of the call.
+    const unsafe fn microphone_input<'a>(input_data: *const AudioBufferList) -> (&'a [f32], usize) {
+        // SAFETY: delegated to the caller.
+        let Some(list) = (unsafe { input_data.as_ref() }) else {
+            return (&[], 0);
+        };
+        // SAFETY: as above.
+        let Some(buffer) = (unsafe { list.as_slice() }).first() else {
+            return (&[], 0);
+        };
+        // SAFETY: Core Audio sizes `data` as it declares.
+        (
+            unsafe { as_samples(buffer) },
+            buffer.number_channels as usize,
+        )
     }
 
     /// The callback Core Audio invokes once per device buffer.
@@ -329,25 +356,8 @@ mod imp {
         let state = unsafe { &mut *client_data.cast::<IoState>() };
 
         // SAFETY: Core Audio owns these lists for the duration of the call.
-        let input = unsafe { input_data.as_ref() };
-        let (input_samples, input_channels) = match input {
-            // SAFETY: as above.
-            Some(list) => match unsafe { list.as_slice() }.first() {
-                // SAFETY: Core Audio sizes `data` as it declares.
-                Some(buffer) => (
-                    unsafe { as_samples(buffer) },
-                    buffer.number_channels as usize,
-                ),
-                None => (&[][..], 0),
-            },
-            None => (&[][..], 0),
-        };
-
-        let frames = if input_channels == 0 {
-            0
-        } else {
-            input_samples.len() / input_channels
-        };
+        let (input_samples, input_channels) = unsafe { microphone_input(input_data) };
+        let frames = input_samples.len().checked_div(input_channels).unwrap_or(0);
 
         // SAFETY: Core Audio owns the output list for the duration of the call.
         let Some(output_list) = (unsafe { output_data.as_mut() }) else {
