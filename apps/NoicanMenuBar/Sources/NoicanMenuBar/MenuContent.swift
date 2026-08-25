@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The contents of the menu bar popover.

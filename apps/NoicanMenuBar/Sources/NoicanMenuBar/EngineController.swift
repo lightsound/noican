@@ -76,12 +76,14 @@ final class EngineController {
     }
 
     private let defaults = UserDefaults.standard
-    private let engine: OpaquePointer?
+    // `nonisolated(unsafe)` so `deinit`, which is not main-actor isolated, can
+    // release it. The pointer is immutable and only ever passed back to Rust.
+    private nonisolated(unsafe) let engine: OpaquePointer?
     private var refreshTask: Task<Void, Never>?
 
     init() {
         noican_init_logging()
-        engine = OpaquePointer(noican_engine_new())
+        engine = noican_engine_new()
         selectedModelID = defaults.string(forKey: Keys.modelID) ?? ""
         selectedInputUID = defaults.string(forKey: Keys.inputUID)
         selectedOutputUID = defaults.string(forKey: Keys.outputUID)
@@ -93,7 +95,7 @@ final class EngineController {
         // `deinit` cannot touch main-actor state, so the handle is released
         // through the nonisolated free function.
         if let engine {
-            noican_engine_free(UnsafeMutablePointer(engine))
+            noican_engine_free(engine)
         }
     }
 
@@ -111,8 +113,8 @@ final class EngineController {
         models = buffer.prefix(written).map { entry in
             var entry = entry
             return Model(
-                id: withCString(&entry.id),
-                displayName: withCString(&entry.display_name),
+                id: readFixedString(&entry.id),
+                displayName: readFixedString(&entry.display_name),
                 sampleRate: entry.sample_rate,
                 downloaded: entry.downloaded
             )
@@ -181,7 +183,7 @@ final class EngineController {
             output.withCString { outputPointer in
                 selectedModelID.withCString { modelPointer in
                     noican_engine_start(
-                        UnsafeMutablePointer(engine),
+                        engine,
                         inputPointer,
                         outputPointer,
                         modelPointer
@@ -200,7 +202,7 @@ final class EngineController {
 
     private func stop() {
         guard let engine else { return }
-        noican_engine_stop(UnsafeMutablePointer(engine))
+        noican_engine_stop(engine)
         refreshTask?.cancel()
         refreshTask = nil
         refreshStatus()
@@ -209,14 +211,14 @@ final class EngineController {
     /// Bypasses or re-enables the active model.
     func setBypass(_ bypassed: Bool) {
         guard let engine else { return }
-        noican_engine_set_bypass(UnsafeMutablePointer(engine), bypassed)
+        noican_engine_set_bypass(engine, bypassed)
         refreshStatus()
     }
 
     private func applyModel(_ modelID: String) {
         guard let engine else { return }
         let ok = modelID.withCString { pointer in
-            noican_engine_set_model(UnsafeMutablePointer(engine), pointer)
+            noican_engine_set_model(engine, pointer)
         }
         lastError = ok ? nil : Self.lastEngineError()
     }
@@ -240,7 +242,7 @@ final class EngineController {
     private func refreshStatus() {
         guard let engine else { return }
         var raw = NoicanStatus()
-        noican_engine_status(UnsafeMutablePointer(engine), &raw)
+        noican_engine_status(engine, &raw)
         status = Status(
             running: raw.running,
             bypassed: raw.bypassed,
@@ -264,8 +266,8 @@ final class EngineController {
         return buffer.prefix(written).map { entry in
             var entry = entry
             return Device(
-                id: withCString(&entry.uid),
-                name: withCString(&entry.name),
+                id: readFixedString(&entry.uid),
+                name: readFixedString(&entry.name),
                 sampleRate: entry.sample_rate,
                 isVirtual: entry.is_virtual
             )
@@ -289,7 +291,7 @@ final class EngineController {
 ///
 /// The fields arrive as tuples of `CChar` because that is how Swift imports a C
 /// array, so they have to be read through a pointer to the whole tuple.
-private func withCString<T>(_ field: inout T) -> String {
+private func readFixedString<T>(_ field: inout T) -> String {
     withUnsafePointer(to: &field) { pointer in
         pointer.withMemoryRebound(
             to: CChar.self,

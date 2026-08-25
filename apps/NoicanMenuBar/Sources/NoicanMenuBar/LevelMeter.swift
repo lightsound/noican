@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 /// A peak meter for one signal.
