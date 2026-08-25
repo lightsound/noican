@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use crate::catalog::{Artifact, ModelDescriptor};
+use crate::catalog::{Artifact, ArtifactKind, ModelDescriptor};
 use crate::error::{Error, Result};
 
 /// Environment variable that overrides the default weights directory.
@@ -93,6 +93,52 @@ impl ModelStore {
                 path,
             })
         }
+    }
+
+    /// Directory a model's unpacked bundle lives in.
+    #[must_use]
+    pub fn bundle_dir(&self, model: &ModelDescriptor) -> PathBuf {
+        self.root.join(model.id).join("bundle")
+    }
+
+    /// Returns the unpacked bundle directory, unpacking it if necessary.
+    ///
+    /// Unpacking is idempotent and driven by the archive rather than recorded
+    /// separately, so a half-extracted directory from an interrupted run heals
+    /// itself on the next call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::MissingWeights`] if the archive has not been
+    /// downloaded, [`Error::Io`] if extraction fails, or
+    /// [`Error::UnexpectedSignature`] if the archive does not contain the files
+    /// a bundle must have.
+    pub fn require_bundle(&self, model: &ModelDescriptor) -> Result<PathBuf> {
+        let artifact = model.primary_artifact();
+        if artifact.kind != ArtifactKind::Bundle {
+            return Err(Error::UnexpectedSignature {
+                model: model.id.to_owned(),
+                detail: "this model is not distributed as a bundle".to_owned(),
+            });
+        }
+
+        let directory = self.bundle_dir(model);
+        if BUNDLE_CONTENTS
+            .iter()
+            .all(|name| directory.join(name).is_file())
+        {
+            return Ok(directory);
+        }
+
+        let archive = self.path_of(model, artifact);
+        if !archive.is_file() {
+            return Err(Error::MissingWeights {
+                model: model.id.to_owned(),
+                path: archive,
+            });
+        }
+        unpack(model.id, &archive, &directory)?;
+        Ok(directory)
     }
 
     /// Recomputes and checks the digest of every artifact of `model`.
@@ -177,6 +223,76 @@ impl ModelStore {
         }
         Ok(())
     }
+}
+
+/// Files every `DeepFilterNet` bundle must contain once unpacked.
+const BUNDLE_CONTENTS: [&str; 4] = ["enc.onnx", "erb_dec.onnx", "df_dec.onnx", "config.ini"];
+
+/// Extracts a gzipped tar into `directory`, flattening paths to file names.
+///
+/// Flattening because the two published bundles disagree about layout — one puts
+/// the files at the root, the other under `tmp/export/` — and because honouring
+/// arbitrary paths from an archive is how directory-traversal bugs happen.
+fn unpack(model_id: &str, archive: &Path, directory: &Path) -> Result<()> {
+    fs::create_dir_all(directory).map_err(|source| Error::Io {
+        operation: "create directory",
+        path: directory.to_path_buf(),
+        source,
+    })?;
+
+    let file = fs::File::open(archive).map_err(|source| Error::Io {
+        operation: "open",
+        path: archive.to_path_buf(),
+        source,
+    })?;
+    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(file));
+    let entries = tar.entries().map_err(|source| Error::Io {
+        operation: "read the archive index of",
+        path: archive.to_path_buf(),
+        source,
+    })?;
+
+    let mut extracted = Vec::new();
+    for entry in entries {
+        let mut entry = entry.map_err(|source| Error::Io {
+            operation: "read an entry of",
+            path: archive.to_path_buf(),
+            source,
+        })?;
+        let path = entry.path().map_err(|source| Error::Io {
+            operation: "read an entry path of",
+            path: archive.to_path_buf(),
+            source,
+        })?;
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some(wanted) = BUNDLE_CONTENTS.iter().find(|expected| **expected == name) else {
+            continue;
+        };
+
+        let destination = directory.join(wanted);
+        entry.unpack(&destination).map_err(|source| Error::Io {
+            operation: "extract into",
+            path: destination,
+            source,
+        })?;
+        extracted.push(*wanted);
+    }
+
+    let missing: Vec<&str> = BUNDLE_CONTENTS
+        .iter()
+        .copied()
+        .filter(|name| !extracted.contains(name))
+        .collect();
+    if !missing.is_empty() {
+        return Err(Error::UnexpectedSignature {
+            model: model_id.to_owned(),
+            detail: format!("the bundle is missing {}", missing.join(", ")),
+        });
+    }
+    tracing::debug!(model = model_id, "bundle unpacked");
+    Ok(())
 }
 
 /// Streams `artifact` to `path` via a temporary file.
