@@ -100,7 +100,7 @@ fn main() -> ExitCode {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Process(args) => batch::run(args),
+        Command::Process(args) => batch::run(&args),
         Command::Models(ModelsArgs {
             command: ModelsCommand::List,
         }) => {

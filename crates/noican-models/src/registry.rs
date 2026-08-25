@@ -167,7 +167,7 @@ pub struct LoadRequest<'a> {
     /// Optional access token for gated Hugging Face files.
     pub hugging_face_token: Option<&'a str>,
     /// Required only for TSE.
-    pub speaker_embedding: Option<[f32; EMBEDDING_DIMENSIONS]>,
+    pub speaker_embedding: Option<&'a [f32; EMBEDDING_DIMENSIONS]>,
 }
 
 /// Download assets and construct a model normalized to the pipeline contract.
@@ -224,7 +224,7 @@ fn load_native_stage(request: &LoadRequest<'_>) -> Result<Box<dyn AudioStage>, M
                 .ok_or(ModelLoadError::MissingEnrollment)?;
             let graph = request.store.ensure(ModelAsset::TseGraph, fetch)?;
             request.store.ensure(ModelAsset::TseWeights, fetch)?;
-            Box::new(Tse::load(graph, &embedding)?)
+            Box::new(Tse::load(graph, embedding)?)
         }
     };
     Ok(stage)

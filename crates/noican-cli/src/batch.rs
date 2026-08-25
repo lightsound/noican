@@ -3,8 +3,8 @@
 use std::{
     collections::HashSet,
     fs::{self, File},
-    io::{self, Read, Write},
-    path::{Path, PathBuf},
+    io::{Read, Write},
+    path::Path,
 };
 
 use anyhow::{bail, Context, Result};
@@ -48,7 +48,7 @@ enum ModelStatus {
     Failed,
 }
 
-pub fn run(args: ProcessArgs) -> Result<()> {
+pub fn run(args: &ProcessArgs) -> Result<()> {
     let store = model_store(args.model_dir.clone())?;
     let mut models = selected_models(&args.models, args.all_models);
     deduplicate(&mut models);
@@ -66,7 +66,7 @@ pub fn run(args: ProcessArgs) -> Result<()> {
             &args.output_dir,
             &store,
             &models,
-            embedding,
+            &embedding,
             token.as_deref(),
             delay_compensation,
         )?;
@@ -84,7 +84,7 @@ fn process_input(
     output_root: &Path,
     store: &ModelStore,
     models: &[ModelId],
-    embedding: Option<[f32; EMBEDDING_DIMENSIONS]>,
+    embedding: &Option<[f32; EMBEDDING_DIMENSIONS]>,
     token: Option<&str>,
     delay_compensation: DelayCompensation,
 ) -> Result<usize> {
@@ -103,7 +103,7 @@ fn process_input(
             model: *model,
             store,
             hugging_face_token: token,
-            speaker_embedding: embedding,
+            speaker_embedding: embedding.as_ref(),
         };
         let result = process_model(&run_directory, *model, &request, &input, delay_compensation);
         results.push(match result {

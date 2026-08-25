@@ -47,7 +47,7 @@ pub fn read_mono(path: &Path) -> Result<Audio> {
             let scale = 2_f32.powi(i32::from(bits) - 1);
             reader
                 .samples::<i32>()
-                .map(|sample| sample.map(|value| value as f32 / scale))
+                .map(|sample| sample.map(|value| normalize_integer(value, scale)))
                 .collect::<Result<Vec<_>, _>>()
                 .with_context(|| format!("decode integer WAV {}", path.display()))?
         }
@@ -68,6 +68,14 @@ pub fn read_mono(path: &Path) -> Result<Audio> {
         samples,
         sample_rate: specification.sample_rate,
     })
+}
+
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "PCM integer to normalized f32 conversion intentionally rounds to the engine's sample format"
+)]
+fn normalize_integer(value: i32, scale: f32) -> f32 {
+    value as f32 / scale
 }
 
 /// Write mono 48 kHz-compatible float WAV samples.
