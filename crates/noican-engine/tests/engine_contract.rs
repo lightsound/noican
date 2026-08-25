@@ -58,6 +58,10 @@ const fn descriptor(id: &'static str, sample_rate: u32, frame_samples: usize) ->
     }
 }
 
+fn approximately_equal(left: f32, right: f32) -> bool {
+    (left - right).abs() <= f32::EPSILON
+}
+
 #[test]
 fn offline_path_preserves_aligned_passthrough() -> Result<(), StageError> {
     let native = PassthroughStage {
@@ -124,20 +128,24 @@ fn published_stage_switches_through_short_mute() -> Result<(), StageError> {
     let mut output = [0.0_f32; PIPELINE_FRAME_SAMPLES];
 
     engine.process_frame(&input, &mut output)?;
-    assert!(output.iter().all(|sample| *sample == 1.0));
+    assert!(output
+        .iter()
+        .all(|sample| approximately_equal(*sample, 1.0)));
     assert!(publisher.publish(Box::new(replacement))?.is_none());
 
     engine.process_frame(&input, &mut output)?;
-    assert_eq!(output[0], 1.0);
-    assert_eq!(output[240], 0.0);
+    assert!(approximately_equal(output[0], 1.0));
+    assert!(approximately_equal(output[240], 0.0));
     assert_eq!(engine.active_descriptor().id, "minus-one");
 
     engine.process_frame(&input, &mut output)?;
-    assert_eq!(output[0], 0.0);
-    assert_eq!(output[240], -1.0);
+    assert!(approximately_equal(output[0], 0.0));
+    assert!(approximately_equal(output[240], -1.0));
 
     engine.process_frame(&input, &mut output)?;
-    assert!(output.iter().all(|sample| *sample == -1.0));
+    assert!(output
+        .iter()
+        .all(|sample| approximately_equal(*sample, -1.0)));
     assert_eq!(engine.active_generation(), 1);
     Ok(())
 }
