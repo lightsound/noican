@@ -66,7 +66,7 @@ final class AppState: ObservableObject {
         do {
             allDevices = try AudioDeviceCatalog.devices()
             inputDevices = allDevices
-                .filter { $0.inputChannels > 0 && !AudioDeviceCatalog.isNoicanVirtualDevice($0) }
+                .filter(AudioDeviceCatalog.isSelectableInput)
                 .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             if !inputDevices.contains(where: { $0.uid == selectedInputUID }) {
                 selectedInputUID = inputDevices.first?.uid ?? ""

@@ -102,16 +102,16 @@ final class AggregateDevice: @unchecked Sendable {
             mElement: kAudioObjectPropertyElementMain
         )
         var requestedRate = 48_000.0
-        try check(
-            AudioObjectSetPropertyData(
-                identifier,
-                &sampleRateAddress,
-                0,
-                nil,
-                UInt32(MemoryLayout<Double>.size),
-                &requestedRate
-            ),
-            operation: "Set Aggregate Device sample rate"
+        // Some drivers reject the set (e.g. 'nope', unsupported operation)
+        // even when the device already runs at the requested rate, so judge
+        // by the read-back value, not the set status.
+        let setStatus = AudioObjectSetPropertyData(
+            identifier,
+            &sampleRateAddress,
+            0,
+            nil,
+            UInt32(MemoryLayout<Double>.size),
+            &requestedRate
         )
         var actualRate = 0.0
         var rateSize = UInt32(MemoryLayout<Double>.size)
@@ -128,8 +128,10 @@ final class AggregateDevice: @unchecked Sendable {
         )
         guard abs(actualRate - requestedRate) < 0.5 else {
             throw CoreAudioControlError(
-                operation: "Aggregate Device did not accept 48 kHz",
-                status: kAudioHardwareUnspecifiedError
+                operation: "Aggregate Device did not accept 48 kHz "
+                    + "(the selected microphone may not support it); "
+                    + "it reports \(actualRate) Hz",
+                status: setStatus == noErr ? kAudioHardwareUnspecifiedError : setStatus
             )
         }
     }
@@ -140,17 +142,17 @@ final class AggregateDevice: @unchecked Sendable {
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
+        // 256 frames is a preference, not a requirement: the transport's
+        // ring buffers absorb whatever callback size the device settles on,
+        // so a driver clamping to its supported range is fine.
         var requestedFrames: UInt32 = 256
-        try check(
-            AudioObjectSetPropertyData(
-                identifier,
-                &bufferAddress,
-                0,
-                nil,
-                UInt32(MemoryLayout<UInt32>.size),
-                &requestedFrames
-            ),
-            operation: "Set Aggregate Device buffer size"
+        _ = AudioObjectSetPropertyData(
+            identifier,
+            &bufferAddress,
+            0,
+            nil,
+            UInt32(MemoryLayout<UInt32>.size),
+            &requestedFrames
         )
         var actualFrames: UInt32 = 0
         var frameSize = UInt32(MemoryLayout<UInt32>.size)
@@ -165,9 +167,10 @@ final class AggregateDevice: @unchecked Sendable {
             ),
             operation: "Read Aggregate Device buffer size"
         )
-        guard actualFrames == requestedFrames else {
+        guard (32...4_096).contains(actualFrames) else {
             throw CoreAudioControlError(
-                operation: "Aggregate Device did not accept 256 frames",
+                operation: "Aggregate Device reports an unusable buffer size "
+                    + "(\(actualFrames) frames)",
                 status: kAudioHardwareUnspecifiedError
             )
         }

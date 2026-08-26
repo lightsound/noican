@@ -7,6 +7,7 @@ struct AudioDeviceInfo: Hashable, Identifiable {
     let name: String
     let inputChannels: UInt32
     let outputChannels: UInt32
+    let transportType: UInt32
 }
 
 enum AudioDeviceCatalog {
@@ -60,6 +61,18 @@ enum AudioDeviceCatalog {
             || device.uid.lowercased().hasPrefix("com.lightsound.noican.")
     }
 
+    /// True for devices that make sense as the physical microphone. Virtual
+    /// devices (JoyCast, other loopbacks — they report the `virt` transport
+    /// type) and aggregates are excluded: routing another virtual mic into
+    /// Noican would double-process or loop audio, and fixed-rate virtual
+    /// subdevices also make the private aggregate reject the 48 kHz setup.
+    static func isSelectableInput(_ device: AudioDeviceInfo) -> Bool {
+        device.inputChannels > 0
+            && device.transportType != kAudioDeviceTransportTypeVirtual
+            && device.transportType != kAudioDeviceTransportTypeAggregate
+            && !isNoicanVirtualDevice(device)
+    }
+
     static func virtualOutput(in devices: [AudioDeviceInfo]) -> AudioDeviceInfo? {
         devices.first { device in
             device.outputChannels > 0 && isNoicanVirtualDevice(device)
@@ -84,8 +97,25 @@ enum AudioDeviceCatalog {
             uid: uid,
             name: name,
             inputChannels: channelCount(identifier, scope: kAudioObjectPropertyScopeInput),
-            outputChannels: channelCount(identifier, scope: kAudioObjectPropertyScopeOutput)
+            outputChannels: channelCount(identifier, scope: kAudioObjectPropertyScopeOutput),
+            transportType: transportType(identifier)
         )
+    }
+
+    private static func transportType(_ device: AudioDeviceID) -> UInt32 {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var value: UInt32 = 0
+        var byteCount = UInt32(MemoryLayout<UInt32>.size)
+        guard
+            AudioObjectGetPropertyData(device, &address, 0, nil, &byteCount, &value) == noErr
+        else {
+            return kAudioDeviceTransportTypeUnknown
+        }
+        return value
     }
 
     private static func stringProperty(
