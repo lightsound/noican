@@ -1,11 +1,14 @@
 import AppKit
 import SwiftUI
 
-/// The menu bar popover: a header combining identity, live status, and the
-/// master toggle (Control Center style), grouped device/model pickers, and
-/// a utility footer. Spacing and typography follow macOS menu bar app
-/// conventions (14 pt content margins, caption-weight section labels,
-/// secondary text for status detail).
+/// The menu bar popover, top to bottom: a status header, the single
+/// Off / Preview / On mode control, a monitoring section that exists only
+/// while the engine runs (level bars, and the headphone caption while
+/// previewing), then the settings pickers — Microphone first, Model last,
+/// since the model is rarely changed once chosen — and a utility footer.
+/// Spacing and typography follow macOS menu bar app conventions (14 pt
+/// content margins, caption-weight section labels, secondary text for
+/// status detail).
 struct MenuView: View {
     @ObservedObject var state: AppState
 
@@ -14,19 +17,23 @@ struct MenuView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            modePicker
             Divider()
                 .padding(.horizontal, contentPadding)
-            pickers
-            Divider()
-                .padding(.horizontal, contentPadding)
-            preview
+            if state.mode != .off {
+                monitoring
+                Divider()
+                    .padding(.horizontal, contentPadding)
+            }
+            settings
             Divider()
                 .padding(.horizontal, contentPadding)
             footer
         }
         .frame(width: 320)
-        // Poll the engine's peak meters only while the popover is open;
-        // the task is cancelled when the view disappears.
+        // Poll the engine's peak meters (and the feedback-trip flag) only
+        // while the popover is open; the task is cancelled when the view
+        // disappears.
         .task {
             await state.pollLevels()
         }
@@ -51,18 +58,10 @@ struct MenuView: View {
                 ProgressView()
                     .controlSize(.small)
             }
-            Toggle("Noise cancellation", isOn: Binding(
-                get: { state.isEnabled },
-                set: { state.setEnabled($0) }
-            ))
-            .labelsHidden()
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .disabled(state.isBusy)
         }
         .padding(.horizontal, contentPadding)
         .padding(.top, 12)
-        .padding(.bottom, 10)
+        .padding(.bottom, 8)
     }
 
     private var statusIndicator: some View {
@@ -85,7 +84,51 @@ struct MenuView: View {
         }
     }
 
-    private var pickers: some View {
+    /// The single top-level control. Preview = engine + self-monitor;
+    /// On = engine only. Both feed the virtual microphone.
+    private var modePicker: some View {
+        Picker("Mode", selection: Binding(
+            get: { state.mode },
+            set: { state.setMode($0) }
+        )) {
+            ForEach(EngineMode.allCases) { mode in
+                Text(mode.label).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .disabled(state.isBusy)
+        .padding(.horizontal, contentPadding)
+        .padding(.bottom, 10)
+    }
+
+    /// Live observation of the running stream: input (pre-model) and
+    /// output (post-model) peak bars on a shared dB scale — speech moves
+    /// both; noise-only passages leave the output bar clearly below the
+    /// input bar, showing the suppression at a glance. The headphone
+    /// warning appears only while previewing.
+    private var monitoring: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            LevelBar(label: "In", level: state.inputLevel, tint: .secondary)
+            LevelBar(label: "Out", level: state.outputLevel, tint: .green)
+            if state.mode == .preview {
+                Text("Playing your processed voice on the default output. Use headphones — speakers will feed back.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let message = state.previewError {
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, contentPadding)
+        .padding(.vertical, 10)
+    }
+
+    private var settings: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Microphone")
@@ -98,8 +141,7 @@ struct MenuView: View {
                     }
                 }
                 .labelsHidden()
-                .disabled(state.isEnabled || state.isBusy)
-                meters
+                .disabled(state.mode != .off || state.isBusy)
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text("Model")
@@ -121,45 +163,6 @@ struct MenuView: View {
                 .onChange(of: state.selectedModel) {
                     state.applySelectedModel()
                 }
-            }
-        }
-        .padding(.horizontal, contentPadding)
-        .padding(.vertical, 10)
-    }
-
-    /// Input (pre-model) and output (post-model) peak bars on a shared dB
-    /// scale: speech moves both; noise-only passages leave the output bar
-    /// clearly below the input bar, showing the suppression at a glance
-    /// without listening to the stream.
-    private var meters: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            LevelBar(label: "In", level: state.inputLevel, tint: .secondary)
-            LevelBar(label: "Out", level: state.outputLevel, tint: .green)
-        }
-        .padding(.top, 4)
-    }
-
-    /// Self-monitor toggle: hear the processed microphone on the default
-    /// output. Disabled while the engine is off; the caption warns about
-    /// speaker feedback (Phase 0/1 has no echo cancellation).
-    private var preview: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Toggle("Preview my voice", isOn: Binding(
-                get: { state.isPreviewEnabled },
-                set: { state.setPreview($0) }
-            ))
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .disabled(!state.isEnabled || state.isBusy)
-            Text("Plays your processed voice on the default output. Use headphones — speakers will feed back.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .fixedSize(horizontal: false, vertical: true)
-            if let message = state.previewError {
-                Text(message)
-                    .font(.caption2)
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.horizontal, contentPadding)

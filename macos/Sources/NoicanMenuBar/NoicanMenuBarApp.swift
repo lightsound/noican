@@ -10,7 +10,7 @@ struct NoicanMenuBarApp: App {
         } label: {
             Label(
                 "Noican",
-                systemImage: state.isEnabled ? "waveform.badge.mic" : "mic.slash"
+                systemImage: state.mode == .off ? "mic.slash" : "waveform.badge.mic"
             )
         }
         .menuBarExtraStyle(.window)

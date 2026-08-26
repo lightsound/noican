@@ -58,6 +58,13 @@ final class RustEngine: @unchecked Sendable {
         noican_engine_is_monitoring(handle) != 0
     }
 
+    /// True when the feedback guard auto-stopped the preview (sustained
+    /// near-clipping monitor output). Callers should disable the monitor
+    /// and tell the user; the meeting-facing path is unaffected.
+    var monitorTripped: Bool {
+        noican_engine_monitor_tripped(handle) != 0
+    }
+
     /// Decayed linear peak (0–1) of the model input, measured per 10 ms
     /// block by the inference worker; 0 while stopped. Reads one atomic —
     /// never blocks, so it is safe to poll from the UI.

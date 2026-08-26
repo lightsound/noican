@@ -10,21 +10,37 @@ enum EnginePhase: Equatable {
     case failed(String)
 }
 
+/// The single top-level control: Off, Preview (engine + self-monitor on
+/// the default output), or On (engine only, for meetings). Preview and On
+/// both feed the virtual microphone; the only difference is the monitor
+/// tee, so switching between them is instant and click-free.
+enum EngineMode: String, CaseIterable, Identifiable {
+    case off
+    case preview
+    case on
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .off: "Off"
+        case .preview: "Preview"
+        case .on: "On"
+        }
+    }
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published private(set) var inputDevices: [AudioDeviceInfo] = []
     @Published var selectedInputUID = ""
     @Published var selectedModel = AppState.defaultModelID
-    @Published private(set) var isEnabled = false
+    @Published private(set) var mode: EngineMode = .off
     @Published private(set) var isBusy = false
     @Published private(set) var phase: EnginePhase = .off
-    /// User preference for the preview self-monitor. Survives engine
-    /// off/on: the preview is re-applied automatically after a successful
-    /// start (the Rust monitor itself does not outlive the transport).
-    @Published private(set) var isPreviewEnabled = false
-    /// Last preview failure, shown under the Preview toggle. Preview
-    /// failures never affect the engine phase: the meeting-facing path
-    /// keeps running.
+    /// Last preview failure (loopback/speaker refusal, feedback trip, …),
+    /// shown in the monitoring section. Preview failures never affect the
+    /// engine phase: the meeting-facing path keeps running.
     @Published private(set) var previewError: String?
     /// Peak meters, refreshed by `pollLevels()` only while the popover is
     /// open. Independent of the Preview state: they move whenever the
@@ -86,7 +102,7 @@ final class AppState: ObservableObject {
     private func handleDevicesChanged() {
         let runningInputUID = selectedInputUID
         refreshDevices()
-        guard isEnabled, !isBusy else {
+        guard mode != .off, !isBusy else {
             return
         }
         if !allDevices.contains(where: { $0.uid == runningInputUID && $0.inputChannels > 0 }) {
@@ -103,7 +119,8 @@ final class AppState: ObservableObject {
         case let .busy(message):
             return message
         case .running:
-            return "Running · \(displayName(for: activeModelID ?? selectedModel))"
+            let name = displayName(for: activeModelID ?? selectedModel)
+            return mode == .preview ? "Previewing · \(name)" : "Running · \(name)"
         case let .failed(message):
             return message
         }
@@ -127,14 +144,24 @@ final class AppState: ObservableObject {
         }
     }
 
-    func setEnabled(_ enabled: Bool) {
-        guard !isBusy else {
+    func setMode(_ newMode: EngineMode) {
+        guard !isBusy, newMode != mode, let engine else {
             return
         }
-        if enabled {
-            start()
-        } else {
+        previewError = nil
+        let previous = mode
+        mode = newMode
+        switch (previous, newMode) {
+        case (.off, _):
+            start(monitor: newMode == .preview)
+        case (_, .off):
             stop()
+        case (.on, .preview):
+            applyMonitor(true, engine: engine)
+        case (.preview, .on):
+            applyMonitor(false, engine: engine)
+        default:
+            break
         }
     }
 
@@ -149,48 +176,57 @@ final class AppState: ObservableObject {
     }
 
     private func refreshLevels() {
-        guard isEnabled, let engine else {
+        guard mode != .off, let engine else {
             if inputLevel != 0 { inputLevel = 0 }
             if outputLevel != 0 { outputLevel = 0 }
             return
         }
         inputLevel = engine.inputLevel
         outputLevel = engine.outputLevel
-    }
-
-    func setPreview(_ enabled: Bool) {
-        guard isEnabled, !isBusy, let engine else {
-            return
-        }
-        previewError = nil
-        isPreviewEnabled = enabled
-        applyMonitor(enabled, engine: engine)
+        checkMonitorTrip()
     }
 
     /// Sends the monitor toggle to the engine off the main actor and
-    /// reconciles the published state with the actual outcome.
+    /// reconciles the published mode with the actual outcome.
     private func applyMonitor(_ enabled: Bool, engine: RustEngine) {
         Task.detached {
             let result = Result { try engine.setMonitor(enabled) }
-            await self.finishPreviewChange(result, engine: engine)
+            await self.finishMonitorChange(result, engine: engine)
         }
     }
 
-    private func finishPreviewChange(_ result: Result<Void, Error>, engine: RustEngine) {
+    private func finishMonitorChange(_ result: Result<Void, Error>, engine: RustEngine) {
         if case let .failure(error) = result {
-            isPreviewEnabled = engine.isMonitoring
+            // The engine keeps running; only the monitor failed. Fall back
+            // to On and explain why.
+            if mode == .preview {
+                mode = engine.isMonitoring ? .preview : .on
+            }
             previewError = error.localizedDescription
         }
+    }
+
+    /// Reacts to the engine-side feedback killswitch: the worker already
+    /// silenced the preview, so release the playback device, fall back to
+    /// On, and tell the user why. Checked at 20 Hz while the popover is
+    /// open and at 1 Hz by the health poll.
+    private func checkMonitorTrip() {
+        guard mode == .preview, let engine, engine.monitorTripped else {
+            return
+        }
+        mode = .on
+        previewError = "Preview stopped itself: feedback detected. Use headphones, then select Preview again."
+        applyMonitor(false, engine: engine)
     }
 
     func applySelectedModel() {
         // Changing the model while stopped starts nothing; clear a stale
         // failure message so the menu does not keep blaming the last
         // attempt.
-        if !isEnabled, case .failed = phase {
+        if mode == .off, case .failed = phase {
             phase = .off
         }
-        guard isEnabled, !isBusy, let engine, selectedModel != activeModelID else {
+        guard mode != .off, !isBusy, let engine, selectedModel != activeModelID else {
             return
         }
         let model = selectedModel
@@ -220,18 +256,21 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func start() {
+    private func start(monitor: Bool) {
         guard let engine else {
+            mode = .off
             phase = .failed("Rust engine unavailable")
             return
         }
         guard
             let input = inputDevices.first(where: { $0.uid == selectedInputUID })
         else {
+            mode = .off
             phase = .failed("Select an input device")
             return
         }
         guard let virtualOutput = AudioDeviceCatalog.virtualOutput(in: allDevices) else {
+            mode = .off
             phase = .failed("Install the Noican or BlackHole virtual device")
             return
         }
@@ -248,27 +287,26 @@ final class AppState: ObservableObject {
                 let aggregateID = try aggregate.create(input: input, virtualOutput: virtualOutput)
                 try engine.start(aggregateDevice: aggregateID, model: model)
             }
-            await self.finishStart(result, model: model)
+            await self.finishStart(result, model: model, monitor: monitor)
         }
     }
 
-    private func finishStart(_ result: Result<Void, Error>, model: String) {
+    private func finishStart(_ result: Result<Void, Error>, model: String, monitor: Bool) {
         isBusy = false
         switch result {
         case .success:
-            isEnabled = true
             activeModelID = model
             phase = .running
             startFaultPolling()
-            // The Rust monitor does not survive an engine restart;
-            // re-apply the user's preview preference.
-            if isPreviewEnabled, let engine {
+            // Preview mode is engine + monitor; the monitor half starts
+            // once the transport is up.
+            if monitor, let engine {
                 applyMonitor(true, engine: engine)
             }
         case let .failure(error):
             engine?.stop()
             aggregate.destroy()
-            isEnabled = false
+            mode = .off
             phase = .failed(error.localizedDescription)
         }
     }
@@ -277,7 +315,7 @@ final class AppState: ObservableObject {
         stopFaultPolling()
         engine?.stop()
         aggregate.destroy()
-        isEnabled = false
+        mode = .off
         activeModelID = nil
         previewError = nil
         phase = .off
@@ -301,9 +339,10 @@ final class AppState: ObservableObject {
     }
 
     private func checkEngineHealth() {
-        guard isEnabled, !isBusy, let engine else {
+        guard mode != .off, !isBusy, let engine else {
             return
         }
+        checkMonitorTrip()
         if engine.isFaulted {
             phase = .failed("Audio fault — turn noise cancellation off and on")
             return
@@ -331,7 +370,7 @@ final class AppState: ObservableObject {
         stopFaultPolling()
         engine?.stop()
         aggregate.destroy()
-        isEnabled = false
+        mode = .off
         activeModelID = nil
         previewError = nil
         phase = .failed(message)
