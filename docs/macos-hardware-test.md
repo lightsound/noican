@@ -193,17 +193,21 @@ between them only arms or disarms the monitor.
    select Preview: it must be refused with a clear error (playing there
    would feed the processed voice into the meeting twice), the mode must
    fall back to On, and the engine must keep running.
-9. Set the system default output to the built-in speakers and select
-   Preview: it must be refused the same way (the voice would feed
-   straight back into the microphone).
-10. Select Off, then Preview again: the preview must come back cleanly
+9. Set the system default output to a Multi-Output Device (Audio MIDI
+   Setup) that contains BlackHole and select Preview: it must be refused
+   the same way (the aggregate can hide the meeting loopback, and the
+   feedback guard cannot catch that route).
+10. Set the system default output to the built-in speakers and select
+    Preview: it must be refused the same way (the voice would feed
+    straight back into the microphone).
+11. Select Off, then Preview again: the preview must come back cleanly
     with no stale audio replayed and no double playback.
-11. Compare % CPU in Activity Monitor between On and Preview: the
+12. Compare % CPU in Activity Monitor between On and Preview: the
     increase must be small (the monitor path only copies samples).
-12. The monitor clock is not drift-corrected: over long previews an
+13. The monitor clock is not drift-corrected: over long previews an
     occasional short gap (underrun re-prime) or discarded block
     (overrun) is acceptable; persistent crackle is not.
-13. *(Optional, external speakers required)* With USB/Bluetooth speakers
+14. *(Optional, external speakers required)* With USB/Bluetooth speakers
     as the default output — which the device-type check cannot classify —
     select Preview and raise the volume until feedback starts: within
     about half a second of sustained near-clipping output the feedback
@@ -232,6 +236,11 @@ a shared −60…0 dB scale and are shown only while the engine runs.
 5. The meters must move identically in Preview and On.
 6. Select Off: the monitoring section disappears (and reappears at zero
    on the next start).
+7. Close the popover and watch the app in Activity Monitor for a minute:
+   CPU use and wake-ups must drop back to idle. The 20 Hz level poll is
+   bound to the popover view's lifetime, but `MenuBarExtra(.window)` has
+   kept hidden content views alive on some macOS releases — this check
+   catches that regression on the tested OS version.
 
 ## Real-time audit
 
@@ -312,8 +321,8 @@ Run the Preview and Level meters procedures above; the build passes when:
    device is unaffected by Preview ↔ On switches.
 5. **Unsafe output refusal**: Preview refuses to start — with a clear
    error, mode falling back to On (or Off → engine still starts), engine
-   unaffected — when the default output is the BlackHole/Noican loopback
-   or the built-in speakers.
+   unaffected — when the default output is the BlackHole/Noican loopback,
+   a Multi-Output/aggregate device, or the built-in speakers.
 6. **Feedback guard** *(optional; needs external speakers)*: sustained
    feedback through an unclassifiable output stops the preview by itself
    within ~1 s, falls back to On, and explains why.
