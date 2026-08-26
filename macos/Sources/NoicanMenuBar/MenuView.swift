@@ -79,17 +79,17 @@ struct MenuView: View {
             .padding(.top, 1)
     }
 
+    /// Settled health only — no transitional color: the spinner already
+    /// says "busy", and flashing the dot orange for a milliseconds-long
+    /// Preview/On toggle just made it churn.
     private var statusColor: Color {
-        if state.isBusy {
-            return .orange
-        }
         switch state.phase {
         case .off:
-            return .secondary.opacity(0.5)
+            .secondary.opacity(0.5)
         case .running:
-            return .green
+            .green
         case .failed:
-            return .red
+            .red
         }
     }
 
