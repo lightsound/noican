@@ -85,19 +85,31 @@ struct MenuView: View {
     }
 
     /// The single top-level control. Preview = engine + self-monitor;
-    /// On = engine only. Both feed the virtual microphone.
+    /// On = engine only. Both feed the virtual microphone. Preview is
+    /// disabled up front — with the reason captioned — while the system
+    /// default output must not receive it; preview failures (rollbacks,
+    /// feedback trips) surface here too.
     private var modePicker: some View {
-        Picker("Mode", selection: Binding(
-            get: { state.mode },
-            set: { state.setMode($0) }
-        )) {
-            ForEach(EngineMode.allCases) { mode in
-                Text(mode.label).tag(mode)
+        VStack(alignment: .leading, spacing: 6) {
+            ModePicker(
+                mode: state.mode,
+                isBusy: state.isBusy,
+                previewUnavailableReason: state.previewUnavailableReason,
+                select: { state.setMode($0) }
+            )
+            if let reason = state.previewUnavailableReason {
+                Text(reason)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let message = state.previewError {
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .disabled(state.isBusy)
         .padding(.horizontal, contentPadding)
         .padding(.bottom, 10)
     }
@@ -115,12 +127,6 @@ struct MenuView: View {
                 Text("Playing your processed voice on the default output. Use headphones — speakers will feed back.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let message = state.previewError {
-                Text(message)
-                    .font(.caption2)
-                    .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
