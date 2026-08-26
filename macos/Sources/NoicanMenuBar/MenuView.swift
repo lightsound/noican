@@ -1,10 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// The menu bar popover: header with live status, the main toggle, grouped
-/// device/model pickers, and a utility footer. Spacing and typography follow
-/// macOS menu bar app conventions (14 pt content margins, caption-weight
-/// section labels, secondary text for status detail).
+/// The menu bar popover: a header combining identity, live status, and the
+/// master toggle (Control Center style), grouped device/model pickers, and
+/// a utility footer. Spacing and typography follow macOS menu bar app
+/// conventions (14 pt content margins, caption-weight section labels,
+/// secondary text for status detail).
 struct MenuView: View {
     @ObservedObject var state: AppState
 
@@ -13,9 +14,6 @@ struct MenuView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            Divider()
-                .padding(.horizontal, contentPadding)
-            mainToggle
             Divider()
                 .padding(.horizontal, contentPadding)
             pickers
@@ -43,6 +41,14 @@ struct MenuView: View {
                 ProgressView()
                     .controlSize(.small)
             }
+            Toggle("Noise cancellation", isOn: Binding(
+                get: { state.isEnabled },
+                set: { state.setEnabled($0) }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .disabled(state.isBusy)
         }
         .padding(.horizontal, contentPadding)
         .padding(.top, 12)
@@ -67,25 +73,6 @@ struct MenuView: View {
         case .failed:
             .red
         }
-    }
-
-    private var mainToggle: some View {
-        Toggle(isOn: Binding(
-            get: { state.isEnabled },
-            set: { state.setEnabled($0) }
-        )) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Noise Cancellation")
-                Text("Cleans the microphone into the virtual device")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .toggleStyle(.switch)
-        .controlSize(.small)
-        .disabled(state.isBusy)
-        .padding(.horizontal, contentPadding)
-        .padding(.vertical, 10)
     }
 
     private var pickers: some View {
