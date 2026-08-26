@@ -28,6 +28,14 @@ enum EngineMode: String, CaseIterable, Identifiable {
         case .on: "On"
         }
     }
+
+    var symbolName: String {
+        switch self {
+        case .off: "power"
+        case .preview: "headphones"
+        case .on: "waveform"
+        }
+    }
 }
 
 @MainActor
@@ -38,10 +46,15 @@ final class AppState: ObservableObject {
     @Published private(set) var mode: EngineMode = .off
     @Published private(set) var isBusy = false
     @Published private(set) var phase: EnginePhase = .off
-    /// Last preview failure (loopback/speaker refusal, feedback trip, …),
-    /// shown in the monitoring section. Preview failures never affect the
-    /// engine phase: the meeting-facing path keeps running.
+    /// Last preview failure (start failure, feedback trip, …), shown
+    /// under the mode control. Preview failures never affect the engine
+    /// phase: the meeting-facing path keeps running.
     @Published private(set) var previewError: String?
+    /// Why the current system default output must not receive the
+    /// preview, or nil when Preview may start. Non-nil disables the
+    /// Preview segment up front (with this text as the explanation), so
+    /// selecting an unsafe target is prevented instead of failed.
+    @Published private(set) var previewUnavailableReason: String?
     /// Peak meters, refreshed by `pollLevels()` only while the popover is
     /// open. Independent of the Preview state: they move whenever the
     /// engine runs.
@@ -76,6 +89,8 @@ final class AppState: ObservableObject {
             selectedModel = models.first?.id ?? ""
         }
         registerDeviceListener()
+        registerDefaultOutputListener()
+        refreshPreviewAvailability()
     }
 
     /// Follows device hot-plug: refreshes the picker automatically and stops
@@ -102,6 +117,7 @@ final class AppState: ObservableObject {
     private func handleDevicesChanged() {
         let runningInputUID = selectedInputUID
         refreshDevices()
+        refreshPreviewAvailability()
         guard mode != .off, !isBusy else {
             return
         }
@@ -149,6 +165,13 @@ final class AppState: ObservableObject {
             return
         }
         previewError = nil
+        if newMode == .preview, let reason = RustEngine.monitorTargetError {
+            // Refuse in place (a race guard: the Preview segment is
+            // normally already disabled with this reason shown). Neither
+            // the mode nor the engine changes.
+            previewUnavailableReason = reason
+            return
+        }
         let previous = mode
         mode = newMode
         switch (previous, newMode) {
@@ -157,9 +180,9 @@ final class AppState: ObservableObject {
         case (_, .off):
             stop()
         case (.on, .preview):
-            applyMonitor(true, engine: engine)
+            applyMonitor(true, engine: engine, fallback: .on)
         case (.preview, .on):
-            applyMonitor(false, engine: engine)
+            applyMonitor(false, engine: engine, fallback: .preview)
         default:
             break
         }
@@ -167,10 +190,18 @@ final class AppState: ObservableObject {
 
     /// Runs while the menu popover is visible (bound to the menu view's
     /// task) and stops when it closes: ~20 Hz, two non-blocking atomic
-    /// reads per tick.
+    /// reads per tick, plus a preview-availability re-check about once
+    /// per second (the default-output listener misses same-device
+    /// data-source flips such as the headphone jack).
     func pollLevels() async {
+        refreshPreviewAvailability()
+        var ticks = 0
         while !Task.isCancelled {
             refreshLevels()
+            ticks += 1
+            if ticks.isMultiple(of: 20) {
+                refreshPreviewAvailability()
+            }
             try? await Task.sleep(for: .milliseconds(50))
         }
     }
@@ -184,49 +215,6 @@ final class AppState: ObservableObject {
         inputLevel = engine.inputLevel
         outputLevel = engine.outputLevel
         checkMonitorTrip()
-    }
-
-    /// Sends the monitor toggle to the engine off the main actor,
-    /// serialized like every other engine transition: `isBusy` blocks
-    /// concurrent mode changes (and the pollers' engine calls) until the
-    /// outcome is reconciled, so rapid taps can never leave the published
-    /// mode disagreeing with the actual monitor state.
-    private func applyMonitor(_ enabled: Bool, engine: RustEngine) {
-        isBusy = true
-        phase = .busy(enabled ? "Starting preview…" : "Stopping preview…")
-        Task.detached {
-            let result = Result { try engine.setMonitor(enabled) }
-            await self.finishMonitorChange(result, engine: engine)
-        }
-    }
-
-    private func finishMonitorChange(_ result: Result<Void, Error>, engine: RustEngine) {
-        isBusy = false
-        guard mode != .off else {
-            return
-        }
-        // Reconcile with the engine's actual monitor state on every
-        // completion — success or failure — so the segmented control
-        // never lies about what is audible.
-        mode = engine.isMonitoring ? .preview : .on
-        phase = .running
-        if case let .failure(error) = result {
-            previewError = error.localizedDescription
-        }
-    }
-
-    /// Reacts to the engine-side feedback killswitch: the worker already
-    /// silenced the preview, so release the playback device and tell the
-    /// user why (the mode falls back to On when the monitor is torn
-    /// down). Checked lock-free at 20 Hz while the popover is open and at
-    /// 1 Hz by the health poll, in any running mode — a trip is handled
-    /// even if a transition already moved the mode off Preview.
-    private func checkMonitorTrip() {
-        guard mode != .off, !isBusy, let engine, engine.monitorTripped else {
-            return
-        }
-        previewError = "Preview stopped itself: feedback detected. Use headphones, then select Preview again."
-        applyMonitor(false, engine: engine)
     }
 
     func applySelectedModel() {
@@ -308,9 +296,10 @@ final class AppState: ObservableObject {
             startFaultPolling()
             // Preview mode is engine + monitor; the monitor half starts
             // once the transport is up, keeping `isBusy` until its
-            // outcome is reconciled.
+            // outcome is reconciled. A failure rolls back to Off — the
+            // engine was started only for this preview.
             if monitor, let engine {
-                applyMonitor(true, engine: engine)
+                applyMonitor(true, engine: engine, fallback: .off)
             } else {
                 isBusy = false
                 phase = .running
@@ -325,13 +314,19 @@ final class AppState: ObservableObject {
     }
 
     private func stop() {
+        stopEngine()
+        phase = .off
+    }
+
+    /// Tears the engine down and returns the mode to Off. Deliberately
+    /// leaves `previewError` alone: user-initiated transitions clear it
+    /// in `setMode`, while a preview rollback keeps its reason visible.
+    private func stopEngine() {
         stopFaultPolling()
         engine?.stop()
         aggregate.destroy()
         mode = .off
         activeModelID = nil
-        previewError = nil
-        phase = .off
     }
 
     private func startFaultPolling() {
@@ -380,12 +375,104 @@ final class AppState: ObservableObject {
     }
 
     private func stopWithError(_ message: String) {
-        stopFaultPolling()
-        engine?.stop()
-        aggregate.destroy()
-        mode = .off
-        activeModelID = nil
+        stopEngine()
         previewError = nil
         phase = .failed(message)
+    }
+}
+
+// MARK: - Preview monitor control
+
+extension AppState {
+    /// Sends the monitor toggle to the engine off the main actor,
+    /// serialized like every other engine transition: `isBusy` blocks
+    /// concurrent mode changes (and the pollers' engine calls) until the
+    /// outcome is reconciled, so rapid taps can never leave the published
+    /// mode disagreeing with the actual monitor state.
+    ///
+    /// `fallback` is the pre-transition mode to return to when the
+    /// toggle fails: `.on` keeps the engine running, `.off` rolls the
+    /// whole start back (the engine was started only for this preview).
+    private func applyMonitor(_ enabled: Bool, engine: RustEngine, fallback: EngineMode) {
+        isBusy = true
+        phase = .busy(enabled ? "Starting preview…" : "Stopping preview…")
+        Task.detached {
+            let result = Result { try engine.setMonitor(enabled) }
+            await self.finishMonitorChange(result, engine: engine, fallback: fallback)
+        }
+    }
+
+    private func finishMonitorChange(
+        _ result: Result<Void, Error>,
+        engine: RustEngine,
+        fallback: EngineMode
+    ) {
+        isBusy = false
+        guard mode != .off else {
+            return
+        }
+        switch result {
+        case .success:
+            // Reconcile with the engine's actual monitor state so the
+            // mode control never lies about what is audible.
+            mode = engine.isMonitoring ? .preview : .on
+            phase = .running
+        case let .failure(error):
+            previewError = error.localizedDescription
+            if fallback == .off {
+                // Return to exactly the pre-transition state; the reason
+                // stays visible under the mode control.
+                stopEngine()
+                phase = .off
+            } else {
+                mode = engine.isMonitoring ? .preview : fallback
+                phase = .running
+            }
+        }
+    }
+
+    /// Reacts to the engine-side feedback killswitch: the worker already
+    /// silenced the preview, so release the playback device and tell the
+    /// user why (the mode falls back to On when the monitor is torn
+    /// down). Checked lock-free at 20 Hz while the popover is open and at
+    /// 1 Hz by the health poll, in any running mode — a trip is handled
+    /// even if a transition already moved the mode off Preview.
+    private func checkMonitorTrip() {
+        guard mode != .off, !isBusy, let engine, engine.monitorTripped else {
+            return
+        }
+        previewError = "Preview stopped itself: feedback detected. Use headphones, then select Preview again."
+        applyMonitor(false, engine: engine, fallback: .on)
+    }
+
+    /// Re-evaluates whether the current system default output may receive
+    /// the preview, driving the Preview segment's enabled state and its
+    /// explanation caption. Called from the default-output listener,
+    /// device hot-plug, popover polling, and launch.
+    private func refreshPreviewAvailability() {
+        let reason = RustEngine.monitorTargetError
+        if reason != previewUnavailableReason {
+            previewUnavailableReason = reason
+        }
+    }
+
+    /// Follows default-output changes so the Preview segment's enabled
+    /// state updates the moment the user switches devices.
+    private func registerDefaultOutputListener() {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        _ = AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            DispatchQueue.main
+        ) { [weak self] _, _ in
+            // Delivered on the main queue, which is the main actor.
+            MainActor.assumeIsolated {
+                self?.refreshPreviewAvailability()
+            }
+        }
     }
 }

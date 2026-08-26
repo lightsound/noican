@@ -65,6 +65,16 @@ final class RustEngine: @unchecked Sendable {
         noican_engine_monitor_tripped(handle) != 0
     }
 
+    /// Reason the current system default output must not receive the
+    /// preview (loopback, aggregate, or built-in speakers), or nil when
+    /// preview may start. A pure inspection — a few Core Audio property
+    /// reads, no audio objects — so it is cheap to poll.
+    static var monitorTargetError: String? {
+        copyString { buffer, capacity in
+            noican_monitor_target_error(buffer, capacity)
+        }
+    }
+
     /// Decayed linear peak (0–1) of the model input, measured per 10 ms
     /// block by the inference worker; 0 while stopped. Reads one atomic —
     /// never blocks, so it is safe to poll from the UI.
