@@ -9,7 +9,7 @@ struct NoicanMenuBarApp: App {
             MenuView(state: state)
         } label: {
             Label(
-                "noican",
+                "Noican",
                 systemImage: state.isEnabled ? "waveform.badge.mic" : "mic.slash"
             )
         }

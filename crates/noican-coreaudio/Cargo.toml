@@ -1,6 +1,6 @@
 [package]
 name = "noican-coreaudio"
-description = "AUHAL real-time transport between a private Aggregate Device and the noican engine"
+description = "AUHAL real-time transport between a private Aggregate Device and the Noican engine"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

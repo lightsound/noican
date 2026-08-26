@@ -130,7 +130,7 @@ final class AppState: ObservableObject {
             return
         }
         guard let virtualOutput = AudioDeviceCatalog.virtualOutput(in: allDevices) else {
-            phase = .failed("Install the noican or BlackHole virtual device")
+            phase = .failed("Install the Noican or BlackHole virtual device")
             return
         }
         let model = selectedModel

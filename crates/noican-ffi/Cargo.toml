@@ -1,6 +1,6 @@
 [package]
 name = "noican-ffi"
-description = "C ABI for the noican menu bar control plane"
+description = "C ABI for the Noican menu bar control plane"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

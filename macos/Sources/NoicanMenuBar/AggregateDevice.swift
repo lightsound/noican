@@ -28,7 +28,7 @@ final class AggregateDevice: @unchecked Sendable {
             ]
         ]
         let description: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "noican Private Aggregate",
+            kAudioAggregateDeviceNameKey: "Noican Private Aggregate",
             kAudioAggregateDeviceUIDKey: "com.lightsound.noican.aggregate.\(UUID().uuidString)",
             kAudioAggregateDeviceMainSubDeviceKey: input.uid,
             kAudioAggregateDeviceClockDeviceKey: input.uid,

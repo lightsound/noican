@@ -28,7 +28,7 @@ struct MenuView: View {
         HStack(alignment: .center, spacing: 10) {
             statusIndicator
             VStack(alignment: .leading, spacing: 2) {
-                Text("noican")
+                Text("Noican")
                     .font(.headline)
                 Text(state.statusText)
                     .font(.caption)

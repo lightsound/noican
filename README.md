@@ -1,4 +1,4 @@
-# noican
+# Noican
 
 A personal, fully on-device noise-cancelling virtual microphone for macOS, in the spirit of [JoyCast](https://joycast.ai/).
 
@@ -46,7 +46,7 @@ afconvert -f WAVE -d LEI16@48000 input.aifc output.wav
 ```sh
 # Requires: Apple Silicon, Rust target aarch64-apple-darwin, Swift 6.1+,
 # and the stock BlackHole 2ch virtual device (Phase 0).
-bash scripts/build-macos-app.sh   # produces dist/noican.app
+bash scripts/build-macos-app.sh   # produces dist/Noican.app
 ```
 
 See [docs/macos-hardware-test.md](docs/macos-hardware-test.md) for the

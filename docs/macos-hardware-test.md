@@ -23,7 +23,7 @@ incarnation; the hybrid build (C engine + B transport) must be re-accepted.
 - Swift 6.1 or newer and SwiftLint.
 - A Developer ID Application identity for a distributable app build.
 - Stock BlackHole 2ch for Phase 0, or the separately built and
-  Developer-ID-signed noican BlackHole fork (Phase 1).
+  Developer-ID-signed Noican BlackHole fork (Phase 1).
 - Headphones. Phase 0 has no AEC and must not be evaluated through speakers.
 
 The BlackHole-derived driver is GPL-3.0 and remains a separate program. Do
@@ -50,13 +50,13 @@ NOICAN_CODESIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
   bash scripts/build-macos-app.sh
 ```
 
-Expected artifact: `dist/noican.app`.
+Expected artifact: `dist/Noican.app`.
 
 Validate it:
 
 ```bash
-codesign --verify --deep --strict --verbose=2 dist/noican.app
-codesign --display --verbose=4 dist/noican.app
+codesign --verify --deep --strict --verbose=2 dist/Noican.app
+codesign --display --verbose=4 dist/Noican.app
 ```
 
 The app is a UI agent (`LSUIElement`) and therefore has no Dock icon.
@@ -87,7 +87,7 @@ NOICAN_MODELS_DIR="$HOME/Library/Application Support/noican/models" \
 3. Open Audio MIDI Setup and confirm a two-channel 48 kHz virtual device
    appears.
 4. Confirm the device has both output and input streams and can loop a test
-   signal before involving noican.
+   signal before involving Noican.
 5. For a self-built driver (Phase 1 and later), record the bundle signature:
 
    ```bash
@@ -100,7 +100,7 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
 ## Functional test
 
 1. Connect wired headphones.
-2. Launch `dist/noican.app`.
+2. Launch `dist/Noican.app`.
 3. Confirm the menu bar popover shows:
    - the status header with a state indicator,
    - the Noise Cancellation toggle,
@@ -111,7 +111,7 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
 4. Select a physical microphone and `FastEnhancer-B 48k`.
 5. Enable the toggle and grant microphone access when macOS prompts.
 6. Confirm status changes to `Running · FastEnhancer-B 48k`.
-7. In QuickTime, OBS, or a meeting app, select the BlackHole/noican virtual
+7. In QuickTime, OBS, or a meeting app, select the BlackHole/Noican virtual
    device as the microphone.
 8. Record at least 30 seconds containing speech, steady fan noise, and
    keyboard noise.
@@ -183,7 +183,7 @@ acceptance test for Aggregate Device drift compensation.
 
 1. Use a physical USB microphone where possible, because its clock is
    clearly independent from BlackHole.
-2. Run a continuous two-hour recording through noican.
+2. Run a continuous two-hour recording through Noican.
 3. Speak or play a short reference tone every five minutes.
 4. Inspect the entire file for discontinuities and measure reference-tone
    spacing.

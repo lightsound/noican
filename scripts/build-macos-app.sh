@@ -12,7 +12,7 @@ case "$CONFIGURATION" in
   release|debug) ;;
   *) echo "CONFIGURATION must be 'release' or 'debug', got '$CONFIGURATION'" >&2; exit 1 ;;
 esac
-APP="$ROOT/dist/noican.app"
+APP="$ROOT/dist/Noican.app"
 
 cargo build \
   --manifest-path "$ROOT/Cargo.toml" \

@@ -1,4 +1,4 @@
-//! Core audio-processing abstractions for the noican engine.
+//! Core audio-processing abstractions for the Noican engine.
 //!
 //! This crate is platform-independent and free of inference-runtime
 //! dependencies. It defines the common stage interface that every

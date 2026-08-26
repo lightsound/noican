@@ -107,4 +107,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: noican-macos-arm64
-          path: dist/noican.app
+          path: dist/Noican.app
