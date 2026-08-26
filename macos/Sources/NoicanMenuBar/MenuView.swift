@@ -31,6 +31,11 @@ struct MenuView: View {
             footer
         }
         .frame(width: 320)
+        // Ease the layout when status text or sections change height, so
+        // the mode control glides instead of jumping (its sliding pill is
+        // additionally isolated via geometryGroup in ModePicker).
+        .animation(.easeOut(duration: 0.15), value: state.phase)
+        .animation(.easeOut(duration: 0.15), value: state.mode)
         // Poll the engine's peak meters (and the feedback-trip flag) only
         // while the popover is open; the task is cancelled when the view
         // disappears.
