@@ -121,18 +121,16 @@ struct MenuView: View {
     /// Live observation of the running stream: input (pre-model) and
     /// output (post-model) peak bars on a shared dB scale — speech moves
     /// both; noise-only passages leave the output bar clearly below the
-    /// input bar, showing the suppression at a glance. The headphone
-    /// warning appears only while previewing.
+    /// input bar, showing the suppression at a glance.
+    ///
+    /// No persistent headphone warning: its job is done by code — unsafe
+    /// outputs are refused on press with the reason shown, and actual
+    /// feedback through an unclassifiable output trips the killswitch,
+    /// which also explains itself.
     private var monitoring: some View {
         VStack(alignment: .leading, spacing: 6) {
             LevelBar(label: "In", level: state.inputLevel, tint: .secondary)
             LevelBar(label: "Out", level: state.outputLevel, tint: .green)
-            if state.mode == .preview {
-                Text("Playing your processed voice on the default output. Use headphones — speakers will feed back.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
         .padding(.horizontal, contentPadding)
         .padding(.vertical, 10)
