@@ -97,7 +97,12 @@ struct MenuView: View {
                     .foregroundStyle(.secondary)
                 Picker("Model", selection: $state.selectedModel) {
                     ForEach(state.models) { model in
-                        Text(modelLabel(model)).tag(model.id)
+                        Text(modelLabel(model))
+                            .tag(model.id)
+                            // Enrollment-gated models (tse-48k) stay visible
+                            // but unselectable until the app grows an
+                            // enrollment flow.
+                            .selectionDisabled(model.needsEnrollment)
                     }
                 }
                 .labelsHidden()
