@@ -30,10 +30,10 @@ use std::{
 };
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicI32, Ordering};
 
 use noican_core::{Stage, StagePublisher, SwitchingEngine};
-use noican_coreaudio::{Runtime, StreamLevels, WORKER_BLOCK_SAMPLES};
+use noican_coreaudio::{Runtime, StreamLevels, WORKER_BLOCK_SAMPLES, monitor::MonitorState};
 use noican_models::{CatalogEntry, ModelSpec, StageOptions};
 
 const SUCCESS: i32 = 0;
@@ -60,11 +60,13 @@ struct EngineHandle {
     /// The worker resets it to silence on start and exit, so readers see
     /// 0 whenever the engine is stopped.
     levels: Arc<StreamLevels>,
-    /// Feedback-trip flag shared with each runtime's monitor. Kept
-    /// outside the control mutex for the same reason as `levels`: the UI
-    /// polls it at 20 Hz and must never wait on a slow monitor start.
-    /// Cleared by every monitor toggle and on runtime (re)start.
-    monitor_tripped: Arc<AtomicBool>,
+    /// The [`MonitorState`] cell shared with each runtime's monitor
+    /// control and inference worker. Kept outside the control mutex for
+    /// the same reason as `levels`: the UI polls it at 20 Hz and must
+    /// never wait on a slow monitor start. Monitor toggles move it
+    /// between off and playing, the worker's feedback guard moves it to
+    /// tripped, and it reads off whenever no runtime is up.
+    monitor_state: Arc<AtomicI32>,
 }
 
 fn default_models_dir() -> PathBuf {
@@ -107,7 +109,7 @@ pub unsafe extern "C" fn noican_engine_create(models_directory: *const c_char) -
             epoch: 0,
         }),
         levels: Arc::new(StreamLevels::new()),
-        monitor_tripped: Arc::new(AtomicBool::new(false)),
+        monitor_state: Arc::new(AtomicI32::new(MonitorState::Off.as_raw())),
     });
     Box::into_raw(handle).cast()
 }
@@ -172,13 +174,13 @@ pub unsafe extern "C" fn noican_engine_start(
 
     // Slow work, unlocked: download/construct the stage, start the runtime.
     let levels = Arc::clone(&handle.levels);
-    let monitor_tripped = Arc::clone(&handle.monitor_tripped);
+    let monitor_state = Arc::clone(&handle.monitor_state);
     let built = guard_panics(&model, || {
         let stage = prepare_stage(&models_dir, &model)?;
         let (publisher, engine) =
             SwitchingEngine::new(stage, SWITCH_FADE_SAMPLES, WORKER_BLOCK_SAMPLES)
                 .map_err(|error| error.to_string())?;
-        let runtime = Runtime::start(aggregate_device, engine, levels, monitor_tripped)
+        let runtime = Runtime::start(aggregate_device, engine, levels, monitor_state)
             .map_err(|error| error.to_string())?;
         Ok((publisher, runtime))
     });
@@ -338,7 +340,9 @@ pub unsafe extern "C" fn noican_engine_is_faulted(handle: *const c_void) -> i32 
 /// the control lock for the monitor start/stop transition — starting an
 /// output device can take a moment, so callers should serialize their own
 /// control calls behind a busy flag while a toggle is in flight (the
-/// level and trip getters stay lock-free and are always safe to poll).
+/// level and monitor-state getters stay lock-free and are always safe to
+/// poll). A toggle in either direction clears a pending feedback trip
+/// (see [`noican_engine_monitor_state`]).
 ///
 /// # Safety
 ///
@@ -459,29 +463,18 @@ pub unsafe extern "C" fn noican_engine_monitor_device(handle: *const c_void) -> 
     })
 }
 
-/// Returns 1 while the preview self-monitor is playing, otherwise 0.
+/// The preview monitor's state as one value.
 ///
-/// # Safety
+/// 0 = off (no monitor AUHAL, including a stopped engine and a null
+/// handle), 1 = playing, 2 = tripped. The protocol lives in the
+/// [`MonitorState`] enum shared with the engine — including that
+/// *tripped* means the monitor AUHAL is still up but silenced (the
+/// feedback guard disarmed the tee), and that the next
+/// `noican_engine_set_monitor` call in either direction clears it
+/// (enable re-arms, disable tears down).
 ///
-/// `handle` must be null or a live engine handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn noican_engine_is_monitoring(handle: *const c_void) -> i32 {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
-        return 0;
-    };
-    handle.state.lock().map_or(0, |state| {
-        i32::from(state.runtime.as_ref().is_some_and(Runtime::is_monitoring))
-    })
-}
-
-/// Returns 1 when the feedback guard auto-stopped the preview tee
-/// (sustained near-clipping monitor output — the preview was feeding back
-/// into the microphone) since the last monitor toggle, otherwise 0.
-///
-/// On 1, callers should disable the monitor (`noican_engine_set_monitor`
-/// with 0) to release the playback device and tell the user why; the
-/// meeting-facing path is unaffected. The flag clears on the next monitor
-/// toggle in either direction and on engine (re)start.
+/// On 2, callers should disable the monitor to release the playback
+/// device and tell the user why; the meeting-facing path is unaffected.
 ///
 /// Reads one atomic without taking the control lock, so it never blocks —
 /// safe to poll at UI rates even while a monitor start is in progress.
@@ -490,11 +483,11 @@ pub unsafe extern "C" fn noican_engine_is_monitoring(handle: *const c_void) -> i
 ///
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn noican_engine_monitor_tripped(handle: *const c_void) -> i32 {
+pub unsafe extern "C" fn noican_engine_monitor_state(handle: *const c_void) -> i32 {
     let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
-        return 0;
+        return MonitorState::Off.as_raw();
     };
-    i32::from(handle.monitor_tripped.load(Ordering::Acquire))
+    MonitorState::from_raw(handle.monitor_state.load(Ordering::Acquire)).as_raw()
 }
 
 /// Heartbeat: total input frames delivered since the engine started.
@@ -784,18 +777,62 @@ mod tests {
     fn monitor_calls_are_safe_while_stopped() {
         let handle = unsafe { noican_engine_create(ptr::null()) };
         assert!(!handle.is_null());
-        assert_eq!(unsafe { noican_engine_is_monitoring(handle) }, 0);
+        assert_eq!(
+            unsafe { noican_engine_monitor_state(handle) },
+            MonitorState::Off.as_raw()
+        );
         // Disabling an already-off monitor is an idempotent no-op.
         assert_eq!(unsafe { noican_engine_set_monitor(handle, 0) }, SUCCESS);
-        // Enabling without a running engine fails with a clear reason.
+        assert_eq!(
+            unsafe { noican_engine_monitor_state(handle) },
+            MonitorState::Off.as_raw()
+        );
+        // Enabling without a running engine fails with a clear reason and
+        // leaves the state off.
         assert_eq!(unsafe { noican_engine_set_monitor(handle, 1) }, FAILURE);
         let error = read_string(|buffer, capacity| unsafe {
             noican_engine_last_error(handle, buffer, capacity)
         })
         .expect("enable failure records an error");
         assert!(error.contains("not running"), "unhelpful message: {error}");
-        assert_eq!(unsafe { noican_engine_is_monitoring(handle) }, 0);
-        assert_eq!(unsafe { noican_engine_monitor_tripped(handle) }, 0);
+        assert_eq!(
+            unsafe { noican_engine_monitor_state(handle) },
+            MonitorState::Off.as_raw()
+        );
+        unsafe { noican_engine_destroy(handle) };
+    }
+
+    #[test]
+    fn monitor_state_getter_is_null_safe_and_lock_free_under_state_changes() {
+        // Null handles read as off.
+        assert_eq!(
+            unsafe { noican_engine_monitor_state(ptr::null()) },
+            MonitorState::Off.as_raw()
+        );
+        // The getter reflects every protocol value written to the shared
+        // cell (as the monitor control and the worker's trip do), and
+        // maps unknown values back to off instead of leaking them.
+        let handle = unsafe { noican_engine_create(ptr::null()) };
+        assert!(!handle.is_null());
+        let engine = unsafe { &*handle.cast::<EngineHandle>() };
+        for state in [
+            MonitorState::Playing,
+            MonitorState::Tripped,
+            MonitorState::Off,
+        ] {
+            engine
+                .monitor_state
+                .store(state.as_raw(), Ordering::Release);
+            assert_eq!(
+                unsafe { noican_engine_monitor_state(handle) },
+                state.as_raw()
+            );
+        }
+        engine.monitor_state.store(99, Ordering::Release);
+        assert_eq!(
+            unsafe { noican_engine_monitor_state(handle) },
+            MonitorState::Off.as_raw()
+        );
         unsafe { noican_engine_destroy(handle) };
     }
 

@@ -10,15 +10,61 @@
 //!
 //! Real-time rules (docs/tech-research.md §9): [`MonitorTee::feed`] runs
 //! on the inference worker between device callbacks — no allocation, no
-//! locks; the gate flags are plain atomics and samples go into a
-//! preallocated lock-free ring.
+//! locks; the gate is one plain atomic ([`MonitorState`]) and samples go
+//! into a preallocated lock-free ring.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicI32, Ordering};
 
 use rtrb::Producer;
 
 use crate::CoreAudioError;
+
+/// Preview monitor state: the single lock-free protocol value.
+///
+/// Shared by the control plane (which arms and disarms), the inference
+/// worker (which trips), and the UI (which polls at 20 Hz). One
+/// `AtomicI32` holds it, so no reader ever waits on the control mutex —
+/// including while a slow monitor start holds it.
+///
+/// The values cross the C ABI verbatim
+/// (`noican_engine_monitor_state`), so the discriminants are fixed.
+#[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MonitorState {
+    /// No preview is playing: the engine is stopped, the preview was
+    /// never enabled, or a disable tore the monitor AUHAL down.
+    #[default]
+    Off = 0,
+    /// The monitor AUHAL is up and the worker tees processed audio into
+    /// its ring.
+    Playing = 1,
+    /// The feedback guard tripped: the monitor AUHAL is *still up* but
+    /// the tee is disarmed, so it renders silence. The next
+    /// `set_monitor` toggle in either direction clears this — enable
+    /// re-arms the same AUHAL back to [`MonitorState::Playing`], disable
+    /// tears it down to [`MonitorState::Off`].
+    Tripped = 2,
+}
+
+impl MonitorState {
+    /// Decodes a raw atomic/C-ABI value; anything unknown reads as
+    /// [`MonitorState::Off`] (the safe interpretation for a poller).
+    #[must_use]
+    pub const fn from_raw(raw: i32) -> Self {
+        match raw {
+            1 => Self::Playing,
+            2 => Self::Tripped,
+            _ => Self::Off,
+        }
+    }
+
+    /// The C-ABI value of this state.
+    #[must_use]
+    pub const fn as_raw(self) -> i32 {
+        self as i32
+    }
+}
 
 /// Monitor ring capacity: 100 ms at 48 kHz.
 ///
@@ -164,50 +210,44 @@ impl HowlGuard {
 
 /// The inference worker's half of the preview monitor.
 ///
-/// Owns the ring producer, the lock-free gate flags shared with the
-/// control plane, and the feedback guard together, so the worker calls
-/// one method per block.
+/// Owns the ring producer, the shared lock-free [`MonitorState`] cell,
+/// and the feedback guard together, so the worker calls one method per
+/// block.
 #[derive(Debug)]
 pub struct MonitorTee {
     producer: Producer<f32>,
-    /// Armed/disarmed by the control plane; cleared here on a trip.
-    enabled: Arc<AtomicBool>,
-    /// Raised here on a trip; cleared by the control plane on the next
-    /// monitor toggle in either direction.
-    tripped: Arc<AtomicBool>,
+    /// The shared [`MonitorState`] cell: armed/disarmed by the control
+    /// plane; moved to [`MonitorState::Tripped`] here on a trip.
+    state: Arc<AtomicI32>,
     howl: HowlGuard,
 }
 
 impl MonitorTee {
     /// Bundles the worker half around a preallocated ring producer and
-    /// the flags shared with the control plane.
+    /// the [`MonitorState`] cell shared with the control plane.
     #[must_use]
-    pub const fn new(
-        producer: Producer<f32>,
-        enabled: Arc<AtomicBool>,
-        tripped: Arc<AtomicBool>,
-    ) -> Self {
+    pub const fn new(producer: Producer<f32>, state: Arc<AtomicI32>) -> Self {
         Self {
             producer,
-            enabled,
-            tripped,
+            state,
             howl: HowlGuard::new(),
         }
     }
 
-    /// Feeds one processed block into the monitor ring when armed,
-    /// without blocking.
+    /// Feeds one processed block into the monitor ring when the shared
+    /// state reads [`MonitorState::Playing`], without blocking.
     ///
     /// Ring overrun (a monitor device draining slower than the engine
     /// clock) silently discards the overflowing samples: preview
     /// tolerates minor artifacts and must never push back on the
     /// meeting-facing path. When the fed audio holds near clipping long
-    /// enough for the [`HowlGuard`] to trip, the tee disarms itself
-    /// immediately and raises the tripped flag for the control plane.
-    /// While disarmed the ring is not touched at all. Returns whether the
-    /// block was teed, so both branches are observable in tests.
+    /// enough for the [`HowlGuard`] to trip, the tee moves the shared
+    /// state to [`MonitorState::Tripped`] — one store that both disarms
+    /// this tee and tells the control plane why. While disarmed the ring
+    /// is not touched at all. Returns whether the block was teed, so
+    /// both branches are observable in tests.
     pub fn feed(&mut self, block: &[f32]) -> bool {
-        if !self.enabled.load(Ordering::Acquire) {
+        if MonitorState::from_raw(self.state.load(Ordering::Acquire)) != MonitorState::Playing {
             self.howl.reset();
             return false;
         }
@@ -215,8 +255,8 @@ impl MonitorTee {
             let _overrun_discards = self.producer.push(sample);
         }
         if self.howl.observe(block) {
-            self.enabled.store(false, Ordering::Release);
-            self.tripped.store(true, Ordering::Release);
+            self.state
+                .store(MonitorState::Tripped.as_raw(), Ordering::Release);
         }
         true
     }
@@ -228,29 +268,43 @@ mod tests {
 
     use super::*;
 
+    fn read_state(state: &Arc<AtomicI32>) -> MonitorState {
+        MonitorState::from_raw(state.load(Ordering::Acquire))
+    }
+
     fn tee(
         capacity: usize,
-        enabled: bool,
-    ) -> (
-        MonitorTee,
-        rtrb::Consumer<f32>,
-        Arc<AtomicBool>,
-        Arc<AtomicBool>,
-    ) {
+        initial: MonitorState,
+    ) -> (MonitorTee, rtrb::Consumer<f32>, Arc<AtomicI32>) {
         let (producer, consumer) = RingBuffer::new(capacity);
-        let enabled = Arc::new(AtomicBool::new(enabled));
-        let tripped = Arc::new(AtomicBool::new(false));
+        let state = Arc::new(AtomicI32::new(initial.as_raw()));
         (
-            MonitorTee::new(producer, Arc::clone(&enabled), Arc::clone(&tripped)),
+            MonitorTee::new(producer, Arc::clone(&state)),
             consumer,
-            enabled,
-            tripped,
+            state,
         )
     }
 
     #[test]
-    fn tee_delivers_identical_samples_when_enabled() {
-        let (mut tee, mut consumer, _enabled, _tripped) = tee(16, true);
+    fn monitor_state_round_trips_and_defaults_to_off() {
+        for state in [
+            MonitorState::Off,
+            MonitorState::Playing,
+            MonitorState::Tripped,
+        ] {
+            assert_eq!(MonitorState::from_raw(state.as_raw()), state);
+        }
+        assert_eq!(MonitorState::from_raw(-1), MonitorState::Off);
+        assert_eq!(MonitorState::from_raw(3), MonitorState::Off);
+        // The C-ABI discriminants are frozen (noican.h).
+        assert_eq!(MonitorState::Off.as_raw(), 0);
+        assert_eq!(MonitorState::Playing.as_raw(), 1);
+        assert_eq!(MonitorState::Tripped.as_raw(), 2);
+    }
+
+    #[test]
+    fn tee_delivers_identical_samples_when_playing() {
+        let (mut tee, mut consumer, _state) = tee(16, MonitorState::Playing);
         let block = [0.1_f32, -0.5, 0.25, 1.0];
         assert!(tee.feed(&block));
         for &expected in &block {
@@ -261,15 +315,20 @@ mod tests {
     }
 
     #[test]
-    fn tee_is_skipped_when_disabled() {
-        let (mut tee, mut consumer, _enabled, _tripped) = tee(16, false);
-        assert!(!tee.feed(&[0.5, -0.5]));
-        assert!(consumer.pop().is_err(), "disarmed tee must not write");
+    fn tee_is_skipped_unless_playing() {
+        for gate in [MonitorState::Off, MonitorState::Tripped] {
+            let (mut idle_tee, mut consumer, _state) = tee(16, gate);
+            assert!(!idle_tee.feed(&[0.5, -0.5]));
+            assert!(
+                consumer.pop().is_err(),
+                "a tee gated by {gate:?} must not write"
+            );
+        }
     }
 
     #[test]
     fn tee_overrun_discards_instead_of_blocking() {
-        let (mut tee, mut consumer, _enabled, _tripped) = tee(2, true);
+        let (mut tee, mut consumer, _state) = tee(2, MonitorState::Playing);
         let block = [1.0_f32, 2.0, 3.0, 4.0];
         assert!(tee.feed(&block));
         // The first two samples fit; the overflow is dropped, not queued.
@@ -279,33 +338,43 @@ mod tests {
     }
 
     #[test]
-    fn sustained_clipping_disarms_the_tee_and_raises_the_trip_flag() {
-        let (mut tee, _consumer, enabled, tripped) = tee(4, true);
+    fn sustained_clipping_moves_the_state_to_tripped() {
+        let (mut tee, _consumer, state) = tee(4, MonitorState::Playing);
         let loud = [1.0_f32; 4];
         for _ in 0..HOWL_TRIP_BLOCKS - 1 {
             assert!(tee.feed(&loud));
-            assert!(!tripped.load(Ordering::Acquire), "below the trip length");
+            assert_eq!(
+                read_state(&state),
+                MonitorState::Playing,
+                "below the trip length"
+            );
         }
         assert!(tee.feed(&loud), "the tripping block itself is still teed");
-        assert!(tripped.load(Ordering::Acquire), "trip flag raised");
-        assert!(!enabled.load(Ordering::Acquire), "tee disarmed itself");
+        assert_eq!(
+            read_state(&state),
+            MonitorState::Tripped,
+            "the single store both disarms and reports"
+        );
         assert!(!tee.feed(&loud), "no further blocks are teed");
     }
 
     #[test]
     fn rearming_after_a_trip_requires_a_fresh_sustained_run() {
-        let (mut tee, _consumer, enabled, tripped) = tee(4, true);
+        let (mut tee, _consumer, state) = tee(4, MonitorState::Playing);
         let loud = [1.0_f32; 4];
         for _ in 0..HOWL_TRIP_BLOCKS {
             let _teed = tee.feed(&loud);
         }
-        assert!(tripped.load(Ordering::Acquire));
+        assert_eq!(read_state(&state), MonitorState::Tripped);
         // Control plane re-arms (as Runtime::set_monitor(true) does).
-        tripped.store(false, Ordering::Release);
-        enabled.store(true, Ordering::Release);
+        state.store(MonitorState::Playing.as_raw(), Ordering::Release);
         for _ in 0..HOWL_TRIP_BLOCKS - 1 {
             assert!(tee.feed(&loud));
-            assert!(!tripped.load(Ordering::Acquire), "run restarted from zero");
+            assert_eq!(
+                read_state(&state),
+                MonitorState::Playing,
+                "run restarted from zero"
+            );
         }
     }
 

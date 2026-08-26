@@ -11,14 +11,15 @@ use std::mem::size_of;
 use std::ptr;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicI32, Ordering},
 };
 
 use rtrb::{Consumer, RingBuffer};
 
 use crate::CoreAudioError;
 use crate::monitor::{
-    MONITOR_PRIME_SAMPLES, MONITOR_RING_CAPACITY, MonitorTee, classify_monitor_target, fourcc,
+    MONITOR_PRIME_SAMPLES, MONITOR_RING_CAPACITY, MonitorState, MonitorTee,
+    classify_monitor_target, fourcc,
 };
 
 use super::{
@@ -99,32 +100,30 @@ struct MonitorHandle {
 /// Control-plane owner of the preview monitor. Invariants held here:
 /// exactly one of `consumer` (parked while off) and `handle` (lent to the
 /// running monitor AUHAL) is populated, and a feedback trip disarms the
-/// tee (`enabled`) while leaving the AUHAL up until the next toggle.
+/// tee (the shared [`MonitorState`] cell reads `Tripped`) while leaving
+/// the AUHAL up until the next toggle.
 #[derive(Debug)]
 pub(super) struct MonitorControl {
-    /// Tee flag shared with the worker's [`MonitorTee`]; the worker skips
-    /// its monitor branch entirely while this is clear.
-    enabled: Arc<AtomicBool>,
-    /// Raised by the worker's feedback guard; cleared here on every
-    /// toggle in either direction. Also read lock-free by the FFI layer,
-    /// which owns the `Arc`.
-    tripped: Arc<AtomicBool>,
+    /// The shared [`MonitorState`] cell: this control half moves it
+    /// between `Off` and `Playing`; the worker's [`MonitorTee`] gates on
+    /// it and moves it to `Tripped`. Also read lock-free by the FFI
+    /// layer, which owns the `Arc` (`noican_engine_monitor_state`).
+    state: Arc<AtomicI32>,
     consumer: Option<Consumer<f32>>,
     handle: Option<MonitorHandle>,
 }
 
 /// Creates the two halves of the preview monitor around one preallocated
 /// ring: the control half for [`super::Runtime`] and the worker half for
-/// the inference thread. Clears any stale trip left in `tripped`.
-pub(super) fn monitor_pair(tripped: Arc<AtomicBool>) -> (MonitorControl, MonitorTee) {
-    tripped.store(false, Ordering::Release);
+/// the inference thread. Resets any stale value left in `state` to
+/// [`MonitorState::Off`].
+pub(super) fn monitor_pair(state: Arc<AtomicI32>) -> (MonitorControl, MonitorTee) {
+    state.store(MonitorState::Off.as_raw(), Ordering::Release);
     let (producer, consumer) = RingBuffer::new(MONITOR_RING_CAPACITY);
-    let enabled = Arc::new(AtomicBool::new(false));
-    let tee = MonitorTee::new(producer, Arc::clone(&enabled), Arc::clone(&tripped));
+    let tee = MonitorTee::new(producer, Arc::clone(&state));
     (
         MonitorControl {
-            enabled,
-            tripped,
+            state,
             consumer: Some(consumer),
             handle: None,
         },
@@ -143,11 +142,12 @@ impl MonitorControl {
     /// AUHAL cannot start; the ring consumer is reclaimed on every error
     /// path so a later enable can retry.
     pub(super) fn enable(&mut self) -> Result<(), CoreAudioError> {
-        self.tripped.store(false, Ordering::Release);
         if self.handle.is_some() {
             // The monitor AUHAL is still up (a feedback trip only disarms
-            // the tee); re-arm it.
-            self.enabled.store(true, Ordering::Release);
+            // the tee); re-arm it — which also clears the trip, since
+            // `Playing` overwrites `Tripped` in the one shared cell.
+            self.state
+                .store(MonitorState::Playing.as_raw(), Ordering::Release);
             return Ok(());
         }
         let device = monitor_target_device()?;
@@ -164,10 +164,13 @@ impl MonitorControl {
                     context: context as usize,
                     device,
                 });
-                self.enabled.store(true, Ordering::Release);
+                self.state
+                    .store(MonitorState::Playing.as_raw(), Ordering::Release);
                 Ok(())
             }
             Err((error, consumer)) => {
+                // The AUHAL never came up, so the cell already reads
+                // `Off`; park the consumer for a retry.
                 self.consumer = Some(consumer);
                 Err(error)
             }
@@ -177,10 +180,11 @@ impl MonitorControl {
     /// Stops the monitor AUHAL (if up) and parks the ring consumer for
     /// the next enable. Idempotent.
     pub(super) fn disable(&mut self) {
-        // Clear the tee flag first so the worker stops feeding the ring
-        // before the monitor AUHAL goes away.
-        self.enabled.store(false, Ordering::Release);
-        self.tripped.store(false, Ordering::Release);
+        // Move the cell to `Off` first (also clearing a pending trip) so
+        // the worker stops feeding the ring before the monitor AUHAL
+        // goes away.
+        self.state
+            .store(MonitorState::Off.as_raw(), Ordering::Release);
         if let Some(handle) = self.handle.take() {
             let unit = handle.unit as AudioUnit;
             stop_output_unit(unit);
@@ -192,12 +196,6 @@ impl MonitorControl {
                 self.consumer = Some(context.output);
             }
         }
-    }
-
-    /// Whether the monitor AUHAL is up (including the disarmed window
-    /// after a feedback trip).
-    pub(super) const fn is_active(&self) -> bool {
-        self.handle.is_some()
     }
 
     /// Device the running monitor AUHAL plays on (resolved and vetted at

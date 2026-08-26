@@ -19,8 +19,19 @@ size_t noican_monitor_target_error(char *buffer, size_t capacity);
 size_t noican_monitor_device_error(uint32_t device, char *buffer, size_t capacity);
 int32_t noican_engine_set_monitor(void *handle, int32_t enabled);
 uint32_t noican_engine_monitor_device(const void *handle);
-int32_t noican_engine_is_monitoring(const void *handle);
-int32_t noican_engine_monitor_tripped(const void *handle);
+
+/* Preview monitor state, one lock-free read (never waits on the control
+ * lock, so it is safe at UI poll rates). TRIPPED means the feedback
+ * guard silenced the preview while the monitor AUHAL is still up; the
+ * next noican_engine_set_monitor call in either direction clears it
+ * (enable re-arms, disable tears down). Values mirror the Rust
+ * MonitorState enum and are frozen. */
+typedef enum {
+  NOICAN_MONITOR_OFF = 0,
+  NOICAN_MONITOR_PLAYING = 1,
+  NOICAN_MONITOR_TRIPPED = 2,
+} NoicanMonitorState;
+int32_t noican_engine_monitor_state(const void *handle);
 float noican_engine_input_level(const void *handle);
 float noican_engine_output_level(const void *handle);
 uint64_t noican_engine_frames_processed(const void *handle);

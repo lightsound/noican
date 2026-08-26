@@ -334,7 +334,10 @@ extension AppState {
     /// releases the playback device and explains why. Checked lock-free
     /// at 20 Hz while the popover is open and at 1 Hz by the health poll.
     private func checkMonitorTrip() {
-        guard model.mode != .off, !model.isBusy, let engine, engine.monitorTripped else {
+        guard
+            model.mode != .off, !model.isBusy, let engine,
+            engine.monitorState == .tripped
+        else {
             return
         }
         dispatch(.monitorTripped)

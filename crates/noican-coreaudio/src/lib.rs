@@ -134,7 +134,7 @@ impl Runtime {
         _aggregate_device: u32,
         _engine: SwitchingEngine,
         _levels: Arc<StreamLevels>,
-        _monitor_tripped: Arc<std::sync::atomic::AtomicBool>,
+        _monitor_state: Arc<std::sync::atomic::AtomicI32>,
     ) -> Result<Self, CoreAudioError> {
         Err(CoreAudioError::UnsupportedPlatform)
     }
@@ -149,12 +149,6 @@ impl Runtime {
     /// Always returns [`CoreAudioError::UnsupportedPlatform`].
     pub const fn set_monitor(&mut self, _enabled: bool) -> Result<(), CoreAudioError> {
         Err(CoreAudioError::UnsupportedPlatform)
-    }
-
-    /// Portable builds never run a preview monitor.
-    #[must_use]
-    pub const fn is_monitoring(&self) -> bool {
-        false
     }
 
     /// Portable builds never have a monitor device.

@@ -54,15 +54,13 @@ final class RustEngine: @unchecked Sendable {
         try requireSuccess(noican_engine_set_monitor(handle, enabled ? 1 : 0))
     }
 
-    var isMonitoring: Bool {
-        noican_engine_is_monitoring(handle) != 0
-    }
-
-    /// True when the feedback guard auto-stopped the preview (sustained
-    /// near-clipping monitor output). Callers should disable the monitor
-    /// and tell the user; the meeting-facing path is unaffected.
-    var monitorTripped: Bool {
-        noican_engine_monitor_tripped(handle) != 0
+    /// Preview monitor state, one lock-free read — never waits on the
+    /// engine's control lock, so it is safe to poll at 20 Hz even while
+    /// a monitor start is in progress. The tripped protocol (AUHAL still
+    /// up but silenced; cleared by the next toggle) is defined on the
+    /// enum itself.
+    var monitorState: MonitorState {
+        MonitorState(rawValue: noican_engine_monitor_state(handle)) ?? .off
     }
 
     /// Reason the current system default output must not receive the
@@ -176,6 +174,20 @@ final class RustEngine: @unchecked Sendable {
             return String(cString: baseAddress)
         }
     }
+}
+
+/// Preview monitor state as reported by `noican_engine_monitor_state`.
+/// Raw values mirror the C `NoicanMonitorState` enum (noican.h) and the
+/// Rust `MonitorState`; they are frozen.
+enum MonitorState: Int32 {
+    /// No monitor AUHAL is up (engine stopped or preview disabled).
+    case off = 0
+    /// The monitor plays the processed microphone signal.
+    case playing = 1
+    /// The feedback guard silenced the preview: the monitor AUHAL is
+    /// still up but renders silence. Cleared by the next monitor toggle
+    /// in either direction — enabling re-arms, disabling tears down.
+    case tripped = 2
 }
 
 enum RustEngineError: LocalizedError {
