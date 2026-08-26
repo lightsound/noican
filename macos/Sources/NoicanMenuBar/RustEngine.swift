@@ -45,6 +45,19 @@ final class RustEngine: @unchecked Sendable {
         try requireSuccess(result)
     }
 
+    /// Toggles the preview self-monitor (processed voice on the system
+    /// default output). Fails when the engine is stopped or the default
+    /// output is a virtual loopback; the meeting-facing path is never
+    /// affected. The monitor does not survive an engine stop/start, so
+    /// callers re-enable it after `start`.
+    func setMonitor(_ enabled: Bool) throws {
+        try requireSuccess(noican_engine_set_monitor(handle, enabled ? 1 : 0))
+    }
+
+    var isMonitoring: Bool {
+        noican_engine_is_monitoring(handle) != 0
+    }
+
     var isRunning: Bool {
         noican_engine_is_running(handle) != 0
     }

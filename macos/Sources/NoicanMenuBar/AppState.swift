@@ -18,6 +18,14 @@ final class AppState: ObservableObject {
     @Published private(set) var isEnabled = false
     @Published private(set) var isBusy = false
     @Published private(set) var phase: EnginePhase = .off
+    /// User preference for the preview self-monitor. Survives engine
+    /// off/on: the preview is re-applied automatically after a successful
+    /// start (the Rust monitor itself does not outlive the transport).
+    @Published private(set) var isPreviewEnabled = false
+    /// Last preview failure, shown under the Preview toggle. Preview
+    /// failures never affect the engine phase: the meeting-facing path
+    /// keeps running.
+    @Published private(set) var previewError: String?
 
     /// Selectable models, read from the Rust registry at launch.
     let models = RustEngine.models()
@@ -125,6 +133,31 @@ final class AppState: ObservableObject {
         }
     }
 
+    func setPreview(_ enabled: Bool) {
+        guard isEnabled, !isBusy, let engine else {
+            return
+        }
+        previewError = nil
+        isPreviewEnabled = enabled
+        applyMonitor(enabled, engine: engine)
+    }
+
+    /// Sends the monitor toggle to the engine off the main actor and
+    /// reconciles the published state with the actual outcome.
+    private func applyMonitor(_ enabled: Bool, engine: RustEngine) {
+        Task.detached {
+            let result = Result { try engine.setMonitor(enabled) }
+            await self.finishPreviewChange(result, engine: engine)
+        }
+    }
+
+    private func finishPreviewChange(_ result: Result<Void, Error>, engine: RustEngine) {
+        if case let .failure(error) = result {
+            isPreviewEnabled = engine.isMonitoring
+            previewError = error.localizedDescription
+        }
+    }
+
     func applySelectedModel() {
         // Changing the model while stopped starts nothing; clear a stale
         // failure message so the menu does not keep blaming the last
@@ -202,6 +235,11 @@ final class AppState: ObservableObject {
             activeModelID = model
             phase = .running
             startFaultPolling()
+            // The Rust monitor does not survive an engine restart;
+            // re-apply the user's preview preference.
+            if isPreviewEnabled, let engine {
+                applyMonitor(true, engine: engine)
+            }
         case let .failure(error):
             engine?.stop()
             aggregate.destroy()
@@ -216,6 +254,7 @@ final class AppState: ObservableObject {
         aggregate.destroy()
         isEnabled = false
         activeModelID = nil
+        previewError = nil
         phase = .off
     }
 
@@ -269,6 +308,7 @@ final class AppState: ObservableObject {
         aggregate.destroy()
         isEnabled = false
         activeModelID = nil
+        previewError = nil
         phase = .failed(message)
     }
 }

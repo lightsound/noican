@@ -19,6 +19,9 @@ struct MenuView: View {
             pickers
             Divider()
                 .padding(.horizontal, contentPadding)
+            preview
+            Divider()
+                .padding(.horizontal, contentPadding)
             footer
         }
         .frame(width: 320)
@@ -112,6 +115,33 @@ struct MenuView: View {
                 .onChange(of: state.selectedModel) {
                     state.applySelectedModel()
                 }
+            }
+        }
+        .padding(.horizontal, contentPadding)
+        .padding(.vertical, 10)
+    }
+
+    /// Self-monitor toggle: hear the processed microphone on the default
+    /// output. Disabled while the engine is off; the caption warns about
+    /// speaker feedback (Phase 0/1 has no echo cancellation).
+    private var preview: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("Preview my voice", isOn: Binding(
+                get: { state.isPreviewEnabled },
+                set: { state.setPreview($0) }
+            ))
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .disabled(!state.isEnabled || state.isBusy)
+            Text("Plays your processed voice on the default output. Use headphones — speakers will feed back.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let message = state.previewError {
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.horizontal, contentPadding)
