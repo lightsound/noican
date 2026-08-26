@@ -29,8 +29,10 @@ use std::{
     sync::Mutex,
 };
 
+use std::sync::Arc;
+
 use noican_core::{Stage, StagePublisher, SwitchingEngine};
-use noican_coreaudio::{Runtime, WORKER_BLOCK_SAMPLES};
+use noican_coreaudio::{Runtime, StreamLevels, WORKER_BLOCK_SAMPLES};
 use noican_models::{CatalogEntry, ModelSpec, StageOptions};
 
 const SUCCESS: i32 = 0;
@@ -51,6 +53,12 @@ struct ControlState {
 
 struct EngineHandle {
     state: Mutex<ControlState>,
+    /// Peak meters shared with each runtime's inference worker. Kept
+    /// outside the control mutex so level polling reads plain atomics and
+    /// never waits on slow control work (weight downloads, model loads).
+    /// The worker resets it to silence on start and exit, so readers see
+    /// 0 whenever the engine is stopped.
+    levels: Arc<StreamLevels>,
 }
 
 fn default_models_dir() -> PathBuf {
@@ -92,6 +100,7 @@ pub unsafe extern "C" fn noican_engine_create(models_directory: *const c_char) -
             last_error: String::new(),
             epoch: 0,
         }),
+        levels: Arc::new(StreamLevels::new()),
     });
     Box::into_raw(handle).cast()
 }
@@ -155,13 +164,14 @@ pub unsafe extern "C" fn noican_engine_start(
     }
 
     // Slow work, unlocked: download/construct the stage, start the runtime.
+    let levels = Arc::clone(&handle.levels);
     let built = guard_panics(&model, || {
         let stage = prepare_stage(&models_dir, &model)?;
         let (publisher, engine) =
             SwitchingEngine::new(stage, SWITCH_FADE_SAMPLES, WORKER_BLOCK_SAMPLES)
                 .map_err(|error| error.to_string())?;
         let runtime =
-            Runtime::start(aggregate_device, engine).map_err(|error| error.to_string())?;
+            Runtime::start(aggregate_device, engine, levels).map_err(|error| error.to_string())?;
         Ok((publisher, runtime))
     });
     let (publisher, mut runtime) = match built {
@@ -384,6 +394,40 @@ pub unsafe extern "C" fn noican_engine_frames_processed(handle: *const c_void) -
     handle.state.lock().map_or(0, |state| {
         state.runtime.as_ref().map_or(0, Runtime::frames_processed)
     })
+}
+
+/// Decayed linear peak (0.0–1.0) of the model input (pre-processing),
+/// measured per 10 ms worker block; 0.0 while the engine is stopped.
+///
+/// Reads one atomic without taking the control lock, so it never blocks —
+/// regardless of what the control plane is doing.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_engine_input_level(handle: *const c_void) -> f32 {
+    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+        return 0.0;
+    };
+    handle.levels.input()
+}
+
+/// Decayed linear peak (0.0–1.0) of the model output (post-processing),
+/// measured per 10 ms worker block; 0.0 while the engine is stopped.
+///
+/// Reads one atomic without taking the control lock, so it never blocks —
+/// regardless of what the control plane is doing.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_engine_output_level(handle: *const c_void) -> f32 {
+    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+        return 0.0;
+    };
+    handle.levels.output()
 }
 
 /// Copies the latest control-plane error as UTF-8.
@@ -630,6 +674,18 @@ mod tests {
         .expect("enable failure records an error");
         assert!(error.contains("not running"), "unhelpful message: {error}");
         assert_eq!(unsafe { noican_engine_is_monitoring(handle) }, 0);
+        unsafe { noican_engine_destroy(handle) };
+    }
+
+    #[test]
+    fn levels_read_zero_without_blocking_while_stopped() {
+        let handle = unsafe { noican_engine_create(ptr::null()) };
+        assert!(!handle.is_null());
+        assert!(unsafe { noican_engine_input_level(handle) }.abs() < f32::EPSILON);
+        assert!(unsafe { noican_engine_output_level(handle) }.abs() < f32::EPSILON);
+        // Null handles are tolerated and also read as silence.
+        assert!(unsafe { noican_engine_input_level(ptr::null()) }.abs() < f32::EPSILON);
+        assert!(unsafe { noican_engine_output_level(ptr::null()) }.abs() < f32::EPSILON);
         unsafe { noican_engine_destroy(handle) };
     }
 

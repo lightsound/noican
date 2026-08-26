@@ -19,7 +19,7 @@ use std::{
 use noican_core::SwitchingEngine;
 use rtrb::{Consumer, Producer, RingBuffer};
 
-use crate::observe::tee_into_monitor;
+use crate::observe::{StreamLevels, tee_into_monitor};
 use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
 
 type OSStatus = i32;
@@ -381,6 +381,7 @@ struct WorkerLinks {
     output: Producer<f32>,
     monitor: Producer<f32>,
     monitor_enabled: Arc<AtomicBool>,
+    levels: Arc<StreamLevels>,
 }
 
 /// Running AUHAL instance and inference worker.
@@ -410,12 +411,20 @@ impl Runtime {
     /// `BlackHole` output subdevice with drift compensation configured by the
     /// Swift control plane.
     ///
+    /// `levels` receives per-block input/output peak meters from the
+    /// inference worker for the lifetime of this runtime; the worker
+    /// resets it to silence on start and on exit.
+    ///
     /// # Errors
     ///
     /// Returns [`CoreAudioError`] when AUHAL setup or worker startup fails.
     /// Every error path releases the AUHAL instance, the callback context,
     /// and the worker (RAII guards; nothing leaks on failed starts).
-    pub fn start(aggregate_device: u32, engine: SwitchingEngine) -> Result<Self, CoreAudioError> {
+    pub fn start(
+        aggregate_device: u32,
+        engine: SwitchingEngine,
+        levels: Arc<StreamLevels>,
+    ) -> Result<Self, CoreAudioError> {
         let samples_ready = Arc::new(DispatchSemaphore::new()?);
         let mut unit = AuhalUnit::create()?;
         configure_auhal(unit.raw(), aggregate_device)?;
@@ -465,6 +474,7 @@ impl Runtime {
             output: output_producer,
             monitor: monitor_producer,
             monitor_enabled: Arc::clone(&monitor_enabled),
+            levels,
         };
         let worker = thread::Builder::new()
             .name("noican-inference".to_owned())
@@ -995,7 +1005,9 @@ fn processing_loop(
         mut output,
         mut monitor,
         monitor_enabled,
+        levels,
     } = links;
+    levels.reset();
     let workgroup = workgroup as *mut c_void;
     let mut token = WorkgroupJoinToken::default();
     let joined = unsafe { os_workgroup_join(workgroup, &raw mut token) } == 0;
@@ -1018,6 +1030,7 @@ fn processing_loop(
                         output_block.fill(0.0);
                         faulted.store(true, Ordering::Release);
                     }
+                    levels.update(&input_block, &output_block);
                     // Preview branch first: it only copies into the
                     // preallocated monitor ring (skipped entirely while
                     // preview is off) and never delays the main path.
@@ -1040,6 +1053,8 @@ fn processing_loop(
             os_workgroup_leave(workgroup, &raw mut token);
         }
     }
+    // Meters read 0 whenever no worker is running (engine stopped).
+    levels.reset();
 }
 
 unsafe extern "C" fn render_callback(

@@ -18,9 +18,14 @@
 use thiserror::Error;
 
 #[cfg(not(target_os = "macos"))]
+use std::sync::Arc;
+
+#[cfg(not(target_os = "macos"))]
 use noican_core::SwitchingEngine;
 
 pub mod observe;
+
+pub use observe::StreamLevels;
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -84,7 +89,11 @@ impl Runtime {
     /// # Errors
     ///
     /// Always returns [`CoreAudioError::UnsupportedPlatform`].
-    pub fn start(_aggregate_device: u32, _engine: SwitchingEngine) -> Result<Self, CoreAudioError> {
+    pub fn start(
+        _aggregate_device: u32,
+        _engine: SwitchingEngine,
+        _levels: Arc<StreamLevels>,
+    ) -> Result<Self, CoreAudioError> {
         Err(CoreAudioError::UnsupportedPlatform)
     }
 

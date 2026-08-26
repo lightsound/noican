@@ -17,6 +17,8 @@ int32_t noican_engine_is_running(const void *handle);
 int32_t noican_engine_is_faulted(const void *handle);
 int32_t noican_engine_set_monitor(void *handle, int32_t enabled);
 int32_t noican_engine_is_monitoring(const void *handle);
+float noican_engine_input_level(const void *handle);
+float noican_engine_output_level(const void *handle);
 uint64_t noican_engine_frames_processed(const void *handle);
 size_t noican_engine_last_error(const void *handle, char *buffer, size_t capacity);
 
