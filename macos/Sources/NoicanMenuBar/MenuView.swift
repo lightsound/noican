@@ -77,6 +77,11 @@ struct MenuView: View {
             .fill(statusColor)
             .frame(width: 9, height: 9)
             .padding(.top, 1)
+            // Opt out of the popover's eased layout animation: the fill
+            // styles (hierarchical gray vs. plain colors) cannot
+            // interpolate, so animating them cross-fades through
+            // transparent — the dot visibly blinked on Off transitions.
+            .animation(nil, value: state.phase)
     }
 
     /// Settled health only — no transitional color: the spinner already
