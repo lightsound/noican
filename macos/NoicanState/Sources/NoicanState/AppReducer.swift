@@ -39,6 +39,8 @@ public enum AppReducer {
             return monitorTargetErrorChanged(state, reason)
         case .monitorTripped:
             return monitorTripped(state)
+        case let .monitorTargetBecameUnsafe(reason):
+            return monitorTargetBecameUnsafe(state, reason)
         case .engineFaulted:
             return engineFaulted(state)
         case .engineStoppedUnexpectedly:
@@ -360,6 +362,27 @@ extension AppReducer {
         var state = state
         state.messages.previewError =
             "Preview stopped itself: feedback detected. Use headphones, then select Preview again."
+        return monitorTransition(state, session: session, enabled: false)
+    }
+
+    /// The playing monitor's target lost its safety (headphone jack
+    /// unplugged into the internal speakers, or the device vanished):
+    /// stop the preview immediately, exactly like a feedback trip — the
+    /// engine keeps running, the mode keeps the user's intent, the
+    /// reason renders under the control, and re-tapping Preview retries
+    /// on the (new) vetted output.
+    private static func monitorTargetBecameUnsafe(
+        _ state: AppModel,
+        _ reason: String
+    ) -> (state: AppModel, effects: [AppEffect]) {
+        guard
+            state.mode != .off, !state.isBusy,
+            let session = state.liveSession, session.isMonitorArmed
+        else {
+            return (state, [])
+        }
+        var state = state
+        state.messages.previewError = "Preview stopped: \(reason)."
         return monitorTransition(state, session: session, enabled: false)
     }
 

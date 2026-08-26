@@ -89,6 +89,11 @@ struct MonitorContext {
 struct MonitorHandle {
     unit: usize,
     context: usize,
+    /// Device the AUHAL was opened on (the vetted default output at
+    /// enable time). Exposed to the control plane so it can watch *this*
+    /// device for losing its safety — the default output may move on
+    /// while the monitor stays here.
+    device: AudioDeviceId,
 }
 
 /// Control-plane owner of the preview monitor. Invariants held here:
@@ -157,6 +162,7 @@ impl MonitorControl {
                 self.handle = Some(MonitorHandle {
                     unit: unit as usize,
                     context: context as usize,
+                    device,
                 });
                 self.enabled.store(true, Ordering::Release);
                 Ok(())
@@ -193,6 +199,12 @@ impl MonitorControl {
     pub(super) const fn is_active(&self) -> bool {
         self.handle.is_some()
     }
+
+    /// Device the running monitor AUHAL plays on (resolved and vetted at
+    /// enable time), or `None` while the monitor is down.
+    pub(super) fn active_device(&self) -> Option<AudioDeviceId> {
+        self.handle.as_ref().map(|handle| handle.device)
+    }
 }
 
 /// Checks whether the current system default output may receive the
@@ -213,11 +225,44 @@ pub fn check_monitor_target() -> Result<(), CoreAudioError> {
     monitor_target_device().map(|_device| ())
 }
 
+/// Checks whether a *specific* output device may (still) receive the
+/// preview, without creating or changing any audio object.
+///
+/// The same [`classify_monitor_target`] vetting as
+/// [`check_monitor_target`], but against a caller-chosen device instead
+/// of the current default output. The control plane runs it against the
+/// device the running monitor actually plays on (see
+/// [`super::Runtime::monitor_device`]): after enable time the default
+/// output can move on while the monitor stays put, and — worse — a
+/// built-in device can flip its data source from the headphone jack to
+/// the internal speakers (`'hdpn'` → `'ispk'`) without any device-list
+/// or default-output notification. Re-classifying the monitor's own
+/// device is what catches that.
+///
+/// A vanished device is *not* reported here: its properties read as
+/// unclassifiable, which fails open by policy. Device loss is visible in
+/// the device list and is the caller's check.
+///
+/// # Errors
+///
+/// Returns the [`classify_monitor_target`] refusals (loopback, aggregate,
+/// built-in speakers).
+pub fn check_monitor_device(device: AudioDeviceId) -> Result<(), CoreAudioError> {
+    classify_device(device)
+}
+
 /// Resolves the system default output device and applies
 /// [`classify_monitor_target`] to refuse loopbacks, aggregates, and the
 /// built-in internal speakers.
 fn monitor_target_device() -> Result<AudioDeviceId, CoreAudioError> {
     let device = default_output_device()?;
+    classify_device(device)?;
+    Ok(device)
+}
+
+/// Reads `device`'s transport type, output data source, and UID, and
+/// applies the [`classify_monitor_target`] policy to them.
+fn classify_device(device: AudioDeviceId) -> Result<(), CoreAudioError> {
     let transport = device_u32_property(
         device,
         AUDIO_DEVICE_PROPERTY_TRANSPORT_TYPE,
@@ -229,8 +274,7 @@ fn monitor_target_device() -> Result<AudioDeviceId, CoreAudioError> {
         AUDIO_DEVICE_PROPERTY_DATA_SOURCE,
         AUDIO_OBJECT_PROPERTY_SCOPE_OUTPUT,
     );
-    classify_monitor_target(transport, &device_uid(device), data_source)?;
-    Ok(device)
+    classify_monitor_target(transport, &device_uid(device), data_source)
 }
 
 fn default_output_device() -> Result<AudioDeviceId, CoreAudioError> {

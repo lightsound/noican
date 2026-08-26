@@ -316,6 +316,50 @@ struct TripTests {
     }
 }
 
+// MARK: - Monitor target safety loss
+
+@Suite("Monitor target losing its safety")
+struct MonitorSafetyTests {
+    @Test("An unsafe target stops the playing preview and explains why")
+    func unsafeTargetStopsPreview() {
+        let previewing = runningModel(mode: .preview)
+        let reason = "the system default output is the built-in speakers, "
+            + "which would feed back; connect headphones and try again"
+        let (stopped, effects) = step(previewing, .monitorTargetBecameUnsafe(reason: reason))
+        #expect(effects == [.setMonitor(enabled: false)])
+        #expect(stopped.mode == .preview, "intent is kept")
+        #expect(stopped.messages.previewError == "Preview stopped: \(reason).")
+
+        let settled = drive(stopped, [.monitorChangeCompleted(error: nil)])
+        #expect(settled.statusText == "Running", "engine keeps running; preview does not")
+        #expect(settled.isModeUnfulfilled, "the pill warns")
+        #expect(settled.liveRunningSession?.isMonitorArmed == false)
+
+        // Re-tapping Preview retries on the (new) vetted output.
+        let rearmed = drive(settled, [
+            tap(.preview, isEngineRunning: true),
+            .monitorChangeCompleted(error: nil)
+        ])
+        #expect(rearmed.messages.previewError == nil)
+        #expect(rearmed.statusText == "Previewing")
+    }
+
+    @Test("Safety loss is ignored while the monitor is not armed")
+    func ignoredWhileDisarmed() {
+        // Running without a monitor (On mode).
+        let running = runningModel()
+        let (state, effects) = step(running, .monitorTargetBecameUnsafe(reason: "whatever"))
+        #expect(state == running)
+        #expect(effects.isEmpty)
+
+        // And while a transition is already in flight.
+        let busy = drive(readyModel(), [tap(.preview)])
+        let (busyState, busyEffects) = step(busy, .monitorTargetBecameUnsafe(reason: "whatever"))
+        #expect(busyState == busy)
+        #expect(busyEffects.isEmpty)
+    }
+}
+
 // MARK: - Microphone switching and fallback
 
 @Suite("Microphone selection")

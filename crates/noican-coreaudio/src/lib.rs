@@ -32,7 +32,7 @@ pub use observe::StreamLevels;
 mod macos;
 
 #[cfg(target_os = "macos")]
-pub use macos::{Runtime, check_monitor_target};
+pub use macos::{Runtime, check_monitor_device, check_monitor_target};
 
 /// Portable stub of the preview-target pre-flight check.
 ///
@@ -41,6 +41,16 @@ pub use macos::{Runtime, check_monitor_target};
 /// Always returns [`CoreAudioError::UnsupportedPlatform`].
 #[cfg(not(target_os = "macos"))]
 pub const fn check_monitor_target() -> Result<(), CoreAudioError> {
+    Err(CoreAudioError::UnsupportedPlatform)
+}
+
+/// Portable stub of the per-device preview-target check.
+///
+/// # Errors
+///
+/// Always returns [`CoreAudioError::UnsupportedPlatform`].
+#[cfg(not(target_os = "macos"))]
+pub const fn check_monitor_device(_device: u32) -> Result<(), CoreAudioError> {
     Err(CoreAudioError::UnsupportedPlatform)
 }
 
@@ -145,6 +155,12 @@ impl Runtime {
     #[must_use]
     pub const fn is_monitoring(&self) -> bool {
         false
+    }
+
+    /// Portable builds never have a monitor device.
+    #[must_use]
+    pub const fn monitor_device(&self) -> Option<u32> {
+        None
     }
 
     /// Portable builds never run an audio device.

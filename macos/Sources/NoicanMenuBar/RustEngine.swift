@@ -75,6 +75,27 @@ final class RustEngine: @unchecked Sendable {
         }
     }
 
+    /// Device the running preview monitor plays on (resolved on the Rust
+    /// side at enable time), or 0 while no monitor is up. Reads the
+    /// control mutex — meant for event-driven and 1 Hz callers, not the
+    /// 20 Hz poll path.
+    var monitorDeviceID: UInt32 {
+        noican_engine_monitor_device(handle)
+    }
+
+    /// Reason a *specific* device must not receive the preview — the same
+    /// vetting as `monitorTargetError`, applied to the device the monitor
+    /// actually plays on rather than the current default output (the two
+    /// diverge once the default output moves after enable time). Catches
+    /// the same-device data-source flip from the headphone jack to the
+    /// internal speakers; a vanished device reads as unclassifiable and
+    /// is the caller's device-list check instead.
+    static func monitorDeviceError(_ deviceID: UInt32) -> String? {
+        copyString { buffer, capacity in
+            noican_monitor_device_error(deviceID, buffer, capacity)
+        }
+    }
+
     /// Decayed linear peak (0–1) of the model input, measured per 10 ms
     /// block by the inference worker; 0 while stopped. Reads one atomic —
     /// never blocks, so it is safe to poll from the UI.

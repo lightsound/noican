@@ -30,7 +30,7 @@ use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
 mod monitor;
 
 use monitor::MonitorControl;
-pub use monitor::check_monitor_target;
+pub use monitor::{check_monitor_device, check_monitor_target};
 
 type OSStatus = i32;
 type AudioUnit = *mut c_void;
@@ -515,6 +515,18 @@ impl Runtime {
     #[must_use]
     pub const fn is_monitoring(&self) -> bool {
         self.monitor.is_active()
+    }
+
+    /// Device the running preview monitor plays on (resolved and vetted
+    /// at enable time), or `None` while the monitor is down. The control
+    /// plane re-vets this device with [`check_monitor_device`] while the
+    /// preview plays: the safety decision made at enable time can be
+    /// invalidated later (headphone jack unplugged → the same built-in
+    /// device flips to the internal speakers) without the monitor
+    /// noticing.
+    #[must_use]
+    pub fn monitor_device(&self) -> Option<u32> {
+        self.monitor.active_device()
     }
 }
 

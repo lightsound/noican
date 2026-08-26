@@ -49,6 +49,12 @@ public enum AppEvent: Hashable, Sendable {
     /// silenced the preview; the monitor device must be released and the
     /// user told why.
     case monitorTripped
+    /// The device the playing monitor targets lost its safety after
+    /// enable time (the headphone jack flipped to the internal speakers,
+    /// or the device disappeared): the preview must stop itself before
+    /// the unvetted output keeps playing. `reason` explains what
+    /// happened, in the same voice as the enable-time refusals.
+    case monitorTargetBecameUnsafe(reason: String)
     /// The health poll found the engine faulted (audio callback,
     /// workgroup, or inference fault). The transport stays up; the next
     /// user action tears it down.

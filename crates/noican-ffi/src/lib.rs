@@ -397,6 +397,68 @@ pub unsafe extern "C" fn noican_monitor_target_error(
     }
 }
 
+/// Checks whether a *specific* output device may (still) receive the
+/// preview.
+///
+/// The same vetting as [`noican_monitor_target_error`], but against a
+/// caller-chosen device instead of the current default output.
+/// The UI runs it against the device the running monitor actually plays
+/// on (see [`noican_engine_monitor_device`]): after enable time the
+/// default output can move on while the monitor stays put, and a
+/// built-in device can flip its data source from the headphone jack to
+/// the internal speakers without any device-list or default-output
+/// notification — re-classifying the monitor's own device is what
+/// catches that. A vanished device is *not* reported here (unreadable
+/// properties fail open by policy); device loss is visible in the device
+/// list and is the caller's check.
+///
+/// Returns 0 when the device may receive the preview. Otherwise copies
+/// the human-readable refusal reason as UTF-8 and returns the required
+/// byte count including the terminating NUL.
+///
+/// # Safety
+///
+/// A non-null `buffer` must be writable for `capacity` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_monitor_device_error(
+    device: u32,
+    buffer: *mut c_char,
+    capacity: usize,
+) -> usize {
+    match noican_coreaudio::check_monitor_device(device) {
+        Ok(()) => 0,
+        Err(error) => unsafe { copy_string(&error.to_string(), buffer, capacity) },
+    }
+}
+
+/// Device ID the running preview monitor plays on, or 0 while no monitor
+/// AUHAL is up (stopped engine, preview off).
+///
+/// The target is resolved on the Rust side at enable time and stays
+/// fixed until the next toggle, so this is how the UI learns which
+/// device to watch for losing its safety
+/// (`noican_monitor_device_error`, device-list changes).
+///
+/// Reads the control mutex (never held across slow work), so it is meant
+/// for event-driven and low-rate callers — not the 20 Hz poll path.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_engine_monitor_device(handle: *const c_void) -> u32 {
+    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+        return 0;
+    };
+    handle.state.lock().map_or(0, |state| {
+        state
+            .runtime
+            .as_ref()
+            .and_then(Runtime::monitor_device)
+            .unwrap_or(0)
+    })
+}
+
 /// Returns 1 while the preview self-monitor is playing, otherwise 0.
 ///
 /// # Safety
@@ -759,6 +821,32 @@ mod tests {
         if required > 0 {
             let reason = read_string(|buffer, capacity| unsafe {
                 noican_monitor_target_error(buffer, capacity)
+            });
+            assert!(reason.is_some(), "nonzero result must yield a reason");
+        }
+        #[cfg(not(target_os = "macos"))]
+        assert!(required > 0, "portable builds always refuse");
+    }
+
+    #[test]
+    fn monitor_device_reads_zero_and_null_safe_while_stopped() {
+        let handle = unsafe { noican_engine_create(ptr::null()) };
+        assert!(!handle.is_null());
+        assert_eq!(unsafe { noican_engine_monitor_device(handle) }, 0);
+        assert_eq!(unsafe { noican_engine_monitor_device(ptr::null()) }, 0);
+        unsafe { noican_engine_destroy(handle) };
+    }
+
+    #[test]
+    fn monitor_device_check_is_null_safe_and_consistent() {
+        // Same contract as the default-output check: a null buffer only
+        // measures, and a nonzero result re-reads as a NUL-terminated
+        // reason string. Device 0 (kAudioObjectUnknown) has unreadable
+        // properties, which fail open on macOS by policy.
+        let required = unsafe { noican_monitor_device_error(0, ptr::null_mut(), 0) };
+        if required > 0 {
+            let reason = read_string(|buffer, capacity| unsafe {
+                noican_monitor_device_error(0, buffer, capacity)
             });
             assert!(reason.is_some(), "nonzero result must yield a reason");
         }

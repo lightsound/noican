@@ -41,6 +41,14 @@ final class AppState: ObservableObject {
     /// Heartbeat state for detecting a device that stopped calling back.
     private var lastFrameCount: UInt64 = 0
     private var stalledTicks = 0
+    /// Follows the monitor's actual output device while the preview
+    /// plays: a data-source flip (headphone jack → internal speakers on
+    /// the same built-in device) fires no device-list or default-output
+    /// notification, so this per-device listener — plus the 1 Hz health
+    /// poll as belt and braces — is what catches it. Registered when a
+    /// monitor enable settles; always removed when the monitor disarms
+    /// (`syncMonitorSafetyObservation`).
+    private var monitorSafetyListener: (device: AudioObjectID, block: AudioObjectPropertyListenerBlock)?
 
     init() {
         var initialPhase = EnginePhase.off
@@ -105,6 +113,7 @@ final class AppState: ObservableObject {
             perform(effect)
         }
         syncFaultPolling()
+        syncMonitorSafetyObservation()
     }
 
     private func perform(_ effect: AppEffect) {
@@ -227,6 +236,9 @@ final class AppState: ObservableObject {
             MainActor.assumeIsolated {
                 self?.refreshDevices()
                 self?.refreshPreviewAvailability()
+                // The monitor's target can vanish as a whole device (on
+                // machines whose headphone jack is a separate device).
+                self?.checkMonitorSafety()
             }
         }
     }
@@ -261,6 +273,7 @@ final class AppState: ObservableObject {
             return
         }
         checkMonitorTrip()
+        checkMonitorSafety()
         if engine.isFaulted {
             dispatch(.engineFaulted)
             return
@@ -337,6 +350,81 @@ extension AppState {
             return
         }
         dispatch(.monitorTargetErrorChanged(RustEngine.monitorTargetError))
+    }
+
+    /// Re-vets the device the running monitor actually plays on and
+    /// auto-stops the preview (via the reducer) when its safety is gone.
+    /// Two loss shapes exist, machine-dependent: the same built-in device
+    /// flips its data source from the headphone jack to the internal
+    /// speakers (caught by the per-device listener and the health poll),
+    /// or the jack is a separate device that disappears (caught by the
+    /// device-list listener). `noican_monitor_target_error` cannot serve
+    /// here: it judges the *current default output*, which may have moved
+    /// on while the monitor stayed on the old device.
+    private func checkMonitorSafety() {
+        guard
+            let session = model.liveSession, session.isMonitorArmed,
+            !model.isBusy, let engine
+        else {
+            return
+        }
+        let device = engine.monitorDeviceID
+        guard device != kAudioObjectUnknown else {
+            return
+        }
+        let reason: String?
+        if !allDevices.contains(where: { $0.id == device }) {
+            reason = "the monitor output device was disconnected; select Preview again to play on the new output"
+        } else {
+            reason = RustEngine.monitorDeviceError(device)
+        }
+        if let reason {
+            dispatch(.monitorTargetBecameUnsafe(reason: reason))
+        }
+    }
+
+    /// Keeps the per-device data-source listener in lockstep with the
+    /// settled monitor state: registered on the monitor's device when an
+    /// enable settles, and always removed the moment the monitor is no
+    /// longer armed (disable claimed, trip, teardown) — a listener left
+    /// behind would fire for a monitor that no longer exists.
+    private func syncMonitorSafetyObservation() {
+        let isArmed = model.liveSession?.isMonitorArmed == true
+        if isArmed {
+            guard monitorSafetyListener == nil, let engine else {
+                return
+            }
+            let device = engine.monitorDeviceID
+            guard device != kAudioObjectUnknown else {
+                return
+            }
+            let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+                // Delivered on the main queue, which is the main actor.
+                MainActor.assumeIsolated {
+                    self?.checkMonitorSafety()
+                }
+            }
+            var address = Self.monitorDataSourceAddress
+            AudioObjectAddPropertyListenerBlock(device, &address, DispatchQueue.main, block)
+            monitorSafetyListener = (device, block)
+        } else if let listener = monitorSafetyListener {
+            var address = Self.monitorDataSourceAddress
+            AudioObjectRemovePropertyListenerBlock(
+                listener.device,
+                &address,
+                DispatchQueue.main,
+                listener.block
+            )
+            monitorSafetyListener = nil
+        }
+    }
+
+    private static var monitorDataSourceAddress: AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDataSource,
+            mScope: kAudioObjectPropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
     }
 
     /// Follows default-output changes so a shown refusal message clears

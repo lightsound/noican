@@ -260,10 +260,32 @@ between them only arms or disarms the monitor.
     guard must silence the preview on its own; the pill stays on Preview
     with the red warning tint, the engine keeps running, and the menu
     explains why. Re-tapping Preview re-arms the guard and the monitor.
+14. **Headphone jack unplug** *(wired headphones in the built-in jack)*:
+    with the jack as the default output, select Preview, then unplug the
+    headphones while it plays. The preview must stop itself within about
+    a second — before anything audible comes out of the internal
+    speakers beyond a moment of bleed — with the pill staying on Preview
+    in the red warning tint, the engine still running (status returns to
+    `Running`), and "Preview stopped: …" under the control. Two
+    machine-dependent paths must both land here: on most Macs the same
+    built-in device flips its data source from `'hdpn'` to `'ispk'`
+    (caught by a data-source listener on the monitor's own device, plus
+    the 1 Hz health poll as backstop); on machines where the jack is a
+    separate device, the device disappears (caught by the device-list
+    path, with a "device was disconnected" reason instead). Plug the
+    headphones back in and re-tap Preview: the monitor must come back on
+    the vetted output.
 
 Changing the default output while previewing does not retarget the
 monitor in this version; switch to On and back to Preview to pick up the
-new device.
+new device. The *safety* of the device the monitor actually plays on is,
+however, watched continuously while the preview plays (step 14): the
+enable-time-only vetting was a known hole where unplugging the jack let
+the refused internal speakers keep playing with only the feedback guard
+as insurance. Note the watcher re-vets the monitor's own device via
+`noican_monitor_device_error`, not `noican_monitor_target_error` — the
+latter judges the *current default output*, which may already have moved
+elsewhere while the monitor stays on the old device.
 
 ## Level meters
 
@@ -375,6 +397,13 @@ Run the Preview and Level meters procedures above; the build passes when:
    feedback through an unclassifiable output stops the preview by itself
    within ~1 s; the pill stays on Preview with the red warning tint and
    the menu explains why.
+6b. **Jack-unplug auto-stop**: unplugging wired headphones from the
+    built-in jack while previewing stops the preview by itself within
+    about a second with "Preview stopped: …" under the control; the pill
+    stays on Preview with the red warning tint and the engine keeps
+    running. On machines whose jack is a separate device, the
+    device-loss path must produce the same result with a
+    "device was disconnected" reason.
 7. **Restart coherence**: Off → Preview brings the preview back cleanly,
    with no stale audio and no double playback.
 8. **Intent is never moved**: on any failure (start failure, device
