@@ -372,6 +372,31 @@ pub unsafe extern "C" fn noican_engine_set_monitor(handle: *mut c_void, enabled:
     }
 }
 
+/// Checks whether the current system default output may receive the
+/// preview, without starting or changing anything.
+///
+/// Returns 0 when preview can target the device. Otherwise copies the
+/// human-readable refusal reason as UTF-8 (loopback / aggregate /
+/// built-in speakers — the same vetting enabling applies) and returns the
+/// required byte count including the terminating NUL. Cheap (a few Core
+/// Audio property reads): the UI calls it before enabling and whenever
+/// the system default output changes, so an unsafe target disables the
+/// Preview control up front instead of failing after the fact.
+///
+/// # Safety
+///
+/// A non-null `buffer` must be writable for `capacity` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_monitor_target_error(
+    buffer: *mut c_char,
+    capacity: usize,
+) -> usize {
+    match noican_coreaudio::check_monitor_target() {
+        Ok(()) => 0,
+        Err(error) => unsafe { copy_string(&error.to_string(), buffer, capacity) },
+    }
+}
+
 /// Returns 1 while the preview self-monitor is playing, otherwise 0.
 ///
 /// # Safety
@@ -722,6 +747,23 @@ mod tests {
         assert!(unsafe { noican_engine_input_level(ptr::null()) }.abs() < f32::EPSILON);
         assert!(unsafe { noican_engine_output_level(ptr::null()) }.abs() < f32::EPSILON);
         unsafe { noican_engine_destroy(handle) };
+    }
+
+    #[test]
+    fn monitor_target_check_is_null_safe_and_consistent() {
+        // The outcome depends on the host's audio devices (and on Linux it
+        // is always a refusal), but the contract holds everywhere: a null
+        // buffer only measures, and a nonzero result re-reads as a
+        // NUL-terminated reason string.
+        let required = unsafe { noican_monitor_target_error(ptr::null_mut(), 0) };
+        if required > 0 {
+            let reason = read_string(|buffer, capacity| unsafe {
+                noican_monitor_target_error(buffer, capacity)
+            });
+            assert!(reason.is_some(), "nonzero result must yield a reason");
+        }
+        #[cfg(not(target_os = "macos"))]
+        assert!(required > 0, "portable builds always refuse");
     }
 
     #[test]

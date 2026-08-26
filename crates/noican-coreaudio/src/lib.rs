@@ -32,7 +32,17 @@ pub use observe::StreamLevels;
 mod macos;
 
 #[cfg(target_os = "macos")]
-pub use macos::Runtime;
+pub use macos::{Runtime, check_monitor_target};
+
+/// Portable stub of the preview-target pre-flight check.
+///
+/// # Errors
+///
+/// Always returns [`CoreAudioError::UnsupportedPlatform`].
+#[cfg(not(target_os = "macos"))]
+pub const fn check_monitor_target() -> Result<(), CoreAudioError> {
+    Err(CoreAudioError::UnsupportedPlatform)
+}
 
 /// Samples per engine block driven by the inference worker (10 ms at the
 /// 48 kHz engine rate; matches the CLI comparison block size).

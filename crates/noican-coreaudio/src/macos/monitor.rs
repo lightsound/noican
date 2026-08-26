@@ -195,6 +195,24 @@ impl MonitorControl {
     }
 }
 
+/// Checks whether the current system default output may receive the
+/// preview, without creating or changing any audio object.
+///
+/// A pure inspection (a few Core Audio property reads against the HAL's
+/// in-process cache), cheap enough for the UI to call before every
+/// enable and whenever the default output changes — so an unsafe target
+/// can be surfaced *before* the user tries to preview into it.
+///
+/// # Errors
+///
+/// Returns exactly the refusals enabling would produce: the
+/// [`classify_monitor_target`] matrix (loopback, aggregate, built-in
+/// speakers) or [`CoreAudioError::Monitor`] when no default output is
+/// configured.
+pub fn check_monitor_target() -> Result<(), CoreAudioError> {
+    monitor_target_device().map(|_device| ())
+}
+
 /// Resolves the system default output device and applies
 /// [`classify_monitor_target`] to refuse loopbacks, aggregates, and the
 /// built-in internal speakers.

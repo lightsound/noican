@@ -15,6 +15,7 @@ void noican_engine_stop(void *handle);
 int32_t noican_engine_set_model(void *handle, const char *model_id);
 int32_t noican_engine_is_running(const void *handle);
 int32_t noican_engine_is_faulted(const void *handle);
+size_t noican_monitor_target_error(char *buffer, size_t capacity);
 int32_t noican_engine_set_monitor(void *handle, int32_t enabled);
 int32_t noican_engine_is_monitoring(const void *handle);
 int32_t noican_engine_monitor_tripped(const void *handle);

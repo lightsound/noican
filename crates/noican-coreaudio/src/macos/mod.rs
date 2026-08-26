@@ -30,6 +30,7 @@ use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
 mod monitor;
 
 use monitor::MonitorControl;
+pub use monitor::check_monitor_target;
 
 type OSStatus = i32;
 type AudioUnit = *mut c_void;
