@@ -118,7 +118,8 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
    Off and appear while the engine runs.
 4. Select a physical microphone and `FastEnhancer-B 48k`.
 5. Select On and grant microphone access when macOS prompts.
-6. Confirm status changes to `Running · FastEnhancer-B 48k`.
+6. Confirm status changes to `Running` (the Model picker shows the
+   active model).
 7. In QuickTime, OBS, or a meeting app, select the BlackHole/Noican virtual
    device as the microphone.
 8. Record at least 30 seconds containing speech, steady fan noise, and
@@ -132,8 +133,9 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
     16 kHz path was near-silent; the hybrid routes these models through the
     verified polyphase resampler).
 11. Selecting `TSE Conv-TasNet 48k` must fail gracefully: a clear
-    "requires enrollment" status message, engine still running the previous
-    model, picker reverted.
+    "requires enrollment" message under the Model picker, the engine
+    still running the previous model (status stays `Running`, meters keep
+    moving, pill stays green), picker reverted.
 12. Select Off. Confirm the private Aggregate Device disappears and
     the virtual microphone no longer receives new processed audio.
 
@@ -192,6 +194,10 @@ so changing it while running rebuilds the transport.
    refused in place — the checkmark returns to the working microphone,
    the reason appears under the list, and the engine keeps running
    uninterrupted.
+5. If a live switch fails at runtime (a failure the pre-flight cannot
+   see, e.g. the new device vanishing mid-switch), the app must fall
+   back to the previous microphone automatically — one rebuild attempt,
+   reason under the list — instead of leaving the session dead.
 
 ## Preview (self-monitor)
 
@@ -207,7 +213,7 @@ between them only arms or disarms the monitor.
 3. Speak: the processed voice must be audible with a modest constant
    delay (engine latency plus ~40 ms of monitor ring priming). The delay
    is by design, not a defect. The status line reads
-   `Previewing · <model>`.
+   `Previewing`.
 4. Headphones are mandatory: through speakers the processed microphone
    feeds back into itself (Phase 0/1 has no AEC). There is deliberately
    no persistent warning text — unsafe outputs are refused on press with
@@ -238,7 +244,7 @@ between them only arms or disarms the monitor.
 9. A monitor failure at runtime (one that passed the pre-flight check),
    including a feedback-guard trip: the pill stays on Preview with a red
    warning tint, the engine keeps running (status returns to
-   `Running · <model>`), and the reason renders under the control.
+   `Running`), and the reason renders under the control.
    Re-tapping Preview retries the monitor.
 10. Select Off, then Preview again: the preview must come back cleanly
     with no stale audio replayed and no double playback.
@@ -331,7 +337,7 @@ The five transport items that candidate B passed, plus the two items new to
 this build:
 
 1. **Running status**: selecting On (with mic permission granted) reaches
-   `Running · <model>` with the green indicator.
+   `Running` with the green indicator.
 2. **Audio reaches recordings**: a QuickTime/OBS recording from the virtual
    device contains the processed microphone signal.
 3. **Continuity**: no dropouts, periodic clicks, or runaway latency over a

@@ -77,14 +77,20 @@ struct MenuView: View {
             .fill(statusColor)
             .frame(width: 9, height: 9)
             .padding(.top, 1)
+            // Opt out of the popover's eased layout animation: the fill
+            // styles (hierarchical gray vs. plain colors) cannot
+            // interpolate, so animating them cross-fades through
+            // transparent — the dot visibly blinked on Off transitions.
+            .animation(nil, value: state.phase)
     }
 
+    /// Settled health only — no transitional color: the spinner already
+    /// says "busy", and flashing the dot orange for a milliseconds-long
+    /// Preview/On toggle just made it churn.
     private var statusColor: Color {
         switch state.phase {
         case .off:
             .secondary.opacity(0.5)
-        case .busy:
-            .orange
         case .running:
             .green
         case .failed:
@@ -95,7 +101,7 @@ struct MenuView: View {
     /// The single top-level control. Preview = engine + self-monitor;
     /// On = engine only. Both feed the virtual microphone. All prose
     /// feedback — engine failures, refused Preview presses (cleared live
-    /// once the output is safe), preview rollbacks and feedback trips —
+    /// once the output is safe), preview failures and feedback trips —
     /// renders below the control, where changing height cannot move it.
     private var modePicker: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -139,8 +145,8 @@ struct MenuView: View {
     /// which also explains itself.
     private var monitoring: some View {
         VStack(alignment: .leading, spacing: 6) {
-            LevelBar(label: "In", level: state.inputLevel, tint: .secondary)
-            LevelBar(label: "Out", level: state.outputLevel, tint: .green)
+            LevelBar(label: "Before", level: state.inputLevel, tint: .secondary)
+            LevelBar(label: "After", level: state.outputLevel, tint: .green)
         }
         .padding(.horizontal, contentPadding)
         .padding(.vertical, 10)
@@ -149,7 +155,7 @@ struct MenuView: View {
     private var settings: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Microphone")
+                Text("Mic")
                     .font(.caption)
                     .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
@@ -166,7 +172,14 @@ struct MenuView: View {
                     .font(.caption)
                     .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
-                Picker("Model", selection: $state.selectedModel) {
+                // User picks route through selectModel; programmatic
+                // reverts write the property directly and must not
+                // re-enter the apply path (they would wipe the failure
+                // message they accompany).
+                Picker("Model", selection: Binding(
+                    get: { state.selectedModel },
+                    set: { state.selectModel($0) }
+                )) {
                     ForEach(state.models) { model in
                         Text(modelLabel(model))
                             .tag(model.id)
@@ -178,8 +191,11 @@ struct MenuView: View {
                 }
                 .labelsHidden()
                 .disabled(state.isBusy)
-                .onChange(of: state.selectedModel) {
-                    state.applySelectedModel()
+                if let message = state.modelError {
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -290,7 +306,7 @@ private struct LevelBar: View {
             Text(label)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-                .frame(width: 24, alignment: .leading)
+                .frame(width: 42, alignment: .leading)
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule()

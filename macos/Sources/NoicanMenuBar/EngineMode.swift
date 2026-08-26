@@ -1,9 +1,11 @@
 import Foundation
 
-/// Engine lifecycle as shown in the menu: drives the status dot and text.
+/// Settled engine lifecycle: the last known outcome, never a transition.
+/// In-flight transitions are expressed solely by `AppState.isBusy` (the
+/// spinner), so every surface rendered from this moves exactly once per
+/// transition, settled state to settled state.
 enum EnginePhase: Equatable {
     case off
-    case busy(String)
     case running
     case failed(String)
 }
