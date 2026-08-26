@@ -149,7 +149,7 @@ struct MenuView: View {
     private var settings: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Microphone")
+                Text("Mic")
                     .font(.caption)
                     .fontWeight(.semibold)
                     .foregroundStyle(.secondary)

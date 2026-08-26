@@ -55,7 +55,8 @@ struct ModePicker: View {
             }
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(StaticButtonStyle())
+        .focusEffectDisabled()
         .disabled(isBusy)
     }
 
@@ -75,5 +76,14 @@ struct ModePicker: View {
                 : AnyShapeStyle(Color.white)
         }
         return AnyShapeStyle(.secondary)
+    }
+}
+
+/// A button style with no pressed-state visual at all: the sliding pill
+/// is the selection feedback, and the plain style's momentary dimming
+/// read as flicker on the segments.
+private struct StaticButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
     }
 }
