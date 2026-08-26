@@ -201,7 +201,7 @@ final class AppState: ObservableObject {
         }
         let model = selectedModel
         isBusy = true
-        phase = .busy("Loading…")
+        phase = .busy
         // Detached: weight download and model construction must not run on
         // (or inherit) the main actor.
         Task.detached {
@@ -254,7 +254,7 @@ final class AppState: ObservableObject {
         let model = selectedModel
         let aggregate = self.aggregate
         isBusy = true
-        phase = .busy("Starting…")
+        phase = .busy
         // Detached: aggregate creation polls the device until it is alive
         // (up to ~1.5 s) and engine start may download weights — neither may
         // block the main actor. `isBusy` keeps this the only operation
@@ -483,13 +483,7 @@ extension AppState {
     /// outcome lands, so rapid taps cannot interleave.
     private func applyMonitor(_ enabled: Bool, engine: RustEngine) {
         isBusy = true
-        // Keep an in-flight busy message (the Off → Preview continuation
-        // arrives here straight from "Starting <model>…"): overwriting it
-        // for the milliseconds the monitor start takes just flashes a
-        // second caption. Standalone Preview ↔ On toggles get their own.
-        if case .busy = phase {} else {
-            phase = .busy(enabled ? "Starting preview…" : "Stopping preview…")
-        }
+        phase = .busy
         Task.detached {
             let result = Result { try engine.setMonitor(enabled) }
             await self.finishMonitorChange(result, enabled: enabled)

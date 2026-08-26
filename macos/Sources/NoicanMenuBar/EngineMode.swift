@@ -1,9 +1,11 @@
 import Foundation
 
 /// Engine lifecycle as shown in the menu: drives the status dot and text.
+/// `busy` carries no message: the spinner is the only transitional
+/// feedback, and the status line keeps showing the last settled state.
 enum EnginePhase: Equatable {
     case off
-    case busy(String)
+    case busy
     case running
     case failed(String)
 }

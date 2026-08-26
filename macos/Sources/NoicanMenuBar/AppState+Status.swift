@@ -3,17 +3,20 @@ import Foundation
 // MARK: - Status projections for the menu UI
 
 extension AppState {
-    /// One-line status for the header. Deliberately never multi-line:
-    /// text above the mode control must not change the control's
-    /// vertical position (the sliding pill would move mid-animation).
-    /// Full failure text lives in `engineErrorMessage`, shown below the
-    /// control instead.
+    /// One-line status for the header, rendered from the *settled* phase:
+    /// transitions never change it (the spinner is the busy feedback), so
+    /// each transition moves the text exactly once, settled to settled.
+    /// Deliberately never multi-line: text above the mode control must
+    /// not change the control's vertical position (the sliding pill would
+    /// move mid-animation). Full failure text lives in
+    /// `engineErrorMessage`, shown below the control instead.
     var statusText: String {
-        switch phase {
+        switch settledPhase {
         case .off:
             return inputDevices.isEmpty ? "No input device" : "Off"
-        case let .busy(message):
-            return message
+        case .busy:
+            // Unreachable: the settled mirror skips busy phases.
+            return "Working…"
         case .running:
             // No model name here: the Model picker below already shows it
             // (and reverts on failed switches, so it never lies).
