@@ -39,6 +39,10 @@ final class AppState: ObservableObject {
     /// cannot run at 48 kHz) while the engine kept the previous one.
     /// Shown under the microphone list; cleared on the next selection.
     @Published private(set) var microphoneError: String?
+    /// Why the last model switch failed while the engine kept running the
+    /// previous model. Shown under the Model picker (this is not an
+    /// engine failure, so the phase — and the pill — stay green).
+    @Published private(set) var modelError: String?
     /// Peak meters, refreshed by `pollLevels()` only while the popover is
     /// open. Independent of the Preview state: they move whenever the
     /// engine runs.
@@ -184,49 +188,8 @@ final class AppState: ObservableObject {
         }
     }
 
-    func selectMicrophone(_ uid: String) {
-        guard uid != selectedInputUID else {
-            return
-        }
-        selectedInputUID = uid
-        applySelectedInput()
-    }
-
-    private func applySelectedInput() {
-        microphoneError = nil
-        // Changing the microphone while Off only updates the selection;
-        // clear a stale failure so the menu stops blaming the previous
-        // device the moment another one is chosen.
-        if mode == .off, case .failed = phase {
-            phase = .off
-        }
-        guard mode != .off, !isBusy, engine != nil, selectedInputUID != activeInputUID else {
-            return
-        }
-        // Pre-flight the new microphone before tearing anything down.
-        if let reason = microphoneCapabilityError(for: selectedInputUID) {
-            if let activeInputUID {
-                // The engine keeps running on the current microphone;
-                // put the checkmark back and explain under the list.
-                selectedInputUID = activeInputUID
-                microphoneError = reason
-            } else {
-                phase = .failed(reason)
-            }
-            return
-        }
-        // The private aggregate is composed around the microphone at
-        // start time, so a live change rebuilds the transport with the
-        // same model and mode (a brief gap is inherent). Because the mode
-        // keeps the user's intent across failures, this same path
-        // auto-recovers: picking a working microphone after a failed
-        // start restarts straight into the selected mode.
-        let monitor = mode == .preview
-        teardownEngine()
-        start(monitor: monitor)
-    }
-
     func applySelectedModel() {
+        modelError = nil
         // Changing the model while stopped starts nothing; clear a stale
         // failure message so the menu does not keep blaming the last
         // attempt.
@@ -254,16 +217,19 @@ final class AppState: ObservableObject {
             activeModelID = model
             phase = .running
         case let .failure(error):
-            // The engine keeps running the previous model; keep the picker
-            // truthful.
+            // The engine keeps running the previous model, so this is not
+            // an engine failure: the phase stays running (blue pill,
+            // meters alive) and the reason renders under the Model
+            // picker, with the picker reverted to stay truthful.
             if let activeModelID {
                 selectedModel = activeModelID
             }
-            phase = .failed(error.localizedDescription)
+            modelError = error.localizedDescription
+            phase = .running
         }
     }
 
-    private func start(monitor: Bool) {
+    private func start(monitor: Bool, revertInputUID: String? = nil) {
         guard let engine else {
             phase = .failed("Rust engine unavailable")
             return
@@ -298,15 +264,30 @@ final class AppState: ObservableObject {
                 let aggregateID = try aggregate.create(input: input, virtualOutput: virtualOutput)
                 try engine.start(aggregateDevice: aggregateID, model: model)
             }
-            await self.finishStart(result, model: model, monitor: monitor)
+            await self.finishStart(
+                result,
+                model: model,
+                // Capture the started device: the selection can be
+                // reassigned by device hot-plug during the busy window,
+                // and the transport is bound to this one.
+                inputUID: input.uid,
+                monitor: monitor,
+                revertInputUID: revertInputUID
+            )
         }
     }
 
-    private func finishStart(_ result: Result<Void, Error>, model: String, monitor: Bool) {
+    private func finishStart(
+        _ result: Result<Void, Error>,
+        model: String,
+        inputUID: String,
+        monitor: Bool,
+        revertInputUID: String?
+    ) {
         switch result {
         case .success:
             activeModelID = model
-            activeInputUID = selectedInputUID
+            activeInputUID = inputUID
             startFaultPolling()
             // Preview mode is engine + monitor; the monitor half starts
             // once the transport is up, keeping `isBusy` until its
@@ -318,12 +299,26 @@ final class AppState: ObservableObject {
                 phase = .running
             }
         case let .failure(error):
-            // The mode keeps the user's intent; the red pill tint and the
-            // error below the control say it is not running. Retry by
-            // tapping the segment again or picking another microphone.
             isBusy = false
             teardownEngine()
-            phase = .failed(error.localizedDescription)
+            if let revertInputUID,
+               revertInputUID != inputUID,
+               inputDevices.contains(where: { $0.uid == revertInputUID }) {
+                // A failed live microphone switch must not kill the
+                // session: fall back to the device that was working a
+                // moment ago (one attempt — the fallback start carries no
+                // further revert target). The reason stays visible under
+                // the microphone list.
+                microphoneError = error.localizedDescription
+                selectedInputUID = revertInputUID
+                start(monitor: monitor)
+            } else {
+                // The mode keeps the user's intent; the red pill tint and
+                // the error below the control say it is not running.
+                // Retry by tapping the segment again or picking another
+                // microphone.
+                phase = .failed(error.localizedDescription)
+            }
         }
     }
 
@@ -341,6 +336,8 @@ final class AppState: ObservableObject {
         aggregate.destroy()
         activeModelID = nil
         activeInputUID = nil
+        // A model-switch message describes the torn-down engine; drop it.
+        modelError = nil
     }
 
     private func startFaultPolling() {
@@ -396,6 +393,55 @@ final class AppState: ObservableObject {
         teardownEngine()
         previewError = nil
         phase = .failed(message)
+    }
+}
+
+// MARK: - Microphone selection
+
+extension AppState {
+    func selectMicrophone(_ uid: String) {
+        guard uid != selectedInputUID else {
+            return
+        }
+        selectedInputUID = uid
+        applySelectedInput()
+    }
+
+    private func applySelectedInput() {
+        microphoneError = nil
+        // Changing the microphone while Off only updates the selection;
+        // clear a stale failure so the menu stops blaming the previous
+        // device the moment another one is chosen.
+        if mode == .off, case .failed = phase {
+            phase = .off
+        }
+        guard mode != .off, !isBusy, engine != nil, selectedInputUID != activeInputUID else {
+            return
+        }
+        // Pre-flight the new microphone before tearing anything down.
+        if let reason = microphoneCapabilityError(for: selectedInputUID) {
+            if let activeInputUID {
+                // The engine keeps running on the current microphone;
+                // put the checkmark back and explain under the list.
+                selectedInputUID = activeInputUID
+                microphoneError = reason
+            } else {
+                phase = .failed(reason)
+            }
+            return
+        }
+        // The private aggregate is composed around the microphone at
+        // start time, so a live change rebuilds the transport with the
+        // same model and mode (a brief gap is inherent). Because the mode
+        // keeps the user's intent across failures, this same path
+        // auto-recovers: picking a working microphone after a failed
+        // start restarts straight into the selected mode. If the rebuild
+        // itself fails, the previous device (which was working a moment
+        // ago) is restored instead of leaving the session dead.
+        let monitor = mode == .preview
+        let previousInputUID = activeInputUID
+        teardownEngine()
+        start(monitor: monitor, revertInputUID: previousInputUID)
     }
 }
 

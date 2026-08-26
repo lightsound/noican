@@ -181,6 +181,12 @@ struct MenuView: View {
                 .onChange(of: state.selectedModel) {
                     state.applySelectedModel()
                 }
+                if let message = state.modelError {
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .padding(.horizontal, contentPadding)

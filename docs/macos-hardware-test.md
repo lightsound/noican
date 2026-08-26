@@ -132,8 +132,9 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
     16 kHz path was near-silent; the hybrid routes these models through the
     verified polyphase resampler).
 11. Selecting `TSE Conv-TasNet 48k` must fail gracefully: a clear
-    "requires enrollment" status message, engine still running the previous
-    model, picker reverted.
+    "requires enrollment" message under the Model picker, the engine
+    still running the previous model (status stays `Running`, meters keep
+    moving, pill stays green), picker reverted.
 12. Select Off. Confirm the private Aggregate Device disappears and
     the virtual microphone no longer receives new processed audio.
 
@@ -192,6 +193,10 @@ so changing it while running rebuilds the transport.
    refused in place — the checkmark returns to the working microphone,
    the reason appears under the list, and the engine keeps running
    uninterrupted.
+5. If a live switch fails at runtime (a failure the pre-flight cannot
+   see, e.g. the new device vanishing mid-switch), the app must fall
+   back to the previous microphone automatically — one rebuild attempt,
+   reason under the list — instead of leaving the session dead.
 
 ## Preview (self-monitor)
 
