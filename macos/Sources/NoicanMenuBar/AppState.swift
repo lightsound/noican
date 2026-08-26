@@ -35,7 +35,9 @@ final class AppState: ObservableObject {
     private var allDevices: [AudioDeviceInfo] = []
     private let aggregate = AggregateDevice()
     private var engine: RustEngine?
-    private var activeModelID: String?
+    /// Model the running transport was started/switched to. Readable by
+    /// the status projections in `AppState+Status.swift`.
+    private(set) var activeModelID: String?
     /// Microphone the running transport was built around (the aggregate
     /// is composed at start time, so a live change means a rebuild).
     private var activeInputUID: String?
@@ -96,38 +98,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// One-line status for the header. Deliberately never multi-line:
-    /// text above the mode control must not change the control's
-    /// vertical position (the sliding pill would move mid-animation).
-    /// Full failure text lives in `engineErrorMessage`, shown below the
-    /// control instead.
-    var statusText: String {
-        switch phase {
-        case .off:
-            return inputDevices.isEmpty ? "No input device" : "Off"
-        case let .busy(message):
-            return message
-        case .running:
-            let name = displayName(for: activeModelID ?? selectedModel)
-            return mode == .preview ? "Previewing · \(name)" : "Running · \(name)"
-        case .failed:
-            return "Error"
-        }
-    }
-
-    /// Full engine failure text, displayed under the mode control (with
-    /// the preview messages) so the header height stays constant.
-    var engineErrorMessage: String? {
-        if case let .failed(message) = phase {
-            return message
-        }
-        return nil
-    }
-
-    func displayName(for modelID: String) -> String {
-        models.first { $0.id == modelID }?.displayName ?? modelID
-    }
-
     func refreshDevices() {
         do {
             allDevices = try AudioDeviceCatalog.devices()
@@ -142,8 +112,14 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// The mode control is intent: the system never changes it, only the
+    /// user does. Tapping the already-selected segment retries when the
+    /// intent is unfulfilled (e.g. the last start failed).
     func setMode(_ newMode: EngineMode) {
-        guard !isBusy, newMode != mode, let engine else {
+        guard !isBusy, let engine else {
+            return
+        }
+        guard newMode != mode || isModeUnfulfilled else {
             return
         }
         previewError = nil
@@ -155,19 +131,29 @@ final class AppState: ObservableObject {
             previewUnavailableReason = reason
             return
         }
+        let hadError = engineErrorMessage != nil
         let previous = mode
         mode = newMode
-        switch (previous, newMode) {
-        case (.off, _):
-            start(monitor: newMode == .preview)
-        case (_, .off):
+        switch newMode {
+        case .off:
             stop()
-        case (.on, .preview):
-            applyMonitor(true, engine: engine, fallback: .on)
-        case (.preview, .on):
-            applyMonitor(false, engine: engine, fallback: .preview)
-        default:
-            break
+        case .on:
+            if !hadError, engine.isRunning {
+                // Running healthily: only the monitor half can differ.
+                if previous == .preview {
+                    applyMonitor(false, engine: engine)
+                }
+            } else {
+                teardownEngine()
+                start(monitor: false)
+            }
+        case .preview:
+            if !hadError, engine.isRunning {
+                applyMonitor(true, engine: engine)
+            } else {
+                teardownEngine()
+                start(monitor: true)
+            }
         }
     }
 
@@ -209,23 +195,24 @@ final class AppState: ObservableObject {
     }
 
     private func applySelectedInput() {
-        // Changing the microphone while stopped only updates the
-        // selection; clear a stale failure (e.g. a 48 kHz-incapable
-        // Bluetooth microphone) so the menu stops blaming the previous
+        // Changing the microphone while Off only updates the selection;
+        // clear a stale failure so the menu stops blaming the previous
         // device the moment another one is chosen.
         if mode == .off, case .failed = phase {
             phase = .off
         }
-        guard mode != .off, !isBusy, let engine, selectedInputUID != activeInputUID else {
+        guard mode != .off, !isBusy, engine != nil, selectedInputUID != activeInputUID else {
             return
         }
         // The private aggregate is composed around the microphone at
         // start time, so a live change rebuilds the transport with the
-        // same model and mode (a brief gap is inherent).
+        // same model and mode (a brief gap is inherent). Because the mode
+        // keeps the user's intent across failures, this same path
+        // auto-recovers: picking a working microphone after a failed
+        // start (e.g. a 48 kHz-incapable Bluetooth headset) restarts
+        // straight into the selected mode.
         let monitor = mode == .preview
-        stopFaultPolling()
-        engine.stop()
-        aggregate.destroy()
+        teardownEngine()
         start(monitor: monitor)
     }
 
@@ -309,34 +296,35 @@ final class AppState: ObservableObject {
             startFaultPolling()
             // Preview mode is engine + monitor; the monitor half starts
             // once the transport is up, keeping `isBusy` until its
-            // outcome is reconciled. A failure rolls back to Off — the
-            // engine was started only for this preview.
+            // outcome lands.
             if monitor, let engine {
-                applyMonitor(true, engine: engine, fallback: .off)
+                applyMonitor(true, engine: engine)
             } else {
                 isBusy = false
                 phase = .running
             }
         case let .failure(error):
+            // The mode keeps the user's intent; the red pill tint and the
+            // error below the control say it is not running. Retry by
+            // tapping the segment again or picking another microphone.
             isBusy = false
-            stopEngine()
+            teardownEngine()
             phase = .failed(error.localizedDescription)
         }
     }
 
     private func stop() {
-        stopEngine()
+        teardownEngine()
         phase = .off
     }
 
-    /// Tears the engine down and returns the mode to Off. Deliberately
-    /// leaves `previewError` alone: user-initiated transitions clear it
-    /// in `setMode`, while a preview rollback keeps its reason visible.
-    private func stopEngine() {
+    /// Tears the engine down without touching `mode` (the user's intent)
+    /// or the messages under the mode control: user-initiated transitions
+    /// clear those in `setMode`.
+    private func teardownEngine() {
         stopFaultPolling()
         engine?.stop()
         aggregate.destroy()
-        mode = .off
         activeModelID = nil
         activeInputUID = nil
     }
@@ -386,8 +374,12 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Runtime stops (device loss, stalls) tear the engine down but keep
+    /// the mode: the pill shows what the user asked for, the red tint and
+    /// the message say it is not running, and selecting another
+    /// microphone (or re-tapping the segment) restarts into that mode.
     private func stopWithError(_ message: String) {
-        stopEngine()
+        teardownEngine()
         previewError = nil
         phase = .failed(message)
     }
@@ -399,62 +391,43 @@ extension AppState {
     /// Sends the monitor toggle to the engine off the main actor,
     /// serialized like every other engine transition: `isBusy` blocks
     /// concurrent mode changes (and the pollers' engine calls) until the
-    /// outcome is reconciled, so rapid taps can never leave the published
-    /// mode disagreeing with the actual monitor state.
-    ///
-    /// `fallback` is the pre-transition mode to return to when the
-    /// toggle fails: `.on` keeps the engine running, `.off` rolls the
-    /// whole start back (the engine was started only for this preview).
-    private func applyMonitor(_ enabled: Bool, engine: RustEngine, fallback: EngineMode) {
+    /// outcome lands, so rapid taps cannot interleave.
+    private func applyMonitor(_ enabled: Bool, engine: RustEngine) {
         isBusy = true
         phase = .busy(enabled ? "Starting preview…" : "Stopping preview…")
         Task.detached {
             let result = Result { try engine.setMonitor(enabled) }
-            await self.finishMonitorChange(result, engine: engine, fallback: fallback)
+            await self.finishMonitorChange(result)
         }
     }
 
-    private func finishMonitorChange(
-        _ result: Result<Void, Error>,
-        engine: RustEngine,
-        fallback: EngineMode
-    ) {
+    private func finishMonitorChange(_ result: Result<Void, Error>) {
         isBusy = false
         guard mode != .off else {
             return
         }
-        switch result {
-        case .success:
-            // Reconcile with the engine's actual monitor state so the
-            // mode control never lies about what is audible.
-            mode = engine.isMonitoring ? .preview : .on
-            phase = .running
-        case let .failure(error):
+        // The engine itself keeps running either way; the mode keeps the
+        // user's intent. On failure the pill's warning tint plus the
+        // message below the control say the preview is not playing, and
+        // re-tapping Preview retries.
+        phase = .running
+        if case let .failure(error) = result {
             previewError = error.localizedDescription
-            if fallback == .off {
-                // Return to exactly the pre-transition state; the reason
-                // stays visible under the mode control.
-                stopEngine()
-                phase = .off
-            } else {
-                mode = engine.isMonitoring ? .preview : fallback
-                phase = .running
-            }
         }
     }
 
     /// Reacts to the engine-side feedback killswitch: the worker already
     /// silenced the preview, so release the playback device and tell the
-    /// user why (the mode falls back to On when the monitor is torn
-    /// down). Checked lock-free at 20 Hz while the popover is open and at
-    /// 1 Hz by the health poll, in any running mode — a trip is handled
-    /// even if a transition already moved the mode off Preview.
+    /// user why. The mode stays on Preview (it is the user's intent);
+    /// the warning tint and the message say it is not playing, and
+    /// re-tapping Preview retries. Checked lock-free at 20 Hz while the
+    /// popover is open and at 1 Hz by the health poll.
     private func checkMonitorTrip() {
         guard mode != .off, !isBusy, let engine, engine.monitorTripped else {
             return
         }
         previewError = "Preview stopped itself: feedback detected. Use headphones, then select Preview again."
-        applyMonitor(false, engine: engine, fallback: .on)
+        applyMonitor(false, engine: engine)
     }
 
     /// Maintains a shown refusal message only: once a Preview attempt was

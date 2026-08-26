@@ -180,9 +180,12 @@ so changing it while running rebuilds the transport.
 2. Newly connected input devices must appear in the list within a
    moment, without reopening anything; disconnected ones must disappear.
 3. Select a 48 kHz-incapable device (e.g. a Bluetooth headset
-   microphone) and turn the engine on: the start must fail with a clear
-   error. Then select the built-in microphone: the error must clear
-   immediately, and selecting On must start normally.
+   microphone) and select On: the start must fail with a clear error
+   under the mode control, while the pill **stays on On** with a red
+   warning tint (the control shows the user's intent; the system never
+   moves it). Then select the built-in microphone: the engine must
+   restart automatically into the selected mode and reach Running.
+   Re-tapping the red segment must also retry.
 
 ## Preview (self-monitor)
 
@@ -226,9 +229,11 @@ between them only arms or disarms the monitor.
    control. With the message showing, switch the default output back to
    headphones: the message must clear within about a second, and
    pressing Preview must then work.
-9. A monitor start failure after an Off → Preview engine start (a
-   runtime failure that passed the pre-flight check) must roll the
-   engine back to Off, keeping the reason visible under the control.
+9. A monitor failure at runtime (one that passed the pre-flight check),
+   including a feedback-guard trip: the pill stays on Preview with a red
+   warning tint, the engine keeps running (status returns to
+   `Running · <model>`), and the reason renders under the control.
+   Re-tapping Preview retries the monitor.
 10. Select Off, then Preview again: the preview must come back cleanly
     with no stale audio replayed and no double playback.
 11. Compare % CPU in Activity Monitor between On and Preview: the
@@ -240,8 +245,9 @@ between them only arms or disarms the monitor.
     as the default output — which the device-type check cannot classify —
     select Preview and raise the volume until feedback starts: within
     about half a second of sustained near-clipping output the feedback
-    guard must stop the preview on its own, the mode must fall back to
-    On, and the menu must explain why. Re-selecting Preview re-arms it.
+    guard must silence the preview on its own; the pill stays on Preview
+    with the red warning tint, the engine keeps running, and the menu
+    explains why. Re-tapping Preview re-arms the guard and the monitor.
 
 Changing the default output while previewing does not retarget the
 monitor in this version; switch to On and back to Preview to pick up the
@@ -355,21 +361,26 @@ Run the Preview and Level meters procedures above; the build passes when:
    clears within about a second of a safe output returning.
 6. **Feedback guard** *(optional; needs external speakers)*: sustained
    feedback through an unclassifiable output stops the preview by itself
-   within ~1 s, falls back to On, and explains why.
+   within ~1 s; the pill stays on Preview with the red warning tint and
+   the menu explains why.
 7. **Restart coherence**: Off → Preview brings the preview back cleanly,
    with no stale audio and no double playback.
-8. **Preview cost**: % CPU does not increase materially in Preview mode.
-9. **Input meter follows speech**: the input bar moves when you speak.
-10. **Suppression visible**: during noise-only passages (fan, typing)
+8. **Intent is never moved**: on any failure (start failure, device
+   loss, monitor failure, feedback trip) the pill keeps the user's
+   selection with a red warning tint and the reason below the control;
+   re-tapping the segment retries, and selecting a working microphone
+   restarts into the selected mode automatically.
+9. **Preview cost**: % CPU does not increase materially in Preview mode.
+10. **Input meter follows speech**: the input bar moves when you speak.
+11. **Suppression visible**: during noise-only passages (fan, typing)
     the output bar sits clearly below the input bar.
-11. **Meter stability**: meters do not spike or freeze across model
-    switches; the monitoring section is hidden while Off and returns at
-    zero on the next start.
-12. **Microphone switching**: changing the microphone while running
+12. **Meter stability**: meters do not spike or freeze across model
+    switches; the monitoring section is hidden while Off (and while a
+    failure is shown) and returns at zero on the next start.
+13. **Microphone switching**: changing the microphone while running
     rebuilds the transport with the same model and mode after a brief
-    gap; a stale start error clears as soon as another microphone is
-    selected; hot-plugged devices appear in the list automatically.
-13. **Mode-control animation**: the sliding pill stays visually intact
+    gap; hot-plugged devices appear in the list automatically.
+14. **Mode-control animation**: the sliding pill stays visually intact
     while multi-line status/error text appears and disappears around it.
 
 ## Result record

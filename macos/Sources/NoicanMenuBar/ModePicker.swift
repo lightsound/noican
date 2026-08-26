@@ -6,9 +6,14 @@ import SwiftUI
 /// unsafe output — the caller keeps the mode where it was and explains
 /// why below the control, which confuses less than a segment that
 /// cannot be pressed.
+///
+/// The selection is the user's *intent* and never moves on its own: when
+/// the selected mode is not actually delivering (`isUnfulfilled`), the
+/// pill turns red instead, and tapping the same segment retries.
 struct ModePicker: View {
     let mode: EngineMode
     let isBusy: Bool
+    let isUnfulfilled: Bool
     let select: (EngineMode) -> Void
 
     @Namespace private var highlightNamespace
@@ -54,14 +59,18 @@ struct ModePicker: View {
         .disabled(isBusy)
     }
 
-    /// Off reads as a neutral pill; the active modes carry the accent.
+    /// Off reads as a neutral pill; the active modes carry the accent;
+    /// an unfulfilled selection warns in red.
     private func pillColor(for candidate: EngineMode) -> Color {
-        candidate == .off ? Color.primary.opacity(0.18) : Color.accentColor
+        if isUnfulfilled {
+            return .red
+        }
+        return candidate == .off ? Color.primary.opacity(0.18) : Color.accentColor
     }
 
     private func labelStyle(for candidate: EngineMode) -> AnyShapeStyle {
         if mode == candidate {
-            return candidate == .off
+            return candidate == .off && !isUnfulfilled
                 ? AnyShapeStyle(.primary)
                 : AnyShapeStyle(Color.white)
         }

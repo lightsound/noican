@@ -20,7 +20,7 @@ struct MenuView: View {
             modePicker
             Divider()
                 .padding(.horizontal, contentPadding)
-            if state.mode != .off {
+            if state.mode != .off, state.engineErrorMessage == nil {
                 monitoring
                 Divider()
                     .padding(.horizontal, contentPadding)
@@ -102,6 +102,7 @@ struct MenuView: View {
             ModePicker(
                 mode: state.mode,
                 isBusy: state.isBusy,
+                isUnfulfilled: state.isModeUnfulfilled,
                 select: { state.setMode($0) }
             )
             if let message = state.engineErrorMessage {
