@@ -1,8 +1,12 @@
-//! Audited AUHAL FFI and real-time callbacks.
+//! Audited AUHAL FFI and real-time callbacks for the main transport.
+//!
+//! The preview monitor's AUHAL lifecycle lives in the [`monitor`]
+//! submodule; shared plumbing (unit creation, property setting, render
+//! callback attachment, disposal) is defined here and reused there.
 
 #![expect(
     unsafe_code,
-    reason = "AUHAL and os_workgroup are C APIs; unsafe code is confined to this module and callbacks only touch preallocated buffers and lock-free rings"
+    reason = "AUHAL and os_workgroup are C APIs; unsafe code is confined to this module tree and callbacks only touch preallocated buffers and lock-free rings"
 )]
 
 use std::{
@@ -19,7 +23,14 @@ use std::{
 use noican_core::SwitchingEngine;
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use crate::monitor::{MonitorTee, fourcc};
+use crate::observe::StreamLevels;
 use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
+
+mod monitor;
+
+use monitor::MonitorControl;
+pub use monitor::check_monitor_target;
 
 type OSStatus = i32;
 type AudioUnit = *mut c_void;
@@ -302,6 +313,16 @@ struct CallbackContext {
     frames: Arc<AtomicU64>,
 }
 
+/// Everything the inference worker owns or shares. Bundled so the worker
+/// spawn passes one value instead of a long argument list.
+struct WorkerLinks {
+    engine: SwitchingEngine,
+    input: Consumer<f32>,
+    output: Producer<f32>,
+    tee: MonitorTee,
+    levels: Arc<StreamLevels>,
+}
+
 /// Running AUHAL instance and inference worker.
 #[derive(Debug)]
 pub struct Runtime {
@@ -313,6 +334,9 @@ pub struct Runtime {
     frames: Arc<AtomicU64>,
     worker: Option<JoinHandle<()>>,
     running: bool,
+    /// Control-plane half of the preview monitor (the worker half is the
+    /// [`MonitorTee`] owned by the inference worker).
+    monitor: MonitorControl,
 }
 
 impl Runtime {
@@ -322,12 +346,24 @@ impl Runtime {
     /// `BlackHole` output subdevice with drift compensation configured by the
     /// Swift control plane.
     ///
+    /// `levels` receives per-block input/output peak meters from the
+    /// inference worker for the lifetime of this runtime; the worker
+    /// resets it to silence on start and on exit. `monitor_tripped` is
+    /// raised by the worker's feedback guard and cleared on every monitor
+    /// toggle; keeping it caller-owned lets the control plane read it
+    /// without any lock.
+    ///
     /// # Errors
     ///
     /// Returns [`CoreAudioError`] when AUHAL setup or worker startup fails.
     /// Every error path releases the AUHAL instance, the callback context,
     /// and the worker (RAII guards; nothing leaks on failed starts).
-    pub fn start(aggregate_device: u32, engine: SwitchingEngine) -> Result<Self, CoreAudioError> {
+    pub fn start(
+        aggregate_device: u32,
+        engine: SwitchingEngine,
+        levels: Arc<StreamLevels>,
+        monitor_tripped: Arc<AtomicBool>,
+    ) -> Result<Self, CoreAudioError> {
         let samples_ready = Arc::new(DispatchSemaphore::new()?);
         let mut unit = AuhalUnit::create()?;
         configure_auhal(unit.raw(), aggregate_device)?;
@@ -344,38 +380,32 @@ impl Runtime {
             samples_ready: Arc::clone(&samples_ready),
             frames: Arc::clone(&frames),
         })));
-        let callback_property = AudioUnitRenderCallback {
-            callback: Some(render_callback),
-            context: context.raw().cast(),
-        };
-        let callback_size = size_u32::<AudioUnitRenderCallback>()?;
-        check_status(
-            unsafe {
-                AudioUnitSetProperty(
-                    unit.raw(),
-                    AUDIO_UNIT_PROPERTY_SET_RENDER_CALLBACK,
-                    AUDIO_UNIT_SCOPE_INPUT,
-                    OUTPUT_BUS,
-                    (&raw const callback_property).cast(),
-                    callback_size,
-                )
-            },
+        attach_render_callback(
+            unit.raw(),
+            render_callback,
+            context.raw().cast(),
             "AudioUnitSetProperty(render callback)",
         )?;
         unit.initialize()?;
 
         let workgroup = audio_workgroup(unit.raw())?;
+        let (monitor_control, tee) = monitor::monitor_pair(monitor_tripped);
         let shutdown = Arc::new(AtomicBool::new(false));
         let worker_shutdown = Arc::clone(&shutdown);
         let worker_fault = Arc::clone(&faulted);
         let worker_semaphore = Arc::clone(&samples_ready);
+        let links = WorkerLinks {
+            engine,
+            input: input_consumer,
+            output: output_producer,
+            tee,
+            levels,
+        };
         let worker = thread::Builder::new()
             .name("noican-inference".to_owned())
             .spawn(move || {
                 processing_loop(
-                    engine,
-                    input_consumer,
-                    output_producer,
+                    links,
                     &worker_shutdown,
                     &worker_fault,
                     &worker_semaphore,
@@ -384,10 +414,7 @@ impl Runtime {
             })
             .map_err(|error| CoreAudioError::Worker(error.to_string()))?;
 
-        if let Err(error) = check_status(
-            unsafe { AudioOutputUnitStart(unit.raw()) },
-            "AudioOutputUnitStart",
-        ) {
+        if let Err(error) = start_output_unit(unit.raw(), "AudioOutputUnitStart") {
             shutdown.store(true, Ordering::Release);
             samples_ready.signal();
             let _ignored = worker.join();
@@ -403,6 +430,7 @@ impl Runtime {
             frames,
             worker: Some(worker),
             running: true,
+            monitor: monitor_control,
         })
     }
 
@@ -411,18 +439,16 @@ impl Runtime {
         if !self.running {
             return;
         }
+        self.monitor.disable();
         let unit = self.unit as AudioUnit;
-        unsafe {
-            let _ignored = AudioOutputUnitStop(unit);
-        }
+        stop_output_unit(unit);
         self.shutdown.store(true, Ordering::Release);
         self.samples_ready.signal();
         if let Some(worker) = self.worker.take() {
             let _ignored = worker.join();
         }
+        dispose_unit(unit);
         unsafe {
-            let _ignored = AudioUnitUninitialize(unit);
-            let _ignored = AudioComponentInstanceDispose(unit);
             drop(Box::from_raw(self.callback as *mut CallbackContext));
         }
         self.running = false;
@@ -446,6 +472,49 @@ impl Runtime {
     #[must_use]
     pub fn frames_processed(&self) -> u64 {
         self.frames.load(Ordering::Relaxed)
+    }
+
+    /// Enables or disables the preview self-monitor: the worker tees its
+    /// processed output into the monitor ring and a second, output-only
+    /// AUHAL plays it on the system default output device.
+    ///
+    /// The monitor target is resolved at enable time; it does not follow a
+    /// later default-output change (re-enable preview to pick it up).
+    /// Monitor failures never affect the meeting-facing path, and both
+    /// directions are idempotent. Enabling clears a pending feedback trip
+    /// and re-arms a still-running monitor.
+    ///
+    /// Enabling can take a while (`AudioOutputUnitStart` on a sleeping
+    /// output device); callers that also poll lock-guarded status getters
+    /// should gate concurrent control calls (the menu app uses its busy
+    /// flag for this).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreAudioError::NotRunning`] after [`Runtime::stop`], a
+    /// refusal from [`crate::monitor::classify_monitor_target`] when the
+    /// default output must not receive the preview (loopback, aggregate,
+    /// or built-in speakers), and other [`CoreAudioError`] values when the
+    /// monitor AUHAL cannot start.
+    pub fn set_monitor(&mut self, enabled: bool) -> Result<(), CoreAudioError> {
+        if enabled {
+            if !self.running {
+                return Err(CoreAudioError::NotRunning);
+            }
+            self.monitor.enable()
+        } else {
+            self.monitor.disable();
+            Ok(())
+        }
+    }
+
+    /// Whether the monitor AUHAL is up. During a feedback trip the tee is
+    /// disarmed (the monitor renders silence) but the AUHAL stays up until
+    /// the next [`Runtime::set_monitor`] call, so this remains true
+    /// through that window.
+    #[must_use]
+    pub const fn is_monitoring(&self) -> bool {
+        self.monitor.is_active()
     }
 }
 
@@ -501,17 +570,7 @@ fn configure_auhal(unit: AudioUnit, device: AudioDeviceId) -> Result<(), CoreAud
         &device,
         "select Aggregate Device",
     )?;
-    let format = AudioStreamBasicDescription {
-        sample_rate: 48_000.0,
-        format_id: AUDIO_FORMAT_LINEAR_PCM,
-        format_flags: AUDIO_FORMAT_FLAG_IS_FLOAT | AUDIO_FORMAT_FLAG_IS_PACKED,
-        bytes_per_packet: 4,
-        frames_per_packet: 1,
-        bytes_per_frame: 4,
-        channels_per_frame: 1,
-        bits_per_channel: 32,
-        reserved: 0,
-    };
+    let format = pcm_format(1);
     set_property(
         unit,
         AUDIO_UNIT_PROPERTY_STREAM_FORMAT,
@@ -528,6 +587,69 @@ fn configure_auhal(unit: AudioUnit, device: AudioDeviceId) -> Result<(), CoreAud
         &format,
         "set AUHAL render format",
     )
+}
+
+/// Packed-float PCM at the 48 kHz engine rate with `channels` interleaved
+/// channels (shared by the main capture/render and monitor formats).
+const fn pcm_format(channels: u32) -> AudioStreamBasicDescription {
+    AudioStreamBasicDescription {
+        sample_rate: 48_000.0,
+        format_id: AUDIO_FORMAT_LINEAR_PCM,
+        format_flags: AUDIO_FORMAT_FLAG_IS_FLOAT | AUDIO_FORMAT_FLAG_IS_PACKED,
+        bytes_per_packet: 4 * channels,
+        frames_per_packet: 1,
+        bytes_per_frame: 4 * channels,
+        channels_per_frame: channels,
+        bits_per_channel: 32,
+        reserved: 0,
+    }
+}
+
+/// Registers `callback`/`context` as the render provider on an output
+/// unit's input scope (the AUHAL output-element callback slot).
+fn attach_render_callback(
+    unit: AudioUnit,
+    callback: RenderCallback,
+    context: *mut c_void,
+    operation: &'static str,
+) -> Result<(), CoreAudioError> {
+    let property = AudioUnitRenderCallback {
+        callback: Some(callback),
+        context,
+    };
+    check_status(
+        unsafe {
+            AudioUnitSetProperty(
+                unit,
+                AUDIO_UNIT_PROPERTY_SET_RENDER_CALLBACK,
+                AUDIO_UNIT_SCOPE_INPUT,
+                OUTPUT_BUS,
+                (&raw const property).cast(),
+                size_u32::<AudioUnitRenderCallback>()?,
+            )
+        },
+        operation,
+    )
+}
+
+fn start_output_unit(unit: AudioUnit, operation: &'static str) -> Result<(), CoreAudioError> {
+    check_status(unsafe { AudioOutputUnitStart(unit) }, operation)
+}
+
+fn stop_output_unit(unit: AudioUnit) {
+    unsafe {
+        let _ignored = AudioOutputUnitStop(unit);
+    }
+}
+
+/// Uninitializes and disposes a stopped audio unit. Callbacks must no
+/// longer be running (the unit was stopped, and for the main transport
+/// the worker joined).
+fn dispose_unit(unit: AudioUnit) {
+    unsafe {
+        let _ignored = AudioUnitUninitialize(unit);
+        let _ignored = AudioComponentInstanceDispose(unit);
+    }
 }
 
 fn set_property<T>(
@@ -583,14 +705,20 @@ fn audio_workgroup(unit: AudioUnit) -> Result<usize, CoreAudioError> {
 const WORKER_WAIT_NS: i64 = 2_000_000;
 
 fn processing_loop(
-    mut engine: SwitchingEngine,
-    mut input: Consumer<f32>,
-    mut output: Producer<f32>,
+    links: WorkerLinks,
     shutdown: &Arc<AtomicBool>,
     faulted: &Arc<AtomicBool>,
     samples_ready: &DispatchSemaphore,
     workgroup: usize,
 ) {
+    let WorkerLinks {
+        mut engine,
+        mut input,
+        mut output,
+        mut tee,
+        levels,
+    } = links;
+    levels.reset();
     let workgroup = workgroup as *mut c_void;
     let mut token = WorkgroupJoinToken::default();
     let joined = unsafe { os_workgroup_join(workgroup, &raw mut token) } == 0;
@@ -613,6 +741,12 @@ fn processing_loop(
                         output_block.fill(0.0);
                         faulted.store(true, Ordering::Release);
                     }
+                    levels.update(&input_block, &output_block);
+                    // Preview branch: the tee only copies into its
+                    // preallocated monitor ring (skipped entirely while
+                    // disarmed) and disarms itself on sustained feedback;
+                    // it never delays the main path below.
+                    let _teed = tee.feed(&output_block);
                     for sample in output_block {
                         let _ignored = output.push(sample);
                     }
@@ -631,6 +765,8 @@ fn processing_loop(
             os_workgroup_leave(workgroup, &raw mut token);
         }
     }
+    // Meters read 0 whenever no worker is running (engine stopped).
+    levels.reset();
 }
 
 unsafe extern "C" fn render_callback(
@@ -702,8 +838,4 @@ const fn check_status(status: OSStatus, operation: &'static str) -> Result<(), C
 fn size_u32<T>() -> Result<u32, CoreAudioError> {
     u32::try_from(size_of::<T>())
         .map_err(|error| CoreAudioError::Worker(format!("property size overflow: {error}")))
-}
-
-const fn fourcc(bytes: [u8; 4]) -> u32 {
-    u32::from_be_bytes(bytes)
 }

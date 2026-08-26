@@ -45,6 +45,48 @@ final class RustEngine: @unchecked Sendable {
         try requireSuccess(result)
     }
 
+    /// Toggles the preview self-monitor (processed voice on the system
+    /// default output). Fails when the engine is stopped or the default
+    /// output is a virtual loopback; the meeting-facing path is never
+    /// affected. The monitor does not survive an engine stop/start, so
+    /// callers re-enable it after `start`.
+    func setMonitor(_ enabled: Bool) throws {
+        try requireSuccess(noican_engine_set_monitor(handle, enabled ? 1 : 0))
+    }
+
+    var isMonitoring: Bool {
+        noican_engine_is_monitoring(handle) != 0
+    }
+
+    /// True when the feedback guard auto-stopped the preview (sustained
+    /// near-clipping monitor output). Callers should disable the monitor
+    /// and tell the user; the meeting-facing path is unaffected.
+    var monitorTripped: Bool {
+        noican_engine_monitor_tripped(handle) != 0
+    }
+
+    /// Reason the current system default output must not receive the
+    /// preview (loopback, aggregate, or built-in speakers), or nil when
+    /// preview may start. A pure inspection — a few Core Audio property
+    /// reads, no audio objects — so it is cheap to poll.
+    static var monitorTargetError: String? {
+        copyString { buffer, capacity in
+            noican_monitor_target_error(buffer, capacity)
+        }
+    }
+
+    /// Decayed linear peak (0–1) of the model input, measured per 10 ms
+    /// block by the inference worker; 0 while stopped. Reads one atomic —
+    /// never blocks, so it is safe to poll from the UI.
+    var inputLevel: Float {
+        noican_engine_input_level(handle)
+    }
+
+    /// Decayed linear peak (0–1) of the model output; see `inputLevel`.
+    var outputLevel: Float {
+        noican_engine_output_level(handle)
+    }
+
     var isRunning: Bool {
         noican_engine_is_running(handle) != 0
     }

@@ -107,13 +107,17 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
 2. Launch `dist/Noican.app`.
 3. Confirm the menu bar popover shows:
    - the status header with a state indicator,
-   - the Noise Cancellation toggle,
-   - the Microphone picker listing physical inputs,
-   - the Model picker listing **every registry stage**: Passthrough,
-     FastEnhancer T/B/S/M/L, DPDFNet2, DPDFNet8, DeepFilterNet3, UL-UNAS,
-     Hush, and TSE Conv-TasNet 48k marked "requires enrollment".
+   - the Off / Preview / On mode control (sliding-pill segments),
+   - the Microphone list showing every physical input with a checkmark
+     on the selection,
+   - the Model picker (below the Microphone list) listing **every
+     registry stage**: Passthrough, FastEnhancer T/B/S/M/L, DPDFNet2,
+     DPDFNet8, DeepFilterNet3, UL-UNAS, Hush, and TSE Conv-TasNet 48k
+     marked "requires enrollment".
+   The monitoring section (level bars) must be absent while the mode is
+   Off and appear while the engine runs.
 4. Select a physical microphone and `FastEnhancer-B 48k`.
-5. Enable the toggle and grant microphone access when macOS prompts.
+5. Select On and grant microphone access when macOS prompts.
 6. Confirm status changes to `Running · FastEnhancer-B 48k`.
 7. In QuickTime, OBS, or a meeting app, select the BlackHole/Noican virtual
    device as the microphone.
@@ -130,12 +134,14 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
 11. Selecting `TSE Conv-TasNet 48k` must fail gracefully: a clear
     "requires enrollment" status message, engine still running the previous
     model, picker reverted.
-12. Disable the toggle. Confirm the private Aggregate Device disappears and
+12. Select Off. Confirm the private Aggregate Device disappears and
     the virtual microphone no longer receives new processed audio.
 
-If the status reports an audio fault, collect the macOS version, selected
-device UIDs, buffer size, and Console entries. Do not characterize the path
-as working.
+On a failure the header status shows a one-line `Error` and the full
+message renders under the mode control (the header never grows, so the
+control cannot shift). Collect the macOS version, selected device UIDs,
+buffer size, and Console entries. Do not characterize the path as
+working.
 
 ## Model switching
 
@@ -160,6 +166,122 @@ TSE requires a valid ECAPA enrollment and authenticated, checksum-confirmed
 model files as described in [models.md](models.md). It is excluded from this
 step until the upstream access/license blocker is resolved and the app
 grows an enrollment flow.
+
+## Microphone switching
+
+The private aggregate is composed around the microphone at start time,
+so changing it while running rebuilds the transport.
+
+1. While On (or Preview), select a different physical microphone in the
+   list: after a brief busy state the engine must return to Running (or
+   Previewing) with the same model, now capturing from the new device.
+   A short gap is inherent; a crash, a stale aggregate in Audio MIDI
+   Setup, or a dead stream is a failure.
+2. Newly connected input devices must appear in the list within a
+   moment, without reopening anything; disconnected ones must disappear.
+3. Select a 48 kHz-incapable device (e.g. a Bluetooth headset
+   microphone) while Off, then select On: the refusal must be
+   **instant** (a pre-flight reads the device's advertised rates — no
+   busy spinner, no teardown), with a clear reason under the mode
+   control and the pill **staying on On** with a red warning tint (the
+   control shows the user's intent; the system never moves it). Then
+   select the built-in microphone: the engine must restart automatically
+   into the selected mode and reach Running. Re-tapping the red segment
+   must also retry.
+4. While running, click the incapable device in the list: the switch is
+   refused in place — the checkmark returns to the working microphone,
+   the reason appears under the list, and the engine keeps running
+   uninterrupted.
+
+## Preview (self-monitor)
+
+Preview mode runs the engine and additionally plays the processed
+microphone signal on the system default output device through a second,
+output-only AUHAL fed by a dedicated monitor ring. It shares no state
+with the meeting-facing path except the lock-free tee in the inference
+worker. Preview and On both feed the virtual microphone; switching
+between them only arms or disarms the monitor.
+
+1. Connect wired headphones and make them the system default output.
+2. Select Preview in the menu (directly from Off, or from On).
+3. Speak: the processed voice must be audible with a modest constant
+   delay (engine latency plus ~40 ms of monitor ring priming). The delay
+   is by design, not a defect. The status line reads
+   `Previewing · <model>`.
+4. Headphones are mandatory: through speakers the processed microphone
+   feeds back into itself (Phase 0/1 has no AEC). There is deliberately
+   no persistent warning text — unsafe outputs are refused on press with
+   the reason shown, and the feedback guard explains itself when it
+   trips.
+5. Switch models while previewing: the voice must keep playing across
+   the switch with only the bounded fade — no click, no full-scale
+   burst, no dropout beyond the fade.
+6. Switch Preview → On: playback must stop immediately; the engine keeps
+   running without interruption.
+7. While recording from the virtual device in QuickTime, switch between
+   Preview and On: the recording must be unaffected.
+8. Set the system default output to each of the following and press
+   Preview:
+   - the BlackHole/Noican loopback (the preview would reach the meeting
+     twice),
+   - a Multi-Output Device (Audio MIDI Setup) containing BlackHole (the
+     aggregate can hide the meeting loopback, and the feedback guard
+     cannot catch that route),
+   - the built-in speakers (the voice would feed straight back into the
+     microphone).
+   The press must be refused in place: the mode and the engine (whether
+   Off or On) stay exactly as they were — Off never starts the engine —
+   and "Preview is unavailable: …" explains the reason under the
+   control. With the message showing, switch the default output back to
+   headphones: the message must clear within about a second, and
+   pressing Preview must then work.
+9. A monitor failure at runtime (one that passed the pre-flight check),
+   including a feedback-guard trip: the pill stays on Preview with a red
+   warning tint, the engine keeps running (status returns to
+   `Running · <model>`), and the reason renders under the control.
+   Re-tapping Preview retries the monitor.
+10. Select Off, then Preview again: the preview must come back cleanly
+    with no stale audio replayed and no double playback.
+11. Compare % CPU in Activity Monitor between On and Preview: the
+    increase must be small (the monitor path only copies samples).
+12. The monitor clock is not drift-corrected: over long previews an
+    occasional short gap (underrun re-prime) or discarded block
+    (overrun) is acceptable; persistent crackle is not.
+13. *(Optional, external speakers required)* With USB/Bluetooth speakers
+    as the default output — which the device-type check cannot classify —
+    select Preview and raise the volume until feedback starts: within
+    about half a second of sustained near-clipping output the feedback
+    guard must silence the preview on its own; the pill stays on Preview
+    with the red warning tint, the engine keeps running, and the menu
+    explains why. Re-tapping Preview re-arms the guard and the monitor.
+
+Changing the default output while previewing does not retarget the
+monitor in this version; switch to On and back to Preview to pick up the
+new device.
+
+## Level meters
+
+The inference worker publishes per-block (10 ms) input (pre-model) and
+output (post-model) peak levels with a short exponential decay; the menu
+polls them at ~20 Hz only while the popover is open. The meters draw on
+a shared −60…0 dB scale and are shown only while the engine runs.
+
+1. Select On (or Preview) and open the popover.
+2. Speak: the input bar must move with your voice, and the output bar
+   must follow while you speak.
+3. Stay silent with steady noise present (fan, keyboard typing): the
+   output bar must sit clearly below the input bar — visual confirmation
+   that noise suppression is working without listening to the stream.
+4. Switch models while watching: the bars must not spike to full scale,
+   freeze, or oscillate wildly (only the bounded switch fade).
+5. The meters must move identically in Preview and On.
+6. Select Off: the monitoring section disappears (and reappears at zero
+   on the next start).
+7. Close the popover and watch the app in Activity Monitor for a minute:
+   CPU use and wake-ups must drop back to idle. The 20 Hz level poll is
+   bound to the popover view's lifetime, but `MenuBarExtra(.window)` has
+   kept hidden content views alive on some macOS releases — this check
+   catches that regression on the tested OS version.
 
 ## Real-time audit
 
@@ -208,7 +330,7 @@ especially macOS 26.
 The five transport items that candidate B passed, plus the two items new to
 this build:
 
-1. **Running status**: toggling on (with mic permission granted) reaches
+1. **Running status**: selecting On (with mic permission granted) reaches
    `Running · <model>` with the green indicator.
 2. **Audio reaches recordings**: a QuickTime/OBS recording from the virtual
    device contains the processed microphone signal.
@@ -216,13 +338,62 @@ this build:
    30-minute session.
 4. **Switching stability**: live model switches across all listed models
    produce no crash, no blowup, only the bounded fade.
-5. **Clean stop**: toggling off tears down AUHAL and the private aggregate;
+5. **Clean stop**: selecting Off tears down AUHAL and the private aggregate;
    nothing stale remains in Audio MIDI Setup; the app quits cleanly.
 6. **16 kHz models are audible** *(new)*: Hush and UL-UNAS produce clearly
    audible, intelligible speech in the live path.
 7. **Full model list** *(new)*: the Model picker shows every `main` registry
    stage (Passthrough, FastEnhancer T/B/S/M/L, DPDFNet2/8, DeepFilterNet3,
    UL-UNAS, Hush, and TSE marked "requires enrollment").
+
+## Acceptance checklist (preview + level meters)
+
+Run the Preview and Level meters procedures above; the build passes when:
+
+1. **Mode control**: Off / Preview / On transitions all work in both
+   directions; Preview ↔ On switches are instant and never interrupt the
+   virtual-microphone path.
+2. **Preview audible**: in Preview mode, your own processed voice is
+   heard on headphones with a small constant delay; switching to On
+   stops it immediately.
+3. **Switching under preview**: model switches while previewing produce
+   no dropout beyond the bounded fade and no full-scale burst.
+4. **Main path isolation**: a QuickTime recording from the virtual
+   device is unaffected by Preview ↔ On switches.
+5. **Unsafe output refusal**: pressing Preview while the default output
+   is the BlackHole/Noican loopback, a Multi-Output/aggregate device, or
+   the built-in speakers is refused in place — mode and engine
+   unchanged, the reason shown under the control — and the message
+   clears within about a second of a safe output returning.
+6. **Feedback guard** *(optional; needs external speakers)*: sustained
+   feedback through an unclassifiable output stops the preview by itself
+   within ~1 s; the pill stays on Preview with the red warning tint and
+   the menu explains why.
+7. **Restart coherence**: Off → Preview brings the preview back cleanly,
+   with no stale audio and no double playback.
+8. **Intent is never moved**: on any failure (start failure, device
+   loss, monitor failure, feedback trip) the pill keeps the user's
+   selection with a red warning tint and the reason below the control;
+   re-tapping the segment retries, and selecting a working microphone
+   restarts into the selected mode automatically.
+9. **Preview cost**: % CPU does not increase materially in Preview mode.
+10. **Input meter follows speech**: the input bar moves when you speak.
+11. **Suppression visible**: during noise-only passages (fan, typing)
+    the output bar sits clearly below the input bar.
+12. **Meter stability**: meters do not spike or freeze across model
+    switches; the monitoring section is hidden while Off (and while a
+    failure is shown) and returns at zero on the next start.
+13. **Microphone switching**: changing the microphone while running
+    rebuilds the transport with the same model and mode after a brief
+    gap; hot-plugged devices appear in the list automatically.
+14. **Mode-control animation**: the sliding pill stays visually intact
+    while multi-line status/error text appears and disappears around it.
+15. **No transitional flash**: pressing a pill while a failure is shown
+    never flashes optimistic UI — no momentary blue pill, no meters
+    sliding in and out, no error text blinking away and back. The view
+    changes once, when the attempt settles (sections, colors, and error
+    text render from the last settled state; the spinner and the status
+    line are the only transitional feedback).
 
 ## Result record
 
