@@ -54,10 +54,6 @@ extension AppState {
         engineErrorMessage != nil || (mode == .preview && previewError != nil)
     }
 
-    func displayName(for modelID: String) -> String {
-        models.first { $0.id == modelID }?.displayName ?? modelID
-    }
-
     /// Why `uid` cannot serve as the engine's microphone, or nil when it
     /// can. Reads the device's advertised sample rates only — no audio
     /// object is created, so this is safe to call before any transition
