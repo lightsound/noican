@@ -303,6 +303,69 @@ pub unsafe extern "C" fn noican_engine_is_faulted(handle: *const c_void) -> i32 
     })
 }
 
+/// Enables (nonzero) or disables (zero) the preview self-monitor: the
+/// processed microphone signal plays on the system default output device.
+///
+/// The monitor target is resolved to the current default output at enable
+/// time; re-enable preview to follow a later default-output change. (A
+/// future explicit device selection would arrive as a separate setter,
+/// keeping this signature stable.) The monitor does not survive an engine
+/// stop/start, so callers re-enable it after `noican_engine_start`.
+///
+/// Enabling fails when the engine is not running, when the default output
+/// is a virtual loopback device (which would feed the processed voice
+/// into the meeting twice), or when the monitor AUHAL cannot start; the
+/// meeting-facing path is never affected. Disabling is always a success,
+/// including while stopped. Toggling holds the control lock only for the
+/// short monitor start/stop transition (no downloads, no model work).
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_engine_set_monitor(handle: *mut c_void, enabled: i32) -> i32 {
+    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+        return FAILURE;
+    };
+    let mut control = match handle.state.lock() {
+        Ok(control) => control,
+        Err(error) => return set_error(handle, format!("control state is poisoned: {error}")),
+    };
+    let Some(runtime) = control.runtime.as_mut() else {
+        if enabled == 0 {
+            control.last_error.clear();
+            return SUCCESS;
+        }
+        "engine is not running".clone_into(&mut control.last_error);
+        return FAILURE;
+    };
+    match runtime.set_monitor(enabled != 0) {
+        Ok(()) => {
+            control.last_error.clear();
+            SUCCESS
+        }
+        Err(error) => {
+            control.last_error = error.to_string();
+            FAILURE
+        }
+    }
+}
+
+/// Returns 1 while the preview self-monitor is playing, otherwise 0.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_engine_is_monitoring(handle: *const c_void) -> i32 {
+    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+        return 0;
+    };
+    handle.state.lock().map_or(0, |state| {
+        i32::from(state.runtime.as_ref().is_some_and(Runtime::is_monitoring))
+    })
+}
+
 /// Heartbeat: total input frames delivered since the engine started.
 ///
 /// Returns 0 while stopped. A value that stops advancing while
@@ -550,6 +613,24 @@ mod tests {
             parse_model_id(bypass.as_ptr()).as_deref(),
             Ok(PASSTHROUGH_ID)
         );
+    }
+
+    #[test]
+    fn monitor_calls_are_safe_while_stopped() {
+        let handle = unsafe { noican_engine_create(ptr::null()) };
+        assert!(!handle.is_null());
+        assert_eq!(unsafe { noican_engine_is_monitoring(handle) }, 0);
+        // Disabling an already-off monitor is an idempotent no-op.
+        assert_eq!(unsafe { noican_engine_set_monitor(handle, 0) }, SUCCESS);
+        // Enabling without a running engine fails with a clear reason.
+        assert_eq!(unsafe { noican_engine_set_monitor(handle, 1) }, FAILURE);
+        let error = read_string(|buffer, capacity| unsafe {
+            noican_engine_last_error(handle, buffer, capacity)
+        })
+        .expect("enable failure records an error");
+        assert!(error.contains("not running"), "unhelpful message: {error}");
+        assert_eq!(unsafe { noican_engine_is_monitoring(handle) }, 0);
+        unsafe { noican_engine_destroy(handle) };
     }
 
     #[test]
