@@ -109,9 +109,12 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
    - the status header with a state indicator,
    - the Noise Cancellation toggle,
    - the Microphone picker listing physical inputs,
+   - the input/output level bars below the Microphone picker,
    - the Model picker listing **every registry stage**: Passthrough,
      FastEnhancer T/B/S/M/L, DPDFNet2, DPDFNet8, DeepFilterNet3, UL-UNAS,
-     Hush, and TSE Conv-TasNet 48k marked "requires enrollment".
+     Hush, and TSE Conv-TasNet 48k marked "requires enrollment",
+   - the "Preview my voice" toggle (disabled while the engine is off)
+     with the headphone warning caption.
 4. Select a physical microphone and `FastEnhancer-B 48k`.
 5. Enable the toggle and grant microphone access when macOS prompts.
 6. Confirm status changes to `Running · FastEnhancer-B 48k`.
@@ -160,6 +163,62 @@ TSE requires a valid ECAPA enrollment and authenticated, checksum-confirmed
 model files as described in [models.md](models.md). It is excluded from this
 step until the upstream access/license blocker is resolved and the app
 grows an enrollment flow.
+
+## Preview (self-monitor)
+
+Preview plays the processed microphone signal on the system default
+output device through a second, output-only AUHAL fed by a dedicated
+monitor ring. It shares no state with the meeting-facing path except the
+lock-free tee in the inference worker.
+
+1. Connect wired headphones and make them the system default output.
+2. Start the engine, then enable "Preview my voice" in the menu.
+3. Speak: the processed voice must be audible with a modest constant
+   delay (engine latency plus ~40 ms of monitor ring priming). The delay
+   is by design, not a defect.
+4. Headphones are mandatory: through speakers the processed microphone
+   feeds back into itself (Phase 0/1 has no AEC). The menu shows this
+   warning permanently.
+5. Switch models while previewing: the voice must keep playing across
+   the switch with only the bounded fade — no click, no full-scale
+   burst, no dropout beyond the fade.
+6. Disable Preview: playback must stop immediately.
+7. While recording from the virtual device in QuickTime, toggle Preview
+   on and off: the recording must be unaffected.
+8. Set the system default output to the BlackHole/Noican loopback and
+   try to enable Preview: it must be refused with a clear error (playing
+   there would feed the processed voice into the meeting twice), and the
+   engine must keep running.
+9. Toggle the engine off and on with Preview enabled: Preview must
+   resume automatically after the restart (or surface a clear error)
+   with no stale audio replayed and no double playback.
+10. Compare % CPU in Activity Monitor with Preview off and on: the
+    increase must be small (the monitor path only copies samples).
+11. The monitor clock is not drift-corrected: over long previews an
+    occasional short gap (underrun re-prime) or discarded block
+    (overrun) is acceptable; persistent crackle is not.
+
+Changing the default output while Preview is on does not retarget the
+monitor in this version; toggle Preview off and on to pick up the new
+device.
+
+## Level meters
+
+The inference worker publishes per-block (10 ms) input (pre-model) and
+output (post-model) peak levels with a short exponential decay; the menu
+polls them at ~20 Hz only while the popover is open. The meters draw on
+a shared −60…0 dB scale.
+
+1. Start the engine and open the popover.
+2. Speak: the input bar must move with your voice, and the output bar
+   must follow while you speak.
+3. Stay silent with steady noise present (fan, keyboard typing): the
+   output bar must sit clearly below the input bar — visual confirmation
+   that noise suppression is working without listening to the stream.
+4. Switch models while watching: the bars must not spike to full scale,
+   freeze, or oscillate wildly (only the bounded switch fade).
+5. The meters must move whether Preview is on or off.
+6. Stop the engine: both bars must return to zero.
 
 ## Real-time audit
 
@@ -223,6 +282,29 @@ this build:
 7. **Full model list** *(new)*: the Model picker shows every `main` registry
    stage (Passthrough, FastEnhancer T/B/S/M/L, DPDFNet2/8, DeepFilterNet3,
    UL-UNAS, Hush, and TSE marked "requires enrollment").
+
+## Acceptance checklist (preview + level meters)
+
+Run the Preview and Level meters procedures above; the build passes when:
+
+1. **Preview audible**: with Preview on, your own processed voice is
+   heard on headphones with a small constant delay; turning Preview off
+   stops it immediately.
+2. **Switching under preview**: model switches while previewing produce
+   no dropout beyond the bounded fade and no full-scale burst.
+3. **Main path isolation**: a QuickTime recording from the virtual
+   device is unaffected by Preview on/off.
+4. **Loopback refusal**: Preview refuses to start when the default
+   output is the BlackHole/Noican loopback, with a clear error, engine
+   still running.
+5. **Restart coherence**: Preview state survives an engine off→on cycle
+   without stale audio, double playback, or a stuck toggle.
+6. **Preview cost**: % CPU does not increase materially with Preview on.
+7. **Input meter follows speech**: the input bar moves when you speak.
+8. **Suppression visible**: during noise-only passages (fan, typing) the
+   output bar sits clearly below the input bar.
+9. **Meter stability**: meters do not spike or freeze across model
+   switches, and both return to zero when the engine stops.
 
 ## Result record
 
