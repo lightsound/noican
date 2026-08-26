@@ -58,6 +58,18 @@ final class RustEngine: @unchecked Sendable {
         noican_engine_is_monitoring(handle) != 0
     }
 
+    /// Decayed linear peak (0–1) of the model input, measured per 10 ms
+    /// block by the inference worker; 0 while stopped. Reads one atomic —
+    /// never blocks, so it is safe to poll from the UI.
+    var inputLevel: Float {
+        noican_engine_input_level(handle)
+    }
+
+    /// Decayed linear peak (0–1) of the model output; see `inputLevel`.
+    var outputLevel: Float {
+        noican_engine_output_level(handle)
+    }
+
     var isRunning: Bool {
         noican_engine_is_running(handle) != 0
     }

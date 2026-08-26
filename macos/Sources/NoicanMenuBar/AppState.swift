@@ -26,6 +26,11 @@ final class AppState: ObservableObject {
     /// failures never affect the engine phase: the meeting-facing path
     /// keeps running.
     @Published private(set) var previewError: String?
+    /// Peak meters, refreshed by `pollLevels()` only while the popover is
+    /// open. Independent of the Preview state: they move whenever the
+    /// engine runs.
+    @Published private(set) var inputLevel: Float = 0
+    @Published private(set) var outputLevel: Float = 0
 
     /// Selectable models, read from the Rust registry at launch.
     let models = RustEngine.models()
@@ -131,6 +136,26 @@ final class AppState: ObservableObject {
         } else {
             stop()
         }
+    }
+
+    /// Runs while the menu popover is visible (bound to the menu view's
+    /// task) and stops when it closes: ~20 Hz, two non-blocking atomic
+    /// reads per tick.
+    func pollLevels() async {
+        while !Task.isCancelled {
+            refreshLevels()
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    private func refreshLevels() {
+        guard isEnabled, let engine else {
+            if inputLevel != 0 { inputLevel = 0 }
+            if outputLevel != 0 { outputLevel = 0 }
+            return
+        }
+        inputLevel = engine.inputLevel
+        outputLevel = engine.outputLevel
     }
 
     func setPreview(_ enabled: Bool) {

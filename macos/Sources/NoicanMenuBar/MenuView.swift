@@ -25,6 +25,11 @@ struct MenuView: View {
             footer
         }
         .frame(width: 320)
+        // Poll the engine's peak meters only while the popover is open;
+        // the task is cancelled when the view disappears.
+        .task {
+            await state.pollLevels()
+        }
     }
 
     private var header: some View {
@@ -94,6 +99,7 @@ struct MenuView: View {
                 }
                 .labelsHidden()
                 .disabled(state.isEnabled || state.isBusy)
+                meters
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text("Model")
@@ -119,6 +125,18 @@ struct MenuView: View {
         }
         .padding(.horizontal, contentPadding)
         .padding(.vertical, 10)
+    }
+
+    /// Input (pre-model) and output (post-model) peak bars on a shared dB
+    /// scale: speech moves both; noise-only passages leave the output bar
+    /// clearly below the input bar, showing the suppression at a glance
+    /// without listening to the stream.
+    private var meters: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            LevelBar(label: "In", level: state.inputLevel, tint: .secondary)
+            LevelBar(label: "Out", level: state.outputLevel, tint: .green)
+        }
+        .padding(.top, 4)
     }
 
     /// Self-monitor toggle: hear the processed microphone on the default
@@ -167,5 +185,41 @@ struct MenuView: View {
         .controlSize(.small)
         .padding(.horizontal, contentPadding)
         .padding(.vertical, 10)
+    }
+}
+
+/// One small horizontal peak bar. The linear peak is drawn on a
+/// −60 dB…0 dB scale so quiet-but-present signal stays visible and the
+/// input/output gap reads as suppression depth.
+private struct LevelBar: View {
+    let label: String
+    let level: Float
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(width: 24, alignment: .leading)
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(.quaternary)
+                    Capsule()
+                        .fill(tint)
+                        .frame(width: proxy.size.width * fraction)
+                }
+            }
+            .frame(height: 5)
+        }
+    }
+
+    private var fraction: CGFloat {
+        guard level > 0 else {
+            return 0
+        }
+        let decibels = 20 * log10(Double(level))
+        return CGFloat(min(1, max(0, 1 + decibels / 60)))
     }
 }
