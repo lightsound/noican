@@ -72,6 +72,14 @@ pub enum CoreAudioError {
         /// UID of the rejected default output device.
         uid: String,
     },
+    /// Enabling preview was refused because the system default output is
+    /// the built-in speakers, which would feed the processed microphone
+    /// straight back into itself (Phase 0/1 has no echo cancellation).
+    #[error(
+        "the system default output is the built-in speakers, which would \
+         feed back; connect headphones and try again"
+    )]
+    MonitorSpeakerOutput,
     /// This build does not target macOS.
     #[error("AUHAL is available only on macOS")]
     UnsupportedPlatform,

@@ -64,11 +64,15 @@ const AUDIO_FORMAT_FLAG_IS_PACKED: u32 = 1 << 3;
 
 const AUDIO_OBJECT_SYSTEM_OBJECT: u32 = 1;
 const AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL: u32 = fourcc(*b"glob");
+const AUDIO_OBJECT_PROPERTY_SCOPE_OUTPUT: u32 = fourcc(*b"outp");
 const AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN: u32 = 0;
 const AUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE: u32 = fourcc(*b"dOut");
 const AUDIO_DEVICE_PROPERTY_TRANSPORT_TYPE: u32 = fourcc(*b"tran");
+const AUDIO_DEVICE_PROPERTY_DATA_SOURCE: u32 = fourcc(*b"ssrc");
 const AUDIO_DEVICE_PROPERTY_DEVICE_UID: u32 = fourcc(*b"uid ");
 const AUDIO_DEVICE_TRANSPORT_TYPE_VIRTUAL: u32 = fourcc(*b"virt");
+const AUDIO_DEVICE_TRANSPORT_TYPE_BUILT_IN: u32 = fourcc(*b"bltn");
+const DATA_SOURCE_INTERNAL_SPEAKER: u32 = fourcc(*b"ispk");
 
 const CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
 
@@ -718,17 +722,38 @@ fn configure_auhal(unit: AudioUnit, device: AudioDeviceId) -> Result<(), CoreAud
     )
 }
 
-/// Resolves the system default output device and rejects virtual loopback
-/// targets (`BlackHole`/Noican): monitoring into the loopback would feed
-/// the processed voice into the meeting a second time.
+/// Resolves the system default output device, rejecting targets that must
+/// not receive the preview: virtual loopbacks (`BlackHole`/Noican — the
+/// processed voice would reach the meeting a second time) and the
+/// built-in speakers (the voice would feed straight back into the
+/// microphone; Phase 0/1 has no echo cancellation).
 fn monitor_target_device() -> Result<AudioDeviceId, CoreAudioError> {
     let device = default_output_device()?;
     let uid = device_uid(device);
-    if device_transport_type(device) == AUDIO_DEVICE_TRANSPORT_TYPE_VIRTUAL
+    let transport = device_u32_property(
+        device,
+        AUDIO_DEVICE_PROPERTY_TRANSPORT_TYPE,
+        AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+    )
+    .unwrap_or(0);
+    if transport == AUDIO_DEVICE_TRANSPORT_TYPE_VIRTUAL
         || uid.contains("BlackHole")
         || uid.to_lowercase().starts_with("com.lightsound.noican.")
     {
         return Err(CoreAudioError::MonitorLoopbackOutput { uid });
+    }
+    // Only the built-in output reports its speaker/headphone-jack state
+    // through the data source; other transports (Bluetooth, USB, HDMI)
+    // cannot be classified reliably and fail open — the feedback guard in
+    // the worker is the safety net for those.
+    if transport == AUDIO_DEVICE_TRANSPORT_TYPE_BUILT_IN
+        && device_u32_property(
+            device,
+            AUDIO_DEVICE_PROPERTY_DATA_SOURCE,
+            AUDIO_OBJECT_PROPERTY_SCOPE_OUTPUT,
+        ) == Some(DATA_SOURCE_INTERNAL_SPEAKER)
+    {
+        return Err(CoreAudioError::MonitorSpeakerOutput);
     }
     Ok(device)
 }
@@ -762,17 +787,16 @@ fn default_output_device() -> Result<AudioDeviceId, CoreAudioError> {
     Ok(device)
 }
 
-/// Transport type of a device, or 0 when unreadable.
-fn device_transport_type(device: AudioDeviceId) -> u32 {
+/// One `u32` device property (transport type, data source, ...), or
+/// `None` when unreadable.
+fn device_u32_property(device: AudioDeviceId, selector: u32, scope: u32) -> Option<u32> {
     let address = AudioObjectPropertyAddress {
-        selector: AUDIO_DEVICE_PROPERTY_TRANSPORT_TYPE,
-        scope: AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+        selector,
+        scope,
         element: AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
     };
     let mut value: u32 = 0;
-    let Ok(mut size) = size_u32::<u32>() else {
-        return 0;
-    };
+    let mut size = size_u32::<u32>().ok()?;
     let status = unsafe {
         AudioObjectGetPropertyData(
             device,
@@ -783,7 +807,7 @@ fn device_transport_type(device: AudioDeviceId) -> u32 {
             (&raw mut value).cast(),
         )
     };
-    if status == NO_ERR { value } else { 0 }
+    (status == NO_ERR).then_some(value)
 }
 
 /// UID of a device, or an empty string when unreadable. Runs on the
