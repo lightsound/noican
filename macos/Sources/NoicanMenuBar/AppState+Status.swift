@@ -16,11 +16,11 @@ extension AppState {
             return message
         case .running:
             let name = displayName(for: activeModelID ?? selectedModel)
-            // "Previewing" only while the monitor actually plays; after a
+            // "Preview" only while the monitor actually plays; after a
             // trip or a monitor failure the engine still runs but the
             // preview does not.
             let previewing = mode == .preview && previewError == nil
-            return previewing ? "Previewing · \(name)" : "Running · \(name)"
+            return previewing ? "Preview · \(name)" : "Running · \(name)"
         case .failed:
             return "Error"
         }

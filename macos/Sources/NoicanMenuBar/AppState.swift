@@ -483,7 +483,13 @@ extension AppState {
     /// outcome lands, so rapid taps cannot interleave.
     private func applyMonitor(_ enabled: Bool, engine: RustEngine) {
         isBusy = true
-        phase = .busy(enabled ? "Starting preview…" : "Stopping preview…")
+        // Keep an in-flight busy message (the Off → Preview continuation
+        // arrives here straight from "Starting <model>…"): overwriting it
+        // for the milliseconds the monitor start takes just flashes a
+        // second caption. Standalone Preview ↔ On toggles get their own.
+        if case .busy = phase {} else {
+            phase = .busy(enabled ? "Starting preview…" : "Stopping preview…")
+        }
         Task.detached {
             let result = Result { try engine.setMonitor(enabled) }
             await self.finishMonitorChange(result, enabled: enabled)
