@@ -25,6 +25,10 @@ incarnation; the hybrid build (C engine + B transport) must be re-accepted.
 - Stock BlackHole 2ch for Phase 0, or the separately built and
   Developer-ID-signed Noican BlackHole fork (Phase 1).
 - Headphones. Phase 0 has no AEC and must not be evaluated through speakers.
+- A 48 kHz-capable microphone. Bluetooth headset microphones run on
+  telephony profiles (8/16/24 kHz) and are rejected with a clear error in
+  Phase 0 — Bluetooth *playback* is fine, only the input side is limited
+  (tracked in issue #7). The built-in microphone works.
 
 The BlackHole-derived driver is GPL-3.0 and remains a separate program. Do
 not add its source or object files to the application target.
