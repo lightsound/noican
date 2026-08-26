@@ -189,25 +189,34 @@ between them only arms or disarms the monitor.
    running without interruption.
 7. While recording from the virtual device in QuickTime, switch between
    Preview and On: the recording must be unaffected.
-8. Set the system default output to the BlackHole/Noican loopback and
-   select Preview: it must be refused with a clear error (playing there
-   would feed the processed voice into the meeting twice), the mode must
-   fall back to On, and the engine must keep running.
-9. Set the system default output to a Multi-Output Device (Audio MIDI
-   Setup) that contains BlackHole and select Preview: it must be refused
-   the same way (the aggregate can hide the meeting loopback, and the
-   feedback guard cannot catch that route).
-10. Set the system default output to the built-in speakers and select
-    Preview: it must be refused the same way (the voice would feed
-    straight back into the microphone).
-11. Select Off, then Preview again: the preview must come back cleanly
+8. With the popover open, set the system default output to each of the
+   following and watch the mode control:
+   - the BlackHole/Noican loopback (the preview would reach the meeting
+     twice),
+   - a Multi-Output Device (Audio MIDI Setup) containing BlackHole (the
+     aggregate can hide the meeting loopback, and the feedback guard
+     cannot catch that route),
+   - the built-in speakers (the voice would feed straight back into the
+     microphone).
+   Within about a second the Preview segment must gray out with a
+   caption under the control explaining why; clicking it must do
+   nothing, and the engine (whether Off or On) must be unaffected.
+   Restoring headphones as the default output must re-enable the
+   segment within about a second.
+9. The race path must also hold: if a refusal slips past the disabled
+   segment (the output changed in the same instant Preview was tapped),
+   the mode must stay exactly where it was — Off stays Off with no
+   engine start, On stays On — with the reason shown under the control.
+   A monitor start failure after an Off → Preview engine start must
+   roll the engine back to Off, keeping the reason visible.
+10. Select Off, then Preview again: the preview must come back cleanly
     with no stale audio replayed and no double playback.
-12. Compare % CPU in Activity Monitor between On and Preview: the
+11. Compare % CPU in Activity Monitor between On and Preview: the
     increase must be small (the monitor path only copies samples).
-13. The monitor clock is not drift-corrected: over long previews an
+12. The monitor clock is not drift-corrected: over long previews an
     occasional short gap (underrun re-prime) or discarded block
     (overrun) is acceptable; persistent crackle is not.
-14. *(Optional, external speakers required)* With USB/Bluetooth speakers
+13. *(Optional, external speakers required)* With USB/Bluetooth speakers
     as the default output — which the device-type check cannot classify —
     select Preview and raise the volume until feedback starts: within
     about half a second of sustained near-clipping output the feedback
@@ -319,10 +328,12 @@ Run the Preview and Level meters procedures above; the build passes when:
    no dropout beyond the bounded fade and no full-scale burst.
 4. **Main path isolation**: a QuickTime recording from the virtual
    device is unaffected by Preview ↔ On switches.
-5. **Unsafe output refusal**: Preview refuses to start — with a clear
-   error, mode falling back to On (or Off → engine still starts), engine
-   unaffected — when the default output is the BlackHole/Noican loopback,
-   a Multi-Output/aggregate device, or the built-in speakers.
+5. **Unsafe output prevention**: while the default output is the
+   BlackHole/Noican loopback, a Multi-Output/aggregate device, or the
+   built-in speakers, the Preview segment is disabled with the reason
+   captioned below the control, and re-enables within about a second of
+   a safe output returning; a refusal that slips through the race leaves
+   the mode (and the engine) exactly as they were.
 6. **Feedback guard** *(optional; needs external speakers)*: sustained
    feedback through an unclassifiable output stops the preview by itself
    within ~1 s, falls back to On, and explains why.
