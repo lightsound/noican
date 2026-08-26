@@ -32,6 +32,9 @@ final class AppState: ObservableObject {
     /// (not by the menu view) so faults are detected even when the popover
     /// is closed.
     private var faultPollTask: Task<Void, Never>?
+    /// Heartbeat state for detecting a device that stopped calling back.
+    private var lastFrameCount: UInt64 = 0
+    private var stalledTicks = 0
 
     init() {
         do {
@@ -42,6 +45,41 @@ final class AppState: ObservableObject {
         }
         if !models.contains(where: { $0.id == selectedModel }) {
             selectedModel = models.first?.id ?? ""
+        }
+        registerDeviceListener()
+    }
+
+    /// Follows device hot-plug: refreshes the picker automatically and stops
+    /// the engine with a clear message when the microphone in use (or the
+    /// virtual output) disappears.
+    private func registerDeviceListener() {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        _ = AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            DispatchQueue.main
+        ) { [weak self] _, _ in
+            // Delivered on the main queue, which is the main actor.
+            MainActor.assumeIsolated {
+                self?.handleDevicesChanged()
+            }
+        }
+    }
+
+    private func handleDevicesChanged() {
+        let runningInputUID = selectedInputUID
+        refreshDevices()
+        guard isEnabled, !isBusy else {
+            return
+        }
+        if !allDevices.contains(where: { $0.uid == runningInputUID && $0.inputChannels > 0 }) {
+            stopWithError("Microphone disconnected — noise cancellation stopped")
+        } else if AudioDeviceCatalog.virtualOutput(in: allDevices) == nil {
+            stopWithError("Virtual output device removed — noise cancellation stopped")
         }
     }
 
@@ -183,6 +221,8 @@ final class AppState: ObservableObject {
 
     private func startFaultPolling() {
         faultPollTask?.cancel()
+        lastFrameCount = 0
+        stalledTicks = 0
         faultPollTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
@@ -202,12 +242,33 @@ final class AppState: ObservableObject {
         }
         if engine.isFaulted {
             phase = .failed("Audio fault — turn noise cancellation off and on")
-        } else if !engine.isRunning {
-            stopFaultPolling()
-            isEnabled = false
-            aggregate.destroy()
-            activeModelID = nil
-            phase = .failed("Engine stopped unexpectedly")
+            return
         }
+        if !engine.isRunning {
+            stopWithError("Engine stopped unexpectedly")
+            return
+        }
+        // Heartbeat: the device must keep delivering callbacks while
+        // running. Three silent seconds means it stopped (unplugged mic,
+        // coreaudiod restart, post-sleep stall) without reporting an error.
+        let frames = engine.framesProcessed
+        if frames == lastFrameCount {
+            stalledTicks += 1
+            if stalledTicks >= 3 {
+                stopWithError("Audio stalled — device lost or audio system restarted")
+            }
+        } else {
+            lastFrameCount = frames
+            stalledTicks = 0
+        }
+    }
+
+    private func stopWithError(_ message: String) {
+        stopFaultPolling()
+        engine?.stop()
+        aggregate.destroy()
+        isEnabled = false
+        activeModelID = nil
+        phase = .failed(message)
     }
 }

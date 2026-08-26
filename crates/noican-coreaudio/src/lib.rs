@@ -82,4 +82,10 @@ impl Runtime {
     pub const fn is_faulted(&self) -> bool {
         false
     }
+
+    /// Portable builds never receive audio callbacks.
+    #[must_use]
+    pub const fn frames_processed(&self) -> u64 {
+        0
+    }
 }

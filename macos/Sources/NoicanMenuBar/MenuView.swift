@@ -124,12 +124,10 @@ struct MenuView: View {
             : model.displayName
     }
 
+    // Device hot-plug is followed automatically (AppState registers a
+    // Core Audio device-list listener), so no manual refresh is needed.
     private var footer: some View {
         HStack {
-            Button("Refresh Devices") {
-                state.refreshDevices()
-            }
-            .disabled(state.isEnabled || state.isBusy)
             Spacer()
             Button("Quit") {
                 NSApplication.shared.terminate(nil)

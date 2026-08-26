@@ -303,6 +303,26 @@ pub unsafe extern "C" fn noican_engine_is_faulted(handle: *const c_void) -> i32 
     })
 }
 
+/// Heartbeat: total input frames delivered since the engine started.
+///
+/// Returns 0 while stopped. A value that stops advancing while
+/// `noican_engine_is_running` reports 1 means the device stopped calling
+/// back (unplugged microphone, coreaudiod restart, post-sleep stall); the
+/// UI polls this once per second.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_engine_frames_processed(handle: *const c_void) -> u64 {
+    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+        return 0;
+    };
+    handle.state.lock().map_or(0, |state| {
+        state.runtime.as_ref().map_or(0, Runtime::frames_processed)
+    })
+}
+
 /// Copies the latest control-plane error as UTF-8.
 ///
 /// Returns the required byte count including the terminating NUL.

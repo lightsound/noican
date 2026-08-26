@@ -11,7 +11,7 @@ use std::{
     ptr,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread::{self, JoinHandle},
 };
@@ -295,6 +295,11 @@ struct CallbackContext {
     output: Consumer<f32>,
     faulted: Arc<AtomicBool>,
     samples_ready: Arc<DispatchSemaphore>,
+    /// Heartbeat: input frames delivered since start (relaxed atomic add is
+    /// real-time safe). A counter that stops advancing while "running"
+    /// means the device stopped calling back (unplugged microphone,
+    /// coreaudiod restart, post-sleep stall).
+    frames: Arc<AtomicU64>,
 }
 
 /// Running AUHAL instance and inference worker.
@@ -305,6 +310,7 @@ pub struct Runtime {
     shutdown: Arc<AtomicBool>,
     faulted: Arc<AtomicBool>,
     samples_ready: Arc<DispatchSemaphore>,
+    frames: Arc<AtomicU64>,
     worker: Option<JoinHandle<()>>,
     running: bool,
 }
@@ -329,12 +335,14 @@ impl Runtime {
         let (input_producer, input_consumer) = RingBuffer::new(RING_CAPACITY);
         let (output_producer, output_consumer) = RingBuffer::new(RING_CAPACITY);
         let faulted = Arc::new(AtomicBool::new(false));
+        let frames = Arc::new(AtomicU64::new(0));
         let context = ContextGuard(Box::into_raw(Box::new(CallbackContext {
             unit: unit.raw(),
             input: input_producer,
             output: output_consumer,
             faulted: Arc::clone(&faulted),
             samples_ready: Arc::clone(&samples_ready),
+            frames: Arc::clone(&frames),
         })));
         let callback_property = AudioUnitRenderCallback {
             callback: Some(render_callback),
@@ -392,6 +400,7 @@ impl Runtime {
             shutdown,
             faulted,
             samples_ready,
+            frames,
             worker: Some(worker),
             running: true,
         })
@@ -429,6 +438,14 @@ impl Runtime {
     #[must_use]
     pub fn is_faulted(&self) -> bool {
         self.faulted.load(Ordering::Acquire)
+    }
+
+    /// Total input frames the render callback has delivered since start.
+    /// A value that stops advancing while running means the device stopped
+    /// calling back; the control plane uses it as a heartbeat.
+    #[must_use]
+    pub fn frames_processed(&self) -> u64 {
+        self.frames.load(Ordering::Relaxed)
     }
 }
 
@@ -663,6 +680,9 @@ unsafe extern "C" fn render_callback(
     for sample in samples.iter().copied() {
         let _ignored = context.input.push(sample);
     }
+    context
+        .frames
+        .fetch_add(u64::from(frame_count), Ordering::Relaxed);
     // Wake the inference worker (never blocks; see DispatchSemaphore).
     context.samples_ready.signal();
     for sample in samples {

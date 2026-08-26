@@ -53,6 +53,12 @@ final class RustEngine: @unchecked Sendable {
         noican_engine_is_faulted(handle) != 0
     }
 
+    /// Heartbeat: input frames delivered by the audio device since start.
+    /// Stops advancing when the device stops calling back.
+    var framesProcessed: UInt64 {
+        noican_engine_frames_processed(handle)
+    }
+
     /// The selectable model catalog, read from the Rust registry.
     static func models() -> [ModelInfo] {
         (0..<noican_model_count()).compactMap { index in
