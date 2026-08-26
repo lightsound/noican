@@ -85,22 +85,21 @@ struct MenuView: View {
     }
 
     /// The single top-level control. Preview = engine + self-monitor;
-    /// On = engine only. Both feed the virtual microphone. Preview is
-    /// disabled up front — with the reason captioned — while the system
-    /// default output must not receive it; preview failures (rollbacks,
-    /// feedback trips) surface here too.
+    /// On = engine only. Both feed the virtual microphone. A refused
+    /// Preview press explains itself here (and the message clears live
+    /// once the output is safe); preview failures (rollbacks, feedback
+    /// trips) surface here too.
     private var modePicker: some View {
         VStack(alignment: .leading, spacing: 6) {
             ModePicker(
                 mode: state.mode,
                 isBusy: state.isBusy,
-                previewUnavailableReason: state.previewUnavailableReason,
                 select: { state.setMode($0) }
             )
             if let reason = state.previewUnavailableReason {
-                Text(reason)
+                Text("Preview is unavailable: \(reason)")
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let message = state.previewError {

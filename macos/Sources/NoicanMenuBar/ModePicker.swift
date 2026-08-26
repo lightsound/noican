@@ -1,15 +1,14 @@
 import SwiftUI
 
 /// Custom three-segment mode control: a capsule track with a highlight
-/// pill that slides between segments. Replaces the AppKit segmented
-/// control so a single segment (Preview, while the current output must
-/// not receive it) can be disabled individually, with the reason shown
-/// by the caller below the control.
+/// pill that slides between segments. Every segment stays tappable
+/// (except while busy); when a selection is refused — Preview on an
+/// unsafe output — the caller keeps the mode where it was and explains
+/// why below the control, which confuses less than a segment that
+/// cannot be pressed.
 struct ModePicker: View {
     let mode: EngineMode
     let isBusy: Bool
-    /// Non-nil disables the Preview segment (unsafe output target).
-    let previewUnavailableReason: String?
     let select: (EngineMode) -> Void
 
     @Namespace private var highlightNamespace
@@ -23,6 +22,10 @@ struct ModePicker: View {
         .padding(3)
         .background(Capsule().fill(.quaternary.opacity(0.5)))
         .animation(.spring(response: 0.25, dampingFraction: 0.9), value: mode)
+        // Isolate the sliding pill's matched geometry from outside layout
+        // shifts (status/error text above changing the control's vertical
+        // position mid-slide would otherwise distort the animation).
+        .geometryGroup()
     }
 
     private func segment(_ candidate: EngineMode) -> some View {
@@ -48,14 +51,7 @@ struct ModePicker: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .disabled(isBusy || isPreviewDisabled(candidate))
-    }
-
-    /// Preview is unselectable while the output target is unsafe; the
-    /// segment stays enabled when it is the current mode so the state
-    /// remains readable and escapable.
-    private func isPreviewDisabled(_ candidate: EngineMode) -> Bool {
-        candidate == .preview && previewUnavailableReason != nil && mode != .preview
+        .disabled(isBusy)
     }
 
     /// Off reads as a neutral pill; the active modes carry the accent.
@@ -68,9 +64,6 @@ struct ModePicker: View {
             return candidate == .off
                 ? AnyShapeStyle(.primary)
                 : AnyShapeStyle(Color.white)
-        }
-        if isPreviewDisabled(candidate) {
-            return AnyShapeStyle(.tertiary)
         }
         return AnyShapeStyle(.secondary)
     }

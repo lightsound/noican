@@ -50,10 +50,12 @@ final class AppState: ObservableObject {
     /// under the mode control. Preview failures never affect the engine
     /// phase: the meeting-facing path keeps running.
     @Published private(set) var previewError: String?
-    /// Why the current system default output must not receive the
-    /// preview, or nil when Preview may start. Non-nil disables the
-    /// Preview segment up front (with this text as the explanation), so
-    /// selecting an unsafe target is prevented instead of failed.
+    /// Why the last Preview attempt was refused (unsafe default output),
+    /// shown under the mode control until the user fixes the output —
+    /// the availability watchers clear it live — or moves on. Nil until
+    /// Preview is actually pressed: an unavailable Preview stays
+    /// pressable and explains itself on press, which confuses less than
+    /// a segment that cannot be pressed.
     @Published private(set) var previewUnavailableReason: String?
     /// Peak meters, refreshed by `pollLevels()` only while the popover is
     /// open. Independent of the Preview state: they move whenever the
@@ -90,7 +92,6 @@ final class AppState: ObservableObject {
         }
         registerDeviceListener()
         registerDefaultOutputListener()
-        refreshPreviewAvailability()
     }
 
     /// Follows device hot-plug: refreshes the picker automatically and stops
@@ -165,10 +166,11 @@ final class AppState: ObservableObject {
             return
         }
         previewError = nil
+        previewUnavailableReason = nil
         if newMode == .preview, let reason = RustEngine.monitorTargetError {
-            // Refuse in place (a race guard: the Preview segment is
-            // normally already disabled with this reason shown). Neither
-            // the mode nor the engine changes.
+            // Refuse in place and explain: neither the mode nor the
+            // engine changes, and the availability watchers clear the
+            // message as soon as the output becomes safe.
             previewUnavailableReason = reason
             return
         }
@@ -445,19 +447,22 @@ extension AppState {
         applyMonitor(false, engine: engine, fallback: .on)
     }
 
-    /// Re-evaluates whether the current system default output may receive
-    /// the preview, driving the Preview segment's enabled state and its
-    /// explanation caption. Called from the default-output listener,
-    /// device hot-plug, popover polling, and launch.
+    /// Maintains a shown refusal message only: once a Preview attempt was
+    /// refused, re-check the default output so the message clears (or
+    /// updates) live as the user fixes it. Called from the default-output
+    /// listener, device hot-plug, and popover polling.
     private func refreshPreviewAvailability() {
+        guard previewUnavailableReason != nil else {
+            return
+        }
         let reason = RustEngine.monitorTargetError
         if reason != previewUnavailableReason {
             previewUnavailableReason = reason
         }
     }
 
-    /// Follows default-output changes so the Preview segment's enabled
-    /// state updates the moment the user switches devices.
+    /// Follows default-output changes so a shown refusal message clears
+    /// the moment the user switches to a safe device.
     private func registerDefaultOutputListener() {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
