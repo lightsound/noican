@@ -139,8 +139,8 @@ struct MenuView: View {
     /// which also explains itself.
     private var monitoring: some View {
         VStack(alignment: .leading, spacing: 6) {
-            LevelBar(label: "In", level: state.inputLevel, tint: .secondary)
-            LevelBar(label: "Out", level: state.outputLevel, tint: .green)
+            LevelBar(label: "Before", level: state.inputLevel, tint: .secondary)
+            LevelBar(label: "After", level: state.outputLevel, tint: .green)
         }
         .padding(.horizontal, contentPadding)
         .padding(.vertical, 10)
@@ -296,7 +296,7 @@ private struct LevelBar: View {
             Text(label)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-                .frame(width: 24, alignment: .leading)
+                .frame(width: 42, alignment: .leading)
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule()
