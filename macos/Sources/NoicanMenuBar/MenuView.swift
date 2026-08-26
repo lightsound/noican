@@ -33,8 +33,10 @@ struct MenuView: View {
                 Text(state.statusText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(4)
                     .fixedSize(horizontal: false, vertical: true)
+                    // Full text on hover, in case an error still clips.
+                    .help(state.statusText)
             }
             Spacer(minLength: 0)
             if state.isBusy {

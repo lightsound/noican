@@ -102,10 +102,13 @@ final class AggregateDevice: @unchecked Sendable {
             mElement: kAudioObjectPropertyElementMain
         )
         var requestedRate = 48_000.0
-        // Some drivers reject the set (e.g. 'nope', unsupported operation)
-        // even when the device already runs at the requested rate, so judge
-        // by the read-back value, not the set status.
-        let setStatus = AudioObjectSetPropertyData(
+        // Nominal-rate changes propagate to the subdevices asynchronously,
+        // and some drivers reject the set while already at the target rate,
+        // so poll the read-back instead of trusting one set + one read
+        // (a single immediate read loses the race and made every start fail
+        // while the microphone idled at 44.1 kHz). Runs on the background
+        // start task, never on the main actor.
+        var setStatus = AudioObjectSetPropertyData(
             identifier,
             &sampleRateAddress,
             0,
@@ -114,26 +117,40 @@ final class AggregateDevice: @unchecked Sendable {
             &requestedRate
         )
         var actualRate = 0.0
-        var rateSize = UInt32(MemoryLayout<Double>.size)
-        try check(
-            AudioObjectGetPropertyData(
-                identifier,
-                &sampleRateAddress,
-                0,
-                nil,
-                &rateSize,
-                &actualRate
-            ),
-            operation: "Read Aggregate Device sample rate"
-        )
-        guard abs(actualRate - requestedRate) < 0.5 else {
-            throw CoreAudioControlError(
-                operation: "Aggregate Device did not accept 48 kHz "
-                    + "(the selected microphone may not support it); "
-                    + "it reports \(actualRate) Hz",
-                status: setStatus == noErr ? kAudioHardwareUnspecifiedError : setStatus
+        for attempt in 0..<40 {
+            var rateSize = UInt32(MemoryLayout<Double>.size)
+            try check(
+                AudioObjectGetPropertyData(
+                    identifier,
+                    &sampleRateAddress,
+                    0,
+                    nil,
+                    &rateSize,
+                    &actualRate
+                ),
+                operation: "Read Aggregate Device sample rate"
             )
+            if abs(actualRate - requestedRate) < 0.5 {
+                return
+            }
+            // Re-issue once midway in case the first set landed before the
+            // subdevices had finished attaching.
+            if attempt == 20 {
+                setStatus = AudioObjectSetPropertyData(
+                    identifier,
+                    &sampleRateAddress,
+                    0,
+                    nil,
+                    UInt32(MemoryLayout<Double>.size),
+                    &requestedRate
+                )
+            }
+            Thread.sleep(forTimeInterval: 0.05)
         }
+        throw CoreAudioControlError(
+            operation: "48 kHz not reached (mic reports \(Int(actualRate)) Hz)",
+            status: setStatus == noErr ? kAudioHardwareUnspecifiedError : setStatus
+        )
     }
 
     private func configureBufferSize() throws {

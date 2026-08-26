@@ -88,6 +88,12 @@ final class AppState: ObservableObject {
     }
 
     func applySelectedModel() {
+        // Changing the model while stopped starts nothing; clear a stale
+        // failure message so the menu does not keep blaming the last
+        // attempt.
+        if !isEnabled, case .failed = phase {
+            phase = .off
+        }
         guard isEnabled, !isBusy, let engine, selectedModel != activeModelID else {
             return
         }
