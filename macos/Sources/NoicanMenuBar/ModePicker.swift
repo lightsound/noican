@@ -25,10 +25,21 @@ struct ModePicker: View {
             }
         }
         .padding(3)
+        // One *persistent* pill that moves between the segments' anchor
+        // frames. The previous per-segment `if` pill was inserted/removed
+        // on every switch, so an opacity transition ran alongside the
+        // slide (ghosting) and a mid-flight retarget could snap (visible
+        // teleport). A single view that only changes its matched target
+        // has neither failure mode.
+        .background {
+            Capsule()
+                .fill(pillColor(for: mode))
+                .matchedGeometryEffect(id: mode, in: highlightNamespace, isSource: false)
+        }
         .background(Capsule().fill(.quaternary.opacity(0.5)))
         .animation(.spring(response: 0.25, dampingFraction: 0.9), value: mode)
         // Isolate the sliding pill's matched geometry from outside layout
-        // shifts (status/error text above changing the control's vertical
+        // shifts (status/error text changing the control's vertical
         // position mid-slide would otherwise distort the animation).
         .geometryGroup()
     }
@@ -46,13 +57,8 @@ struct ModePicker: View {
             .foregroundStyle(labelStyle(for: candidate))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 5)
-            .background {
-                if mode == candidate {
-                    Capsule()
-                        .fill(pillColor(for: candidate))
-                        .matchedGeometryEffect(id: "selection", in: highlightNamespace)
-                }
-            }
+            // Invisible anchor the pill can target.
+            .matchedGeometryEffect(id: candidate, in: highlightNamespace, isSource: true)
             .contentShape(Capsule())
         }
         .buttonStyle(StaticButtonStyle())
