@@ -180,12 +180,18 @@ so changing it while running rebuilds the transport.
 2. Newly connected input devices must appear in the list within a
    moment, without reopening anything; disconnected ones must disappear.
 3. Select a 48 kHz-incapable device (e.g. a Bluetooth headset
-   microphone) and select On: the start must fail with a clear error
-   under the mode control, while the pill **stays on On** with a red
-   warning tint (the control shows the user's intent; the system never
-   moves it). Then select the built-in microphone: the engine must
-   restart automatically into the selected mode and reach Running.
-   Re-tapping the red segment must also retry.
+   microphone) while Off, then select On: the refusal must be
+   **instant** (a pre-flight reads the device's advertised rates — no
+   busy spinner, no teardown), with a clear reason under the mode
+   control and the pill **staying on On** with a red warning tint (the
+   control shows the user's intent; the system never moves it). Then
+   select the built-in microphone: the engine must restart automatically
+   into the selected mode and reach Running. Re-tapping the red segment
+   must also retry.
+4. While running, click the incapable device in the list: the switch is
+   refused in place — the checkmark returns to the working microphone,
+   the reason appears under the list, and the engine keeps running
+   uninterrupted.
 
 ## Preview (self-monitor)
 
@@ -382,6 +388,12 @@ Run the Preview and Level meters procedures above; the build passes when:
     gap; hot-plugged devices appear in the list automatically.
 14. **Mode-control animation**: the sliding pill stays visually intact
     while multi-line status/error text appears and disappears around it.
+15. **No transitional flash**: pressing a pill while a failure is shown
+    never flashes optimistic UI — no momentary blue pill, no meters
+    sliding in and out, no error text blinking away and back. The view
+    changes once, when the attempt settles (sections, colors, and error
+    text render from the last settled state; the spinner and the status
+    line are the only transitional feedback).
 
 ## Result record
 

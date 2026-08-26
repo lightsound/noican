@@ -20,7 +20,7 @@ struct MenuView: View {
             modePicker
             Divider()
                 .padding(.horizontal, contentPadding)
-            if state.mode != .off, state.engineErrorMessage == nil {
+            if state.showsMonitoring {
                 monitoring
                 Divider()
                     .padding(.horizontal, contentPadding)
@@ -154,6 +154,12 @@ struct MenuView: View {
                     .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
                 microphoneList
+                if let message = state.microphoneError {
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text("Model")

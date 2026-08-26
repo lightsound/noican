@@ -9,7 +9,21 @@ final class AppState: ObservableObject {
     @Published var selectedModel = AppState.defaultModelID
     @Published private(set) var mode: EngineMode = .off
     @Published private(set) var isBusy = false
-    @Published private(set) var phase: EnginePhase = .off
+    @Published private(set) var phase: EnginePhase = .off {
+        didSet {
+            if case .busy = phase {
+                return
+            }
+            settledPhase = phase
+        }
+    }
+    /// The last *settled* (non-busy) phase. Sections, colors, and error
+    /// text render from this instead of `phase`, so a transition that
+    /// fails quickly never flashes optimistic UI (blue pill, meters
+    /// sliding in, error text vanishing) before snapping back — the view
+    /// changes once, when the outcome is known. `phase` still drives the
+    /// spinner and the transitional status line.
+    @Published private(set) var settledPhase: EnginePhase = .off
     /// Last preview failure (start failure, feedback trip, …), shown
     /// under the mode control. Preview failures never affect the engine
     /// phase: the meeting-facing path keeps running.
@@ -21,6 +35,10 @@ final class AppState: ObservableObject {
     /// pressable and explains itself on press, which confuses less than
     /// a segment that cannot be pressed.
     @Published private(set) var previewUnavailableReason: String?
+    /// Why the last microphone selection was refused in place (the device
+    /// cannot run at 48 kHz) while the engine kept the previous one.
+    /// Shown under the microphone list; cleared on the next selection.
+    @Published private(set) var microphoneError: String?
     /// Peak meters, refreshed by `pollLevels()` only while the popover is
     /// open. Independent of the Preview state: they move whenever the
     /// engine runs.
@@ -54,7 +72,10 @@ final class AppState: ObservableObject {
             engine = try RustEngine()
             refreshDevices()
         } catch {
+            // Property observers do not fire for direct assignments in an
+            // initializer; keep the settled mirror in sync by hand.
             phase = .failed(error.localizedDescription)
+            settledPhase = phase
         }
         if !models.contains(where: { $0.id == selectedModel }) {
             selectedModel = models.first?.id ?? ""
@@ -122,7 +143,13 @@ final class AppState: ObservableObject {
         guard newMode != mode || isModeUnfulfilled else {
             return
         }
-        previewError = nil
+        microphoneError = nil
+        // Keep a preview failure visible while a Preview retry is in
+        // flight (settled-state rendering: only a settled success clears
+        // it, in finishMonitorChange); leaving Preview clears it now.
+        if newMode != .preview {
+            previewError = nil
+        }
         previewUnavailableReason = nil
         if newMode == .preview, let reason = RustEngine.monitorTargetError {
             // Refuse in place and explain: neither the mode nor the
@@ -157,35 +184,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Runs while the menu popover is visible (bound to the menu view's
-    /// task) and stops when it closes: ~20 Hz, two non-blocking atomic
-    /// reads per tick, plus a preview-availability re-check about once
-    /// per second (the default-output listener misses same-device
-    /// data-source flips such as the headphone jack).
-    func pollLevels() async {
-        refreshPreviewAvailability()
-        var ticks = 0
-        while !Task.isCancelled {
-            refreshLevels()
-            ticks += 1
-            if ticks.isMultiple(of: 20) {
-                refreshPreviewAvailability()
-            }
-            try? await Task.sleep(for: .milliseconds(50))
-        }
-    }
-
-    private func refreshLevels() {
-        guard mode != .off, let engine else {
-            if inputLevel != 0 { inputLevel = 0 }
-            if outputLevel != 0 { outputLevel = 0 }
-            return
-        }
-        inputLevel = engine.inputLevel
-        outputLevel = engine.outputLevel
-        checkMonitorTrip()
-    }
-
     func selectMicrophone(_ uid: String) {
         guard uid != selectedInputUID else {
             return
@@ -195,6 +193,7 @@ final class AppState: ObservableObject {
     }
 
     private func applySelectedInput() {
+        microphoneError = nil
         // Changing the microphone while Off only updates the selection;
         // clear a stale failure so the menu stops blaming the previous
         // device the moment another one is chosen.
@@ -204,13 +203,24 @@ final class AppState: ObservableObject {
         guard mode != .off, !isBusy, engine != nil, selectedInputUID != activeInputUID else {
             return
         }
+        // Pre-flight the new microphone before tearing anything down.
+        if let reason = microphoneCapabilityError(for: selectedInputUID) {
+            if let activeInputUID {
+                // The engine keeps running on the current microphone;
+                // put the checkmark back and explain under the list.
+                selectedInputUID = activeInputUID
+                microphoneError = reason
+            } else {
+                phase = .failed(reason)
+            }
+            return
+        }
         // The private aggregate is composed around the microphone at
         // start time, so a live change rebuilds the transport with the
         // same model and mode (a brief gap is inherent). Because the mode
         // keeps the user's intent across failures, this same path
         // auto-recovers: picking a working microphone after a failed
-        // start (e.g. a 48 kHz-incapable Bluetooth headset) restarts
-        // straight into the selected mode.
+        // start restarts straight into the selected mode.
         let monitor = mode == .preview
         teardownEngine()
         start(monitor: monitor)
@@ -255,19 +265,23 @@ final class AppState: ObservableObject {
 
     private func start(monitor: Bool) {
         guard let engine else {
-            mode = .off
             phase = .failed("Rust engine unavailable")
             return
         }
         guard
             let input = inputDevices.first(where: { $0.uid == selectedInputUID })
         else {
-            mode = .off
             phase = .failed("Select an input device")
             return
         }
+        // Pre-flight: an incapable microphone fails here, synchronously,
+        // before any busy round-trip — the reason appears without the UI
+        // flashing transitional state.
+        if let reason = microphoneCapabilityError(for: input.uid) {
+            phase = .failed(reason)
+            return
+        }
         guard let virtualOutput = AudioDeviceCatalog.virtualOutput(in: allDevices) else {
-            mode = .off
             phase = .failed("Install the Noican or BlackHole virtual device")
             return
         }
@@ -385,9 +399,38 @@ final class AppState: ObservableObject {
     }
 }
 
-// MARK: - Preview monitor control
+// MARK: - Monitoring: meters polling and preview monitor control
 
 extension AppState {
+    /// Runs while the menu popover is visible (bound to the menu view's
+    /// task) and stops when it closes: ~20 Hz, two non-blocking atomic
+    /// reads per tick, plus a preview-availability re-check about once
+    /// per second (the default-output listener misses same-device
+    /// data-source flips such as the headphone jack).
+    func pollLevels() async {
+        refreshPreviewAvailability()
+        var ticks = 0
+        while !Task.isCancelled {
+            refreshLevels()
+            ticks += 1
+            if ticks.isMultiple(of: 20) {
+                refreshPreviewAvailability()
+            }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    private func refreshLevels() {
+        guard mode != .off, let engine else {
+            if inputLevel != 0 { inputLevel = 0 }
+            if outputLevel != 0 { outputLevel = 0 }
+            return
+        }
+        inputLevel = engine.inputLevel
+        outputLevel = engine.outputLevel
+        checkMonitorTrip()
+    }
+
     /// Sends the monitor toggle to the engine off the main actor,
     /// serialized like every other engine transition: `isBusy` blocks
     /// concurrent mode changes (and the pollers' engine calls) until the
@@ -397,11 +440,11 @@ extension AppState {
         phase = .busy(enabled ? "Starting preview…" : "Stopping preview…")
         Task.detached {
             let result = Result { try engine.setMonitor(enabled) }
-            await self.finishMonitorChange(result)
+            await self.finishMonitorChange(result, enabled: enabled)
         }
     }
 
-    private func finishMonitorChange(_ result: Result<Void, Error>) {
+    private func finishMonitorChange(_ result: Result<Void, Error>, enabled: Bool) {
         isBusy = false
         guard mode != .off else {
             return
@@ -409,9 +452,17 @@ extension AppState {
         // The engine itself keeps running either way; the mode keeps the
         // user's intent. On failure the pill's warning tint plus the
         // message below the control say the preview is not playing, and
-        // re-tapping Preview retries.
+        // re-tapping Preview retries. Settled-state rendering: a kept
+        // preview failure clears only when an enable actually succeeds
+        // (a successful disable after a feedback trip must not erase the
+        // trip's explanation).
         phase = .running
-        if case let .failure(error) = result {
+        switch result {
+        case .success:
+            if enabled {
+                previewError = nil
+            }
+        case let .failure(error):
             previewError = error.localizedDescription
         }
     }
