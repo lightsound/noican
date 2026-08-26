@@ -194,33 +194,15 @@ struct MenuView: View {
                     .padding(.vertical, 3)
             }
             ForEach(state.inputDevices) { device in
-                microphoneRow(device)
+                MicrophoneRow(
+                    device: device,
+                    isSelected: device.uid == state.selectedInputUID,
+                    isBusy: state.isBusy
+                ) {
+                    state.selectMicrophone(device.uid)
+                }
             }
         }
-    }
-
-    private func microphoneRow(_ device: AudioDeviceInfo) -> some View {
-        let isSelected = device.uid == state.selectedInputUID
-        return Button {
-            state.selectMicrophone(device.uid)
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "checkmark")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
-                    .opacity(isSelected ? 1 : 0)
-                Text(device.name)
-                    .font(.caption)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 0)
-            }
-            .padding(.vertical, 3)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
-        .disabled(state.isBusy)
     }
 
     private func modelLabel(_ model: ModelInfo) -> String {
@@ -242,6 +224,49 @@ struct MenuView: View {
         .controlSize(.small)
         .padding(.horizontal, contentPadding)
         .padding(.vertical, 10)
+    }
+}
+
+/// One selectable microphone row: comfortable click target (callout
+/// text, ~28 pt row) with a native-menu-style hover highlight so the
+/// rows read as pressable, and an accent checkmark on the selection.
+private struct MicrophoneRow: View {
+    let device: AudioDeviceInfo
+    let isSelected: Bool
+    let isBusy: Bool
+    let select: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: select) {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .opacity(isSelected ? 1 : 0)
+                Text(device.name)
+                    .font(.callout)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 5)
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .background {
+                if isHovering, !isBusy {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(.quaternary.opacity(0.7))
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+        .disabled(isBusy)
+        .onHover { hovering in
+            isHovering = hovering
+        }
     }
 }
 
