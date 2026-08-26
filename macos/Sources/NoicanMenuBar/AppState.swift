@@ -96,6 +96,11 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// One-line status for the header. Deliberately never multi-line:
+    /// text above the mode control must not change the control's
+    /// vertical position (the sliding pill would move mid-animation).
+    /// Full failure text lives in `engineErrorMessage`, shown below the
+    /// control instead.
     var statusText: String {
         switch phase {
         case .off:
@@ -105,9 +110,18 @@ final class AppState: ObservableObject {
         case .running:
             let name = displayName(for: activeModelID ?? selectedModel)
             return mode == .preview ? "Previewing · \(name)" : "Running · \(name)"
-        case let .failed(message):
+        case .failed:
+            return "Error"
+        }
+    }
+
+    /// Full engine failure text, displayed under the mode control (with
+    /// the preview messages) so the header height stays constant.
+    var engineErrorMessage: String? {
+        if case let .failed(message) = phase {
             return message
         }
+        return nil
     }
 
     func displayName(for modelID: String) -> String {

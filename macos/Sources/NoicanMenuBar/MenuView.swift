@@ -50,13 +50,16 @@ struct MenuView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Noican")
                     .font(.headline)
+                // Always one line: the header must never change height,
+                // or everything below it (including the sliding pill)
+                // would shift mid-animation. Full errors render below
+                // the mode control.
                 Text(state.statusText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(4)
-                    .fixedSize(horizontal: false, vertical: true)
-                    // Full text on hover, in case an error still clips.
-                    .help(state.statusText)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(state.engineErrorMessage ?? state.statusText)
             }
             Spacer(minLength: 0)
             if state.isBusy {
@@ -90,10 +93,10 @@ struct MenuView: View {
     }
 
     /// The single top-level control. Preview = engine + self-monitor;
-    /// On = engine only. Both feed the virtual microphone. A refused
-    /// Preview press explains itself here (and the message clears live
-    /// once the output is safe); preview failures (rollbacks, feedback
-    /// trips) surface here too.
+    /// On = engine only. Both feed the virtual microphone. All prose
+    /// feedback — engine failures, refused Preview presses (cleared live
+    /// once the output is safe), preview rollbacks and feedback trips —
+    /// renders below the control, where changing height cannot move it.
     private var modePicker: some View {
         VStack(alignment: .leading, spacing: 6) {
             ModePicker(
@@ -101,6 +104,12 @@ struct MenuView: View {
                 isBusy: state.isBusy,
                 select: { state.setMode($0) }
             )
+            if let message = state.engineErrorMessage {
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let reason = state.previewUnavailableReason {
                 Text("Preview is unavailable: \(reason)")
                     .font(.caption2)
