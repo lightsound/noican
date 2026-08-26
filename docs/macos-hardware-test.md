@@ -114,9 +114,8 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
      registry stage**: Passthrough, FastEnhancer T/B/S/M/L, DPDFNet2,
      DPDFNet8, DeepFilterNet3, UL-UNAS, Hush, and TSE Conv-TasNet 48k
      marked "requires enrollment".
-   The monitoring section (level bars; headphone caption while
-   previewing) must be absent while the mode is Off and appear while the
-   engine runs.
+   The monitoring section (level bars) must be absent while the mode is
+   Off and appear while the engine runs.
 4. Select a physical microphone and `FastEnhancer-B 48k`.
 5. Select On and grant microphone access when macOS prompts.
 6. Confirm status changes to `Running · FastEnhancer-B 48k`.
@@ -138,9 +137,11 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
 12. Select Off. Confirm the private Aggregate Device disappears and
     the virtual microphone no longer receives new processed audio.
 
-If the status reports an audio fault, collect the macOS version, selected
-device UIDs, buffer size, and Console entries. Do not characterize the path
-as working.
+On a failure the header status shows a one-line `Error` and the full
+message renders under the mode control (the header never grows, so the
+control cannot shift). Collect the macOS version, selected device UIDs,
+buffer size, and Console entries. Do not characterize the path as
+working.
 
 ## Model switching
 
@@ -197,9 +198,12 @@ between them only arms or disarms the monitor.
 3. Speak: the processed voice must be audible with a modest constant
    delay (engine latency plus ~40 ms of monitor ring priming). The delay
    is by design, not a defect. The status line reads
-   `Previewing · <model>` and the headphone caption is visible.
+   `Previewing · <model>`.
 4. Headphones are mandatory: through speakers the processed microphone
-   feeds back into itself (Phase 0/1 has no AEC).
+   feeds back into itself (Phase 0/1 has no AEC). There is deliberately
+   no persistent warning text — unsafe outputs are refused on press with
+   the reason shown, and the feedback guard explains itself when it
+   trips.
 5. Switch models while previewing: the voice must keep playing across
    the switch with only the bounded fade — no click, no full-scale
    burst, no dropout beyond the fade.
