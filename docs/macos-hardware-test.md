@@ -107,16 +107,17 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
 2. Launch `dist/Noican.app`.
 3. Confirm the menu bar popover shows:
    - the status header with a state indicator,
-   - the Noise Cancellation toggle,
+   - the Off / Preview / On mode control,
    - the Microphone picker listing physical inputs,
-   - the input/output level bars below the Microphone picker,
-   - the Model picker listing **every registry stage**: Passthrough,
-     FastEnhancer T/B/S/M/L, DPDFNet2, DPDFNet8, DeepFilterNet3, UL-UNAS,
-     Hush, and TSE Conv-TasNet 48k marked "requires enrollment",
-   - the "Preview my voice" toggle (disabled while the engine is off)
-     with the headphone warning caption.
+   - the Model picker (below the Microphone picker) listing **every
+     registry stage**: Passthrough, FastEnhancer T/B/S/M/L, DPDFNet2,
+     DPDFNet8, DeepFilterNet3, UL-UNAS, Hush, and TSE Conv-TasNet 48k
+     marked "requires enrollment".
+   The monitoring section (level bars; headphone caption while
+   previewing) must be absent while the mode is Off and appear while the
+   engine runs.
 4. Select a physical microphone and `FastEnhancer-B 48k`.
-5. Enable the toggle and grant microphone access when macOS prompts.
+5. Select On and grant microphone access when macOS prompts.
 6. Confirm status changes to `Running · FastEnhancer-B 48k`.
 7. In QuickTime, OBS, or a meeting app, select the BlackHole/Noican virtual
    device as the microphone.
@@ -133,7 +134,7 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
 11. Selecting `TSE Conv-TasNet 48k` must fail gracefully: a clear
     "requires enrollment" status message, engine still running the previous
     model, picker reverted.
-12. Disable the toggle. Confirm the private Aggregate Device disappears and
+12. Select Off. Confirm the private Aggregate Device disappears and
     the virtual microphone no longer receives new processed audio.
 
 If the status reports an audio fault, collect the macOS version, selected
@@ -166,50 +167,61 @@ grows an enrollment flow.
 
 ## Preview (self-monitor)
 
-Preview plays the processed microphone signal on the system default
-output device through a second, output-only AUHAL fed by a dedicated
-monitor ring. It shares no state with the meeting-facing path except the
-lock-free tee in the inference worker.
+Preview mode runs the engine and additionally plays the processed
+microphone signal on the system default output device through a second,
+output-only AUHAL fed by a dedicated monitor ring. It shares no state
+with the meeting-facing path except the lock-free tee in the inference
+worker. Preview and On both feed the virtual microphone; switching
+between them only arms or disarms the monitor.
 
 1. Connect wired headphones and make them the system default output.
-2. Start the engine, then enable "Preview my voice" in the menu.
+2. Select Preview in the menu (directly from Off, or from On).
 3. Speak: the processed voice must be audible with a modest constant
    delay (engine latency plus ~40 ms of monitor ring priming). The delay
-   is by design, not a defect.
+   is by design, not a defect. The status line reads
+   `Previewing · <model>` and the headphone caption is visible.
 4. Headphones are mandatory: through speakers the processed microphone
-   feeds back into itself (Phase 0/1 has no AEC). The menu shows this
-   warning permanently.
+   feeds back into itself (Phase 0/1 has no AEC).
 5. Switch models while previewing: the voice must keep playing across
    the switch with only the bounded fade — no click, no full-scale
    burst, no dropout beyond the fade.
-6. Disable Preview: playback must stop immediately.
-7. While recording from the virtual device in QuickTime, toggle Preview
-   on and off: the recording must be unaffected.
+6. Switch Preview → On: playback must stop immediately; the engine keeps
+   running without interruption.
+7. While recording from the virtual device in QuickTime, switch between
+   Preview and On: the recording must be unaffected.
 8. Set the system default output to the BlackHole/Noican loopback and
-   try to enable Preview: it must be refused with a clear error (playing
-   there would feed the processed voice into the meeting twice), and the
-   engine must keep running.
-9. Toggle the engine off and on with Preview enabled: Preview must
-   resume automatically after the restart (or surface a clear error)
-   with no stale audio replayed and no double playback.
-10. Compare % CPU in Activity Monitor with Preview off and on: the
+   select Preview: it must be refused with a clear error (playing there
+   would feed the processed voice into the meeting twice), the mode must
+   fall back to On, and the engine must keep running.
+9. Set the system default output to the built-in speakers and select
+   Preview: it must be refused the same way (the voice would feed
+   straight back into the microphone).
+10. Select Off, then Preview again: the preview must come back cleanly
+    with no stale audio replayed and no double playback.
+11. Compare % CPU in Activity Monitor between On and Preview: the
     increase must be small (the monitor path only copies samples).
-11. The monitor clock is not drift-corrected: over long previews an
+12. The monitor clock is not drift-corrected: over long previews an
     occasional short gap (underrun re-prime) or discarded block
     (overrun) is acceptable; persistent crackle is not.
+13. *(Optional, external speakers required)* With USB/Bluetooth speakers
+    as the default output — which the device-type check cannot classify —
+    select Preview and raise the volume until feedback starts: within
+    about half a second of sustained near-clipping output the feedback
+    guard must stop the preview on its own, the mode must fall back to
+    On, and the menu must explain why. Re-selecting Preview re-arms it.
 
-Changing the default output while Preview is on does not retarget the
-monitor in this version; toggle Preview off and on to pick up the new
-device.
+Changing the default output while previewing does not retarget the
+monitor in this version; switch to On and back to Preview to pick up the
+new device.
 
 ## Level meters
 
 The inference worker publishes per-block (10 ms) input (pre-model) and
 output (post-model) peak levels with a short exponential decay; the menu
 polls them at ~20 Hz only while the popover is open. The meters draw on
-a shared −60…0 dB scale.
+a shared −60…0 dB scale and are shown only while the engine runs.
 
-1. Start the engine and open the popover.
+1. Select On (or Preview) and open the popover.
 2. Speak: the input bar must move with your voice, and the output bar
    must follow while you speak.
 3. Stay silent with steady noise present (fan, keyboard typing): the
@@ -217,8 +229,9 @@ a shared −60…0 dB scale.
    that noise suppression is working without listening to the stream.
 4. Switch models while watching: the bars must not spike to full scale,
    freeze, or oscillate wildly (only the bounded switch fade).
-5. The meters must move whether Preview is on or off.
-6. Stop the engine: both bars must return to zero.
+5. The meters must move identically in Preview and On.
+6. Select Off: the monitoring section disappears (and reappears at zero
+   on the next start).
 
 ## Real-time audit
 
@@ -267,7 +280,7 @@ especially macOS 26.
 The five transport items that candidate B passed, plus the two items new to
 this build:
 
-1. **Running status**: toggling on (with mic permission granted) reaches
+1. **Running status**: selecting On (with mic permission granted) reaches
    `Running · <model>` with the green indicator.
 2. **Audio reaches recordings**: a QuickTime/OBS recording from the virtual
    device contains the processed microphone signal.
@@ -275,7 +288,7 @@ this build:
    30-minute session.
 4. **Switching stability**: live model switches across all listed models
    produce no crash, no blowup, only the bounded fade.
-5. **Clean stop**: toggling off tears down AUHAL and the private aggregate;
+5. **Clean stop**: selecting Off tears down AUHAL and the private aggregate;
    nothing stale remains in Audio MIDI Setup; the app quits cleanly.
 6. **16 kHz models are audible** *(new)*: Hush and UL-UNAS produce clearly
    audible, intelligible speech in the live path.
@@ -287,24 +300,32 @@ this build:
 
 Run the Preview and Level meters procedures above; the build passes when:
 
-1. **Preview audible**: with Preview on, your own processed voice is
-   heard on headphones with a small constant delay; turning Preview off
+1. **Mode control**: Off / Preview / On transitions all work in both
+   directions; Preview ↔ On switches are instant and never interrupt the
+   virtual-microphone path.
+2. **Preview audible**: in Preview mode, your own processed voice is
+   heard on headphones with a small constant delay; switching to On
    stops it immediately.
-2. **Switching under preview**: model switches while previewing produce
+3. **Switching under preview**: model switches while previewing produce
    no dropout beyond the bounded fade and no full-scale burst.
-3. **Main path isolation**: a QuickTime recording from the virtual
-   device is unaffected by Preview on/off.
-4. **Loopback refusal**: Preview refuses to start when the default
-   output is the BlackHole/Noican loopback, with a clear error, engine
-   still running.
-5. **Restart coherence**: Preview state survives an engine off→on cycle
-   without stale audio, double playback, or a stuck toggle.
-6. **Preview cost**: % CPU does not increase materially with Preview on.
-7. **Input meter follows speech**: the input bar moves when you speak.
-8. **Suppression visible**: during noise-only passages (fan, typing) the
-   output bar sits clearly below the input bar.
-9. **Meter stability**: meters do not spike or freeze across model
-   switches, and both return to zero when the engine stops.
+4. **Main path isolation**: a QuickTime recording from the virtual
+   device is unaffected by Preview ↔ On switches.
+5. **Unsafe output refusal**: Preview refuses to start — with a clear
+   error, mode falling back to On (or Off → engine still starts), engine
+   unaffected — when the default output is the BlackHole/Noican loopback
+   or the built-in speakers.
+6. **Feedback guard** *(optional; needs external speakers)*: sustained
+   feedback through an unclassifiable output stops the preview by itself
+   within ~1 s, falls back to On, and explains why.
+7. **Restart coherence**: Off → Preview brings the preview back cleanly,
+   with no stale audio and no double playback.
+8. **Preview cost**: % CPU does not increase materially in Preview mode.
+9. **Input meter follows speech**: the input bar moves when you speak.
+10. **Suppression visible**: during noise-only passages (fan, typing)
+    the output bar sits clearly below the input bar.
+11. **Meter stability**: meters do not spike or freeze across model
+    switches; the monitoring section is hidden while Off and returns at
+    zero on the next start.
 
 ## Result record
 
