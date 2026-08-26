@@ -19,7 +19,7 @@ use std::{
 use noican_core::SwitchingEngine;
 use rtrb::{Consumer, Producer, RingBuffer};
 
-use crate::observe::{StreamLevels, tee_into_monitor};
+use crate::observe::{HowlGuard, StreamLevels, tee_into_monitor};
 use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
 
 type OSStatus = i32;
@@ -385,6 +385,7 @@ struct WorkerLinks {
     output: Producer<f32>,
     monitor: Producer<f32>,
     monitor_enabled: Arc<AtomicBool>,
+    monitor_tripped: Arc<AtomicBool>,
     levels: Arc<StreamLevels>,
 }
 
@@ -402,6 +403,9 @@ pub struct Runtime {
     /// Tee flag shared with the inference worker: when clear, the worker
     /// skips the monitor branch entirely.
     monitor_enabled: Arc<AtomicBool>,
+    /// Set by the worker's feedback guard when it auto-stopped the tee;
+    /// cleared by the next monitor toggle in either direction.
+    monitor_tripped: Arc<AtomicBool>,
     /// Consumer half of the preallocated monitor ring, parked here while
     /// preview is off and lent to the monitor callback while it is on.
     monitor_consumer: Option<Consumer<f32>>,
@@ -468,6 +472,7 @@ impl Runtime {
         let workgroup = audio_workgroup(unit.raw())?;
         let (monitor_producer, monitor_consumer) = RingBuffer::new(MONITOR_RING_CAPACITY);
         let monitor_enabled = Arc::new(AtomicBool::new(false));
+        let monitor_tripped = Arc::new(AtomicBool::new(false));
         let shutdown = Arc::new(AtomicBool::new(false));
         let worker_shutdown = Arc::clone(&shutdown);
         let worker_fault = Arc::clone(&faulted);
@@ -478,6 +483,7 @@ impl Runtime {
             output: output_producer,
             monitor: monitor_producer,
             monitor_enabled: Arc::clone(&monitor_enabled),
+            monitor_tripped: Arc::clone(&monitor_tripped),
             levels,
         };
         let worker = thread::Builder::new()
@@ -513,6 +519,7 @@ impl Runtime {
             worker: Some(worker),
             running: true,
             monitor_enabled,
+            monitor_tripped,
             monitor_consumer: Some(monitor_consumer),
             monitor: None,
         })
@@ -592,12 +599,25 @@ impl Runtime {
         self.monitor.is_some()
     }
 
+    /// Whether the feedback guard auto-stopped the preview tee since the
+    /// last monitor toggle. The control plane reacts by tearing the
+    /// monitor down ([`Runtime::set_monitor`] with `false`) and surfacing
+    /// the reason to the user.
+    #[must_use]
+    pub fn monitor_tripped(&self) -> bool {
+        self.monitor_tripped.load(Ordering::Acquire)
+    }
+
     fn enable_monitor(&mut self) -> Result<(), CoreAudioError> {
-        if self.monitor.is_some() {
-            return Ok(());
-        }
         if !self.running {
             return Err(CoreAudioError::NotRunning);
+        }
+        self.monitor_tripped.store(false, Ordering::Release);
+        if self.monitor.is_some() {
+            // The monitor AUHAL is still up (a feedback trip only disarms
+            // the tee); re-arm it.
+            self.monitor_enabled.store(true, Ordering::Release);
+            return Ok(());
         }
         let device = monitor_target_device()?;
         let mut consumer = self.monitor_consumer.take().ok_or_else(|| {
@@ -626,6 +646,7 @@ impl Runtime {
         // Clear the tee flag first so the worker stops feeding the ring
         // before the monitor AUHAL goes away.
         self.monitor_enabled.store(false, Ordering::Release);
+        self.monitor_tripped.store(false, Ordering::Release);
         if let Some(handle) = self.monitor.take() {
             let unit = handle.unit as AudioUnit;
             unsafe {
@@ -1029,9 +1050,11 @@ fn processing_loop(
         mut output,
         mut monitor,
         monitor_enabled,
+        monitor_tripped,
         levels,
     } = links;
     levels.reset();
+    let mut howl = HowlGuard::new();
     let workgroup = workgroup as *mut c_void;
     let mut token = WorkgroupJoinToken::default();
     let joined = unsafe { os_workgroup_join(workgroup, &raw mut token) } == 0;
@@ -1058,7 +1081,18 @@ fn processing_loop(
                     // Preview branch first: it only copies into the
                     // preallocated monitor ring (skipped entirely while
                     // preview is off) and never delays the main path.
-                    tee_into_monitor(&monitor_enabled, &mut monitor, &output_block);
+                    if tee_into_monitor(&monitor_enabled, &mut monitor, &output_block) {
+                        // Feedback killswitch: sustained near-clipping
+                        // output means the preview is looping back into
+                        // the microphone. Disarm the tee immediately and
+                        // flag the control plane; the main path continues.
+                        if howl.observe(&output_block) {
+                            monitor_enabled.store(false, Ordering::Release);
+                            monitor_tripped.store(true, Ordering::Release);
+                        }
+                    } else {
+                        howl.reset();
+                    }
                     for sample in output_block {
                         let _ignored = output.push(sample);
                     }

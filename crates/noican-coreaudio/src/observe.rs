@@ -83,6 +83,65 @@ fn fold_peak(bits: &AtomicU32, block: &[f32]) {
     bits.store(peak.max(decayed).to_bits(), Ordering::Relaxed);
 }
 
+/// Peak level (linear) a teed block must reach to count toward a trip.
+///
+/// Acoustic feedback has loop gain above one, so it grows until it
+/// saturates near full scale; speech peaks touch this level but do not
+/// hold it continuously.
+pub const HOWL_PEAK_THRESHOLD: f32 = 0.98;
+
+/// Consecutive near-clipping blocks (10 ms each) before a trip: 500 ms.
+///
+/// Long enough that shouting into the microphone does not trip it
+/// (speech dips between syllables), short enough to cut a howl before it
+/// is painful.
+pub const HOWL_TRIP_BLOCKS: usize = 50;
+
+/// Last-resort feedback killswitch for the preview monitor.
+///
+/// Trips when the teed output holds near clipping for
+/// [`HOWL_TRIP_BLOCKS`] consecutive blocks — the signature of the preview
+/// playing through speakers back into the microphone. Complements the
+/// device-type checks (built-in speakers, loopbacks), which cannot
+/// classify every output.
+///
+/// Real-time safe: one fold over the observed block, no allocation, no
+/// locks. Owned by the inference worker.
+#[derive(Debug, Default)]
+pub struct HowlGuard {
+    consecutive: usize,
+}
+
+impl HowlGuard {
+    /// Creates a guard with no accumulated run.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { consecutive: 0 }
+    }
+
+    /// Observes one teed block. Returns `true` when the guard trips; the
+    /// caller must then stop feeding the monitor. The run resets on any
+    /// block below the threshold and after a trip.
+    pub fn observe(&mut self, block: &[f32]) -> bool {
+        let peak = block.iter().fold(0.0_f32, |acc, s| acc.max(s.abs()));
+        if peak >= HOWL_PEAK_THRESHOLD {
+            self.consecutive += 1;
+            if self.consecutive >= HOWL_TRIP_BLOCKS {
+                self.consecutive = 0;
+                return true;
+            }
+        } else {
+            self.consecutive = 0;
+        }
+        false
+    }
+
+    /// Clears the accumulated run (monitoring is disabled).
+    pub const fn reset(&mut self) {
+        self.consecutive = 0;
+    }
+}
+
 /// Copies one processed block into the preview monitor ring when
 /// monitoring is enabled, without blocking.
 ///
@@ -192,5 +251,47 @@ mod tests {
         levels.update(&[f32::NAN, 0.25], &[f32::NAN]);
         assert!((levels.input() - 0.25).abs() < f32::EPSILON);
         assert!(levels.output().abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn howl_guard_trips_only_after_a_sustained_run() {
+        let mut guard = HowlGuard::new();
+        let loud = [1.0_f32; 4];
+        for _ in 0..HOWL_TRIP_BLOCKS - 1 {
+            assert!(!guard.observe(&loud), "below the trip length");
+        }
+        assert!(guard.observe(&loud), "trips exactly at the trip length");
+        // The run resets after a trip: a fresh sustained run is required.
+        assert!(!guard.observe(&loud));
+    }
+
+    #[test]
+    fn howl_guard_resets_on_quiet_blocks_and_explicit_reset() {
+        let mut guard = HowlGuard::new();
+        let loud = [1.0_f32; 4];
+        for _ in 0..HOWL_TRIP_BLOCKS - 1 {
+            let _tripped = guard.observe(&loud);
+        }
+        // One block below the threshold clears the run.
+        assert!(!guard.observe(&[0.5_f32; 4]));
+        for _ in 0..HOWL_TRIP_BLOCKS - 1 {
+            assert!(!guard.observe(&loud), "run restarted from zero");
+        }
+        guard.reset();
+        for _ in 0..HOWL_TRIP_BLOCKS - 1 {
+            assert!(!guard.observe(&loud), "reset cleared the run");
+        }
+    }
+
+    #[test]
+    fn howl_guard_ignores_loud_speech_with_dips() {
+        let mut guard = HowlGuard::new();
+        // Peaks touch full scale but dip every few blocks, like speech.
+        for _ in 0..20 {
+            for _ in 0..HOWL_TRIP_BLOCKS / 2 {
+                assert!(!guard.observe(&[1.0_f32; 4]));
+            }
+            assert!(!guard.observe(&[0.2_f32; 4]));
+        }
     }
 }

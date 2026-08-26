@@ -376,6 +376,28 @@ pub unsafe extern "C" fn noican_engine_is_monitoring(handle: *const c_void) -> i
     })
 }
 
+/// Returns 1 when the feedback guard auto-stopped the preview tee
+/// (sustained near-clipping monitor output — the preview was feeding back
+/// into the microphone) since the last monitor toggle, otherwise 0.
+///
+/// On 1, callers should disable the monitor (`noican_engine_set_monitor`
+/// with 0) to release the playback device and tell the user why; the
+/// meeting-facing path is unaffected. The flag clears on the next monitor
+/// toggle in either direction.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_engine_monitor_tripped(handle: *const c_void) -> i32 {
+    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+        return 0;
+    };
+    handle.state.lock().map_or(0, |state| {
+        i32::from(state.runtime.as_ref().is_some_and(Runtime::monitor_tripped))
+    })
+}
+
 /// Heartbeat: total input frames delivered since the engine started.
 ///
 /// Returns 0 while stopped. A value that stops advancing while
@@ -674,6 +696,7 @@ mod tests {
         .expect("enable failure records an error");
         assert!(error.contains("not running"), "unhelpful message: {error}");
         assert_eq!(unsafe { noican_engine_is_monitoring(handle) }, 0);
+        assert_eq!(unsafe { noican_engine_monitor_tripped(handle) }, 0);
         unsafe { noican_engine_destroy(handle) };
     }
 

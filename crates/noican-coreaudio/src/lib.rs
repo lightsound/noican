@@ -123,6 +123,12 @@ impl Runtime {
         false
     }
 
+    /// Portable builds have no feedback guard to trip.
+    #[must_use]
+    pub const fn monitor_tripped(&self) -> bool {
+        false
+    }
+
     /// Portable builds never run an audio device.
     #[must_use]
     pub const fn is_running(&self) -> bool {
