@@ -217,15 +217,17 @@ final class AppState: ObservableObject {
             activeModelID = model
             phase = .running
         case let .failure(error):
-            // The engine keeps running the previous model, so this is not
-            // an engine failure: the phase stays running (blue pill,
-            // meters alive) and the reason renders under the Model
-            // picker, with the picker reverted to stay truthful.
+            // Leave `phase` exactly as it was: on a healthy engine the
+            // switch failure is not an engine failure (previous model
+            // keeps running, phase stays .running), and on a stopped one
+            // (`setModel` fails fast) painting .running would be a green
+            // lie with the health poll already cancelled. The reason
+            // renders under the Model picker, with the picker reverted
+            // to stay truthful.
             if let activeModelID {
                 selectedModel = activeModelID
             }
             modelError = error.localizedDescription
-            phase = .running
         }
     }
 

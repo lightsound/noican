@@ -69,6 +69,11 @@ private struct MenuBarIcon: View {
             systemSymbolName: symbolName,
             accessibilityDescription: "Noican"
         )?.withSymbolConfiguration(configuration) ?? NSImage()
+        // System symbols are template images; drawn directly, a template
+        // is treated as a monochrome mask and the palette tint would not
+        // survive the bake. The canvas re-applies templateness for the
+        // untinted (Off) state below.
+        symbol.isTemplate = false
         let size = NSSize(width: 22, height: 16)
         let image = NSImage(size: size, flipped: false) { rect in
             symbol.draw(
