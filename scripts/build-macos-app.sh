@@ -3,6 +3,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="aarch64-apple-darwin"
+# Match the Swift package's platform (.macOS(.v14)). Without this, cc-built
+# objects in the Rust staticlib (ring, tract-linalg assembly) default to the
+# host SDK version and ld warns that they target a newer macOS than the app.
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
 # CONFIGURATION (release|debug) selects the Swift build configuration only.
 # The Rust staticlib is always built in release: Package.swift links
 # ../target/aarch64-apple-darwin/release, and a debug-profile engine is too
