@@ -23,6 +23,7 @@ use std::sync::Arc;
 #[cfg(not(target_os = "macos"))]
 use noican_core::SwitchingEngine;
 
+pub mod monitor;
 pub mod observe;
 
 pub use observe::StreamLevels;
@@ -73,6 +74,18 @@ pub enum CoreAudioError {
         uid: String,
     },
     /// Enabling preview was refused because the system default output is
+    /// an aggregate or Multi-Output device, which can contain the meeting
+    /// loopback as a subdevice this check cannot cheaply inspect.
+    #[error(
+        "the system default output ({uid}) is an aggregate/multi-output \
+         device that may include the meeting loopback; select the \
+         headphones device directly before enabling preview"
+    )]
+    MonitorAggregateOutput {
+        /// UID of the rejected default output device.
+        uid: String,
+    },
+    /// Enabling preview was refused because the system default output is
     /// the built-in speakers, which would feed the processed microphone
     /// straight back into itself (Phase 0/1 has no echo cancellation).
     #[error(
@@ -101,6 +114,7 @@ impl Runtime {
         _aggregate_device: u32,
         _engine: SwitchingEngine,
         _levels: Arc<StreamLevels>,
+        _monitor_tripped: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<Self, CoreAudioError> {
         Err(CoreAudioError::UnsupportedPlatform)
     }
@@ -120,12 +134,6 @@ impl Runtime {
     /// Portable builds never run a preview monitor.
     #[must_use]
     pub const fn is_monitoring(&self) -> bool {
-        false
-    }
-
-    /// Portable builds have no feedback guard to trip.
-    #[must_use]
-    pub const fn monitor_tripped(&self) -> bool {
         false
     }
 

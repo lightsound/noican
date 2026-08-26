@@ -30,6 +30,7 @@ use std::{
 };
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use noican_core::{Stage, StagePublisher, SwitchingEngine};
 use noican_coreaudio::{Runtime, StreamLevels, WORKER_BLOCK_SAMPLES};
@@ -59,6 +60,11 @@ struct EngineHandle {
     /// The worker resets it to silence on start and exit, so readers see
     /// 0 whenever the engine is stopped.
     levels: Arc<StreamLevels>,
+    /// Feedback-trip flag shared with each runtime's monitor. Kept
+    /// outside the control mutex for the same reason as `levels`: the UI
+    /// polls it at 20 Hz and must never wait on a slow monitor start.
+    /// Cleared by every monitor toggle and on runtime (re)start.
+    monitor_tripped: Arc<AtomicBool>,
 }
 
 fn default_models_dir() -> PathBuf {
@@ -101,6 +107,7 @@ pub unsafe extern "C" fn noican_engine_create(models_directory: *const c_char) -
             epoch: 0,
         }),
         levels: Arc::new(StreamLevels::new()),
+        monitor_tripped: Arc::new(AtomicBool::new(false)),
     });
     Box::into_raw(handle).cast()
 }
@@ -165,13 +172,14 @@ pub unsafe extern "C" fn noican_engine_start(
 
     // Slow work, unlocked: download/construct the stage, start the runtime.
     let levels = Arc::clone(&handle.levels);
+    let monitor_tripped = Arc::clone(&handle.monitor_tripped);
     let built = guard_panics(&model, || {
         let stage = prepare_stage(&models_dir, &model)?;
         let (publisher, engine) =
             SwitchingEngine::new(stage, SWITCH_FADE_SAMPLES, WORKER_BLOCK_SAMPLES)
                 .map_err(|error| error.to_string())?;
-        let runtime =
-            Runtime::start(aggregate_device, engine, levels).map_err(|error| error.to_string())?;
+        let runtime = Runtime::start(aggregate_device, engine, levels, monitor_tripped)
+            .map_err(|error| error.to_string())?;
         Ok((publisher, runtime))
     });
     let (publisher, mut runtime) = match built {
@@ -323,11 +331,14 @@ pub unsafe extern "C" fn noican_engine_is_faulted(handle: *const c_void) -> i32 
 /// stop/start, so callers re-enable it after `noican_engine_start`.
 ///
 /// Enabling fails when the engine is not running, when the default output
-/// is a virtual loopback device (which would feed the processed voice
-/// into the meeting twice), or when the monitor AUHAL cannot start; the
-/// meeting-facing path is never affected. Disabling is always a success,
-/// including while stopped. Toggling holds the control lock only for the
-/// short monitor start/stop transition (no downloads, no model work).
+/// must not receive the preview (a virtual loopback, an aggregate /
+/// multi-output device, or the built-in speakers), or when the monitor
+/// AUHAL cannot start; the meeting-facing path is never affected.
+/// Disabling is always a success, including while stopped. Toggling holds
+/// the control lock for the monitor start/stop transition — starting an
+/// output device can take a moment, so callers should serialize their own
+/// control calls behind a busy flag while a toggle is in flight (the
+/// level and trip getters stay lock-free and are always safe to poll).
 ///
 /// # Safety
 ///
@@ -383,7 +394,10 @@ pub unsafe extern "C" fn noican_engine_is_monitoring(handle: *const c_void) -> i
 /// On 1, callers should disable the monitor (`noican_engine_set_monitor`
 /// with 0) to release the playback device and tell the user why; the
 /// meeting-facing path is unaffected. The flag clears on the next monitor
-/// toggle in either direction.
+/// toggle in either direction and on engine (re)start.
+///
+/// Reads one atomic without taking the control lock, so it never blocks —
+/// safe to poll at UI rates even while a monitor start is in progress.
 ///
 /// # Safety
 ///
@@ -393,9 +407,7 @@ pub unsafe extern "C" fn noican_engine_monitor_tripped(handle: *const c_void) ->
     let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
         return 0;
     };
-    handle.state.lock().map_or(0, |state| {
-        i32::from(state.runtime.as_ref().is_some_and(Runtime::monitor_tripped))
-    })
+    i32::from(handle.monitor_tripped.load(Ordering::Acquire))
 }
 
 /// Heartbeat: total input frames delivered since the engine started.
