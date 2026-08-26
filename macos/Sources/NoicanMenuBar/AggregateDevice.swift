@@ -17,6 +17,13 @@ final class AggregateDevice: @unchecked Sendable {
         virtualOutput: AudioDeviceInfo
     ) throws -> AudioObjectID {
         destroy()
+        // Switch the subdevices themselves to 48 kHz before composing the
+        // aggregate: the aggregate follows its clock master (the mic), and
+        // setting the rate on the aggregate alone is rejected ('nope') by
+        // some configurations while the mic idles at another rate (16 kHz
+        // Bluetooth profiles, 44.1 kHz defaults, ...).
+        try ensure48k(input, role: "microphone \"\(input.name)\"")
+        try ensure48k(virtualOutput, role: "virtual output \"\(virtualOutput.name)\"")
         let subdevices: [[String: Any]] = [
             [
                 kAudioSubDeviceUIDKey: input.uid,
@@ -59,6 +66,35 @@ final class AggregateDevice: @unchecked Sendable {
         }
         AudioHardwareDestroyAggregateDevice(identifier)
         identifier = AudioObjectID(kAudioObjectUnknown)
+    }
+
+    private func ensure48k(_ device: AudioDeviceInfo, role: String) throws {
+        let target = 48_000.0
+        if let rate = AudioDeviceCatalog.nominalSampleRate(device.id),
+            abs(rate - target) < 0.5 {
+            return
+        }
+        guard AudioDeviceCatalog.supportsSampleRate(device.id, target) else {
+            // Typical case: Bluetooth headset microphones (8/16/24 kHz
+            // telephony profiles). Phase 0 requires a 48 kHz-capable input.
+            throw CoreAudioControlError(
+                operation: "The \(role) cannot run at 48 kHz",
+                status: kAudioDeviceUnsupportedFormatError
+            )
+        }
+        let status = AudioDeviceCatalog.requestSampleRate(device.id, target)
+        // The change lands asynchronously; poll on this background task.
+        for _ in 0..<40 {
+            if let rate = AudioDeviceCatalog.nominalSampleRate(device.id),
+                abs(rate - target) < 0.5 {
+                return
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        throw CoreAudioControlError(
+            operation: "The \(role) did not switch to 48 kHz",
+            status: status == noErr ? kAudioHardwareUnspecifiedError : status
+        )
     }
 
     private func waitUntilAlive() throws {

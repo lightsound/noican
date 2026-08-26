@@ -102,6 +102,73 @@ enum AudioDeviceCatalog {
         )
     }
 
+    /// Current nominal sample rate of a device, or nil when unreadable.
+    static func nominalSampleRate(_ device: AudioObjectID) -> Double? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var rate = 0.0
+        var byteCount = UInt32(MemoryLayout<Double>.size)
+        guard
+            AudioObjectGetPropertyData(device, &address, 0, nil, &byteCount, &rate) == noErr
+        else {
+            return nil
+        }
+        return rate
+    }
+
+    /// Whether the device advertises support for `rate`. Returns true when
+    /// the supported-rate list is unreadable (let the actual set decide).
+    static func supportsSampleRate(_ device: AudioObjectID, _ rate: Double) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyAvailableNominalSampleRates,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var byteCount: UInt32 = 0
+        guard
+            AudioObjectGetPropertyDataSize(device, &address, 0, nil, &byteCount) == noErr,
+            byteCount >= UInt32(MemoryLayout<AudioValueRange>.size)
+        else {
+            return true
+        }
+        let count = Int(byteCount) / MemoryLayout<AudioValueRange>.size
+        var ranges = [AudioValueRange](repeating: AudioValueRange(), count: count)
+        let status = ranges.withUnsafeMutableBytes { bytes -> OSStatus in
+            guard let baseAddress = bytes.baseAddress else {
+                return kAudioHardwareBadPropertySizeError
+            }
+            return AudioObjectGetPropertyData(device, &address, 0, nil, &byteCount, baseAddress)
+        }
+        guard status == noErr else {
+            return true
+        }
+        return ranges.contains { range in
+            range.mMinimum - 0.5 <= rate && rate <= range.mMaximum + 0.5
+        }
+    }
+
+    /// Requests a nominal sample rate; the change lands asynchronously, so
+    /// callers must poll [`nominalSampleRate`] for the result.
+    static func requestSampleRate(_ device: AudioObjectID, _ rate: Double) -> OSStatus {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var requested = rate
+        return AudioObjectSetPropertyData(
+            device,
+            &address,
+            0,
+            nil,
+            UInt32(MemoryLayout<Double>.size),
+            &requested
+        )
+    }
+
     private static func transportType(_ device: AudioDeviceID) -> UInt32 {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyTransportType,
