@@ -107,9 +107,10 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
 2. Launch `dist/Noican.app`.
 3. Confirm the menu bar popover shows:
    - the status header with a state indicator,
-   - the Off / Preview / On mode control,
-   - the Microphone picker listing physical inputs,
-   - the Model picker (below the Microphone picker) listing **every
+   - the Off / Preview / On mode control (sliding-pill segments),
+   - the Microphone list showing every physical input with a checkmark
+     on the selection,
+   - the Model picker (below the Microphone list) listing **every
      registry stage**: Passthrough, FastEnhancer T/B/S/M/L, DPDFNet2,
      DPDFNet8, DeepFilterNet3, UL-UNAS, Hush, and TSE Conv-TasNet 48k
      marked "requires enrollment".
@@ -165,6 +166,23 @@ model files as described in [models.md](models.md). It is excluded from this
 step until the upstream access/license blocker is resolved and the app
 grows an enrollment flow.
 
+## Microphone switching
+
+The private aggregate is composed around the microphone at start time,
+so changing it while running rebuilds the transport.
+
+1. While On (or Preview), select a different physical microphone in the
+   list: after a brief busy state the engine must return to Running (or
+   Previewing) with the same model, now capturing from the new device.
+   A short gap is inherent; a crash, a stale aggregate in Audio MIDI
+   Setup, or a dead stream is a failure.
+2. Newly connected input devices must appear in the list within a
+   moment, without reopening anything; disconnected ones must disappear.
+3. Select a 48 kHz-incapable device (e.g. a Bluetooth headset
+   microphone) and turn the engine on: the start must fail with a clear
+   error. Then select the built-in microphone: the error must clear
+   immediately, and selecting On must start normally.
+
 ## Preview (self-monitor)
 
 Preview mode runs the engine and additionally plays the processed
@@ -189,8 +207,8 @@ between them only arms or disarms the monitor.
    running without interruption.
 7. While recording from the virtual device in QuickTime, switch between
    Preview and On: the recording must be unaffected.
-8. With the popover open, set the system default output to each of the
-   following and watch the mode control:
+8. Set the system default output to each of the following and press
+   Preview:
    - the BlackHole/Noican loopback (the preview would reach the meeting
      twice),
    - a Multi-Output Device (Audio MIDI Setup) containing BlackHole (the
@@ -198,17 +216,15 @@ between them only arms or disarms the monitor.
      cannot catch that route),
    - the built-in speakers (the voice would feed straight back into the
      microphone).
-   Within about a second the Preview segment must gray out with a
-   caption under the control explaining why; clicking it must do
-   nothing, and the engine (whether Off or On) must be unaffected.
-   Restoring headphones as the default output must re-enable the
-   segment within about a second.
-9. The race path must also hold: if a refusal slips past the disabled
-   segment (the output changed in the same instant Preview was tapped),
-   the mode must stay exactly where it was — Off stays Off with no
-   engine start, On stays On — with the reason shown under the control.
-   A monitor start failure after an Off → Preview engine start must
-   roll the engine back to Off, keeping the reason visible.
+   The press must be refused in place: the mode and the engine (whether
+   Off or On) stay exactly as they were — Off never starts the engine —
+   and "Preview is unavailable: …" explains the reason under the
+   control. With the message showing, switch the default output back to
+   headphones: the message must clear within about a second, and
+   pressing Preview must then work.
+9. A monitor start failure after an Off → Preview engine start (a
+   runtime failure that passed the pre-flight check) must roll the
+   engine back to Off, keeping the reason visible under the control.
 10. Select Off, then Preview again: the preview must come back cleanly
     with no stale audio replayed and no double playback.
 11. Compare % CPU in Activity Monitor between On and Preview: the
@@ -328,12 +344,11 @@ Run the Preview and Level meters procedures above; the build passes when:
    no dropout beyond the bounded fade and no full-scale burst.
 4. **Main path isolation**: a QuickTime recording from the virtual
    device is unaffected by Preview ↔ On switches.
-5. **Unsafe output prevention**: while the default output is the
-   BlackHole/Noican loopback, a Multi-Output/aggregate device, or the
-   built-in speakers, the Preview segment is disabled with the reason
-   captioned below the control, and re-enables within about a second of
-   a safe output returning; a refusal that slips through the race leaves
-   the mode (and the engine) exactly as they were.
+5. **Unsafe output refusal**: pressing Preview while the default output
+   is the BlackHole/Noican loopback, a Multi-Output/aggregate device, or
+   the built-in speakers is refused in place — mode and engine
+   unchanged, the reason shown under the control — and the message
+   clears within about a second of a safe output returning.
 6. **Feedback guard** *(optional; needs external speakers)*: sustained
    feedback through an unclassifiable output stops the preview by itself
    within ~1 s, falls back to On, and explains why.
@@ -346,6 +361,12 @@ Run the Preview and Level meters procedures above; the build passes when:
 11. **Meter stability**: meters do not spike or freeze across model
     switches; the monitoring section is hidden while Off and returns at
     zero on the next start.
+12. **Microphone switching**: changing the microphone while running
+    rebuilds the transport with the same model and mode after a brief
+    gap; a stale start error clears as soon as another microphone is
+    selected; hot-plugged devices appear in the list automatically.
+13. **Mode-control animation**: the sliding pill stays visually intact
+    while multi-line status/error text appears and disappears around it.
 
 ## Result record
 
