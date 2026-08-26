@@ -20,6 +20,8 @@ use thiserror::Error;
 #[cfg(not(target_os = "macos"))]
 use noican_core::SwitchingEngine;
 
+pub mod observe;
+
 #[cfg(target_os = "macos")]
 mod macos;
 
@@ -47,6 +49,24 @@ pub enum CoreAudioError {
     /// The processing worker could not start.
     #[error("audio processing worker failed: {0}")]
     Worker(String),
+    /// A control call needs a running transport.
+    #[error("the engine transport is not running")]
+    NotRunning,
+    /// The preview monitor path could not start. Monitor failures never
+    /// affect the meeting-facing path.
+    #[error("preview monitor failed: {0}")]
+    Monitor(String),
+    /// Enabling preview was refused because the system default output is a
+    /// virtual loopback device, which would feed the processed voice into
+    /// the meeting a second time.
+    #[error(
+        "the system default output ({uid}) is a virtual loopback device; \
+         select real headphones as the system output before enabling preview"
+    )]
+    MonitorLoopbackOutput {
+        /// UID of the rejected default output device.
+        uid: String,
+    },
     /// This build does not target macOS.
     #[error("AUHAL is available only on macOS")]
     UnsupportedPlatform,
@@ -70,6 +90,21 @@ impl Runtime {
 
     /// No-op portable shutdown.
     pub const fn stop(&mut self) {}
+
+    /// Rejects preview monitoring on non-macOS targets.
+    ///
+    /// # Errors
+    ///
+    /// Always returns [`CoreAudioError::UnsupportedPlatform`].
+    pub const fn set_monitor(&mut self, _enabled: bool) -> Result<(), CoreAudioError> {
+        Err(CoreAudioError::UnsupportedPlatform)
+    }
+
+    /// Portable builds never run a preview monitor.
+    #[must_use]
+    pub const fn is_monitoring(&self) -> bool {
+        false
+    }
 
     /// Portable builds never run an audio device.
     #[must_use]
