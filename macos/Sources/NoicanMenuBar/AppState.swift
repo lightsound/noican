@@ -1,41 +1,25 @@
 import Combine
 import CoreAudio
 import Foundation
+import NoicanState
 
+/// The runtime shell around the pure state machine in the `NoicanState`
+/// package: it samples the environment (Core Audio device lists,
+/// pre-flight checks, engine health), feeds everything into
+/// `AppReducer.reduce` as events, performs the effects the reducer
+/// requests against the aggregate and the Rust engine, and publishes the
+/// resulting `AppModel` for SwiftUI. All transition *decisions* live in
+/// the reducer; nothing here changes `model` except `dispatch(_:)`.
 @MainActor
 final class AppState: ObservableObject {
-    @Published private(set) var inputDevices: [AudioDeviceInfo] = []
-    @Published var selectedInputUID = ""
-    @Published var selectedModel = AppState.defaultModelID
-    @Published private(set) var mode: EngineMode = .off
-    @Published private(set) var isBusy = false
-    /// The last *settled* outcome; `isBusy` alone expresses transitions.
-    /// Everything rendered from this (sections, colors, error text)
-    /// changes once per transition, when the outcome is known — a
-    /// transition that fails quickly never flashes optimistic UI.
-    @Published private(set) var phase: EnginePhase = .off
-    /// Last preview failure (start failure, feedback trip, …), shown
-    /// under the mode control. Preview failures never affect the engine
-    /// phase: the meeting-facing path keeps running.
-    @Published private(set) var previewError: String?
-    /// Why the last Preview attempt was refused (unsafe default output),
-    /// shown under the mode control until the user fixes the output —
-    /// the availability watchers clear it live — or moves on. Nil until
-    /// Preview is actually pressed: an unavailable Preview stays
-    /// pressable and explains itself on press, which confuses less than
-    /// a segment that cannot be pressed.
-    @Published private(set) var previewUnavailableReason: String?
-    /// Why the last microphone selection was refused in place (the device
-    /// cannot run at 48 kHz) while the engine kept the previous one.
-    /// Shown under the microphone list; cleared on the next selection.
-    @Published private(set) var microphoneError: String?
-    /// Why the last model switch failed while the engine kept running the
-    /// previous model. Shown under the Model picker (this is not an
-    /// engine failure, so the phase — and the pill — stay green).
-    @Published private(set) var modelError: String?
+    /// The reducer state, replaced wholesale by `dispatch(_:)`. The UI
+    /// renders its projections (`statusText`, `phase`, message slots, …),
+    /// which are all derived from settled snapshots.
+    @Published private(set) var model: AppModel
     /// Peak meters, refreshed by `pollLevels()` only while the popover is
-    /// open. Independent of the Preview state: they move whenever the
-    /// engine runs.
+    /// open. Display-only samples of lock-free engine atomics — not state
+    /// machine state, so they stay outside the reducer. Independent of
+    /// the Preview state: they move whenever the engine runs.
     @Published private(set) var inputLevel: Float = 0
     @Published private(set) var outputLevel: Float = 0
 
@@ -44,40 +28,190 @@ final class AppState: ObservableObject {
 
     private static let defaultModelID = "fastenhancer-b"
 
+    /// Full Core Audio device snapshot (the reducer sees the pure
+    /// `InputDevice` projection; effects need the identifiers here).
     private var allDevices: [AudioDeviceInfo] = []
     private let aggregate = AggregateDevice()
     private var engine: RustEngine?
-    /// Model the running transport was started/switched to. Readable by
-    /// the status projections in `AppState+Status.swift`.
-    private(set) var activeModelID: String?
-    /// Microphone the running transport was built around (the aggregate
-    /// is composed at start time, so a live change means a rebuild).
-    private var activeInputUID: String?
-    /// Watches for engine faults/unexpected stops while enabled. Owned here
-    /// (not by the menu view) so faults are detected even when the popover
-    /// is closed.
+    /// Watches for engine faults/unexpected stops while a transport is
+    /// live. Owned here (not by the menu view) so faults are detected
+    /// even when the popover is closed; started/stopped by
+    /// `syncFaultPolling()` from the reducer's `hasLiveTransport`.
     private var faultPollTask: Task<Void, Never>?
     /// Heartbeat state for detecting a device that stopped calling back.
     private var lastFrameCount: UInt64 = 0
     private var stalledTicks = 0
 
     init() {
+        var initialPhase = EnginePhase.off
         do {
             engine = try RustEngine()
-            refreshDevices()
         } catch {
-            phase = .failed(error.localizedDescription)
+            initialPhase = .failed(error.localizedDescription, session: nil)
         }
-        if !models.contains(where: { $0.id == selectedModel }) {
-            selectedModel = models.first?.id ?? ""
+        var modelID = Self.defaultModelID
+        if !models.contains(where: { $0.id == modelID }) {
+            modelID = models.first?.id ?? ""
         }
+        model = AppModel(
+            machine: .settled(initialPhase),
+            selectedModelID: modelID,
+            isEngineAvailable: engine != nil
+        )
+        refreshDevices()
         registerDeviceListener()
         registerDefaultOutputListener()
     }
 
-    /// Follows device hot-plug: refreshes the picker automatically and stops
-    /// the engine with a clear message when the microphone in use (or the
-    /// virtual output) disappears.
+    // MARK: - User intents (forwarded to the reducer with environment reads)
+
+    /// The mode control is intent: the reducer never moves it on its own
+    /// and re-tapping the selected segment retries an unfulfilled mode.
+    func setMode(_ newMode: EngineMode) {
+        // Environment reads the pure reducer cannot perform, sampled at
+        // dispatch time. Guarded on busy first so a tap during a
+        // transition never touches the engine (the monitor-target check
+        // is lock-free, but `isRunning` takes the control mutex).
+        guard !model.isBusy, let engine else {
+            return
+        }
+        dispatch(.modeSelected(
+            newMode,
+            monitorTargetError: newMode == .preview ? RustEngine.monitorTargetError : nil,
+            isEngineRunning: engine.isRunning
+        ))
+    }
+
+    /// User-initiated model pick (the Picker's binding setter).
+    /// Programmatic reverts happen inside the reducer, which never
+    /// re-enters this path — so they cannot wipe the failure message
+    /// they accompany.
+    func selectModel(_ id: String) {
+        dispatch(.modelSelected(id))
+    }
+
+    func selectMicrophone(_ uid: String) {
+        dispatch(.microphoneSelected(uid))
+    }
+
+    // MARK: - Reducer plumbing
+
+    /// The single writer of `model`: reduce, publish, perform effects,
+    /// then re-derive the pollers from the new state.
+    private func dispatch(_ event: AppEvent) {
+        let (newModel, effects) = AppReducer.reduce(model, event)
+        model = newModel
+        for effect in effects {
+            perform(effect)
+        }
+        syncFaultPolling()
+    }
+
+    private func perform(_ effect: AppEffect) {
+        switch effect {
+        case .stopEngine:
+            engine?.stop()
+            aggregate.destroy()
+        case let .startEngine(attempt):
+            startEngine(attempt)
+        case let .setMonitor(enabled):
+            setMonitor(enabled)
+        case let .switchModel(id):
+            switchModel(id)
+        }
+    }
+
+    private func startEngine(_ attempt: StartAttempt) {
+        guard
+            let engine,
+            let input = allDevices.first(where: { $0.uid == attempt.inputUID }),
+            let virtualOutput = AudioDeviceCatalog.virtualOutput(in: allDevices)
+        else {
+            // The reducer pre-flighted all three against the same
+            // snapshot, so this cannot happen; fail the attempt cleanly
+            // rather than trap. Deferred: completions never re-enter
+            // `dispatch` while an effect list is still being performed.
+            Task { @MainActor in
+                self.dispatch(.startCompleted(error: "The selected device disappeared"))
+            }
+            return
+        }
+        let aggregate = self.aggregate
+        let modelID = attempt.modelID
+        // Detached: aggregate creation polls the device until it is alive
+        // (up to ~1.5 s) and engine start may download weights — neither
+        // may block the main actor. The busy machine state keeps this the
+        // only operation touching `aggregate`/`engine` until it finishes.
+        Task.detached {
+            let result = Result {
+                let aggregateID = try aggregate.create(input: input, virtualOutput: virtualOutput)
+                try engine.start(aggregateDevice: aggregateID, model: modelID)
+            }
+            await self.finish(.startCompleted(error: result.errorMessage))
+        }
+    }
+
+    /// Sends the monitor toggle to the engine off the main actor,
+    /// serialized like every other engine transition: the busy machine
+    /// state blocks concurrent mode changes (and the pollers' engine
+    /// calls) until the outcome lands, so rapid taps cannot interleave.
+    private func setMonitor(_ enabled: Bool) {
+        guard let engine else {
+            return
+        }
+        Task.detached {
+            let result = Result { try engine.setMonitor(enabled) }
+            await self.finish(.monitorChangeCompleted(error: result.errorMessage))
+        }
+    }
+
+    private func switchModel(_ id: String) {
+        guard let engine else {
+            return
+        }
+        // Detached: weight download and model construction must not run
+        // on (or inherit) the main actor.
+        Task.detached {
+            let result = Result { try engine.setModel(id) }
+            await self.finish(.modelSwitchCompleted(error: result.errorMessage))
+        }
+    }
+
+    /// Completion entry point for detached effect tasks.
+    private func finish(_ event: AppEvent) {
+        dispatch(event)
+    }
+
+    // MARK: - Device catalog
+
+    func refreshDevices() {
+        do {
+            allDevices = try AudioDeviceCatalog.devices()
+            let inputs = allDevices
+                .filter(AudioDeviceCatalog.isSelectableInput)
+                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                .map { device in
+                    InputDevice(
+                        uid: device.uid,
+                        name: device.name,
+                        supports48kHz: AudioDeviceCatalog.supportsSampleRate(device.id, 48_000)
+                    )
+                }
+            dispatch(.devicesChanged(
+                inputs: inputs,
+                // The transport-loss check runs against every device with
+                // input channels, not just the selectable ones.
+                allInputUIDs: Set(allDevices.filter { $0.inputChannels > 0 }.map(\.uid)),
+                isVirtualOutputPresent: AudioDeviceCatalog.virtualOutput(in: allDevices) != nil
+            ))
+        } catch {
+            dispatch(.deviceQueryFailed(error.localizedDescription))
+        }
+    }
+
+    /// Follows device hot-plug: refreshes the picker automatically (the
+    /// reducer stops the engine when the microphone in use or the virtual
+    /// output disappears).
     private func registerDeviceListener() {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
@@ -91,284 +225,48 @@ final class AppState: ObservableObject {
         ) { [weak self] _, _ in
             // Delivered on the main queue, which is the main actor.
             MainActor.assumeIsolated {
-                self?.handleDevicesChanged()
+                self?.refreshDevices()
+                self?.refreshPreviewAvailability()
             }
         }
     }
 
-    private func handleDevicesChanged() {
-        // The transport is bound to activeInputUID (the selection can
-        // legitimately differ, e.g. right after a refused switch).
-        let runningInputUID = activeInputUID
-        refreshDevices()
-        refreshPreviewAvailability()
-        guard mode != .off, !isBusy, let runningInputUID else {
-            return
-        }
-        if !allDevices.contains(where: { $0.uid == runningInputUID && $0.inputChannels > 0 }) {
-            stopWithError("Microphone disconnected — noise cancellation stopped")
-        } else if AudioDeviceCatalog.virtualOutput(in: allDevices) == nil {
-            stopWithError("Virtual output device removed — noise cancellation stopped")
-        }
-    }
+    // MARK: - Health polling
 
-    func refreshDevices() {
-        do {
-            allDevices = try AudioDeviceCatalog.devices()
-            inputDevices = allDevices
-                .filter(AudioDeviceCatalog.isSelectableInput)
-                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-            if !inputDevices.contains(where: { $0.uid == selectedInputUID }) {
-                selectedInputUID = inputDevices.first?.uid ?? ""
+    /// Derives the health-poll task from the reducer state: it runs
+    /// exactly while a transport is live (including the failed-but-live
+    /// window after an engine fault, matching the teardown-bounded
+    /// polling this replaces).
+    private func syncFaultPolling() {
+        if model.hasLiveTransport {
+            guard faultPollTask == nil else {
+                return
             }
-        } catch {
-            phase = .failed(error.localizedDescription)
-        }
-    }
-
-    /// The mode control is intent: the system never changes it, only the
-    /// user does. Tapping the already-selected segment retries when the
-    /// intent is unfulfilled (e.g. the last start failed).
-    func setMode(_ newMode: EngineMode) {
-        guard !isBusy, let engine else {
-            return
-        }
-        guard newMode != mode || isModeUnfulfilled else {
-            return
-        }
-        microphoneError = nil
-        // Keep a preview failure visible while a Preview retry is in
-        // flight (settled-state rendering: only a settled success clears
-        // it, in finishMonitorChange); leaving Preview clears it now.
-        if newMode != .preview {
-            previewError = nil
-        }
-        previewUnavailableReason = nil
-        if newMode == .preview, let reason = RustEngine.monitorTargetError {
-            // Refuse in place and explain: neither the mode nor the
-            // engine changes, and the availability watchers clear the
-            // message as soon as the output becomes safe.
-            previewUnavailableReason = reason
-            return
-        }
-        let hadError = engineErrorMessage != nil
-        let previous = mode
-        mode = newMode
-        switch newMode {
-        case .off:
-            stop()
-        case .on:
-            if !hadError, engine.isRunning {
-                // Running healthily: only the monitor half can differ.
-                if previous == .preview {
-                    applyMonitor(false, engine: engine)
+            lastFrameCount = 0
+            stalledTicks = 0
+            faultPollTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(1))
+                    self?.checkEngineHealth()
                 }
-            } else {
-                teardownEngine()
-                start(monitor: false)
             }
-        case .preview:
-            if !hadError, engine.isRunning {
-                applyMonitor(true, engine: engine)
-            } else {
-                teardownEngine()
-                start(monitor: true)
-            }
+        } else {
+            faultPollTask?.cancel()
+            faultPollTask = nil
         }
-    }
-
-    /// User-initiated model pick (the Picker's binding setter).
-    /// Programmatic reverts in `finishModelSwitch` write `selectedModel`
-    /// directly, bypassing this — so they cannot wipe the failure message
-    /// they accompany.
-    func selectModel(_ id: String) {
-        guard id != selectedModel else {
-            return
-        }
-        selectedModel = id
-        applySelectedModel()
-    }
-
-    private func applySelectedModel() {
-        modelError = nil
-        // Changing the model while stopped starts nothing; clear a stale
-        // failure message so the menu does not keep blaming the last
-        // attempt.
-        if mode == .off, case .failed = phase {
-            phase = .off
-        }
-        guard mode != .off, !isBusy, let engine, selectedModel != activeModelID else {
-            return
-        }
-        let model = selectedModel
-        isBusy = true
-        // Detached: weight download and model construction must not run on
-        // (or inherit) the main actor.
-        Task.detached {
-            let result = Result { try engine.setModel(model) }
-            await self.finishModelSwitch(result, model: model)
-        }
-    }
-
-    private func finishModelSwitch(_ result: Result<Void, Error>, model: String) {
-        isBusy = false
-        switch result {
-        case .success:
-            activeModelID = model
-            phase = .running
-        case let .failure(error):
-            // Leave `phase` exactly as it was: on a healthy engine the
-            // switch failure is not an engine failure (previous model
-            // keeps running, phase stays .running), and on a stopped one
-            // (`setModel` fails fast) painting .running would be a green
-            // lie with the health poll already cancelled. The reason
-            // renders under the Model picker, with the picker reverted
-            // to stay truthful.
-            if let activeModelID {
-                selectedModel = activeModelID
-            }
-            modelError = error.localizedDescription
-        }
-    }
-
-    private func start(monitor: Bool, revertInputUID: String? = nil) {
-        guard let engine else {
-            phase = .failed("Rust engine unavailable")
-            return
-        }
-        guard
-            let input = inputDevices.first(where: { $0.uid == selectedInputUID })
-        else {
-            phase = .failed("Select an input device")
-            return
-        }
-        // Pre-flight: an incapable microphone fails here, synchronously,
-        // before any busy round-trip — the reason appears without the UI
-        // flashing transitional state.
-        if let reason = microphoneCapabilityError(for: input.uid) {
-            phase = .failed(reason)
-            return
-        }
-        guard let virtualOutput = AudioDeviceCatalog.virtualOutput(in: allDevices) else {
-            phase = .failed("Install the Noican or BlackHole virtual device")
-            return
-        }
-        let model = selectedModel
-        let aggregate = self.aggregate
-        isBusy = true
-        // Detached: aggregate creation polls the device until it is alive
-        // (up to ~1.5 s) and engine start may download weights — neither may
-        // block the main actor. `isBusy` keeps this the only operation
-        // touching `aggregate`/`engine` until it finishes.
-        Task.detached {
-            let result = Result {
-                let aggregateID = try aggregate.create(input: input, virtualOutput: virtualOutput)
-                try engine.start(aggregateDevice: aggregateID, model: model)
-            }
-            await self.finishStart(
-                result,
-                model: model,
-                // Capture the started device: the selection can be
-                // reassigned by device hot-plug during the busy window,
-                // and the transport is bound to this one.
-                inputUID: input.uid,
-                monitor: monitor,
-                revertInputUID: revertInputUID
-            )
-        }
-    }
-
-    private func finishStart(
-        _ result: Result<Void, Error>,
-        model: String,
-        inputUID: String,
-        monitor: Bool,
-        revertInputUID: String?
-    ) {
-        switch result {
-        case .success:
-            activeModelID = model
-            activeInputUID = inputUID
-            startFaultPolling()
-            // Preview mode is engine + monitor; the monitor half starts
-            // once the transport is up, keeping `isBusy` until its
-            // outcome lands.
-            if monitor, let engine {
-                applyMonitor(true, engine: engine)
-            } else {
-                isBusy = false
-                phase = .running
-            }
-        case let .failure(error):
-            isBusy = false
-            teardownEngine()
-            if let revertInputUID,
-               revertInputUID != inputUID,
-               inputDevices.contains(where: { $0.uid == revertInputUID }) {
-                // A failed live microphone switch must not kill the
-                // session: fall back to the device that was working a
-                // moment ago (one attempt — the fallback start carries no
-                // further revert target). The reason stays visible under
-                // the microphone list.
-                microphoneError = error.localizedDescription
-                selectedInputUID = revertInputUID
-                start(monitor: monitor)
-            } else {
-                // The mode keeps the user's intent; the red pill tint and
-                // the error below the control say it is not running.
-                // Retry by tapping the segment again or picking another
-                // microphone.
-                phase = .failed(error.localizedDescription)
-            }
-        }
-    }
-
-    private func stop() {
-        teardownEngine()
-        phase = .off
-    }
-
-    /// Tears the engine down without touching `mode` (the user's intent)
-    /// or the messages under the mode control: user-initiated transitions
-    /// clear those in `setMode`.
-    private func teardownEngine() {
-        stopFaultPolling()
-        engine?.stop()
-        aggregate.destroy()
-        activeModelID = nil
-        activeInputUID = nil
-        // A model-switch message describes the torn-down engine; drop it.
-        modelError = nil
-    }
-
-    private func startFaultPolling() {
-        faultPollTask?.cancel()
-        lastFrameCount = 0
-        stalledTicks = 0
-        faultPollTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
-                self?.checkEngineHealth()
-            }
-        }
-    }
-
-    private func stopFaultPolling() {
-        faultPollTask?.cancel()
-        faultPollTask = nil
     }
 
     private func checkEngineHealth() {
-        guard mode != .off, !isBusy, let engine else {
+        guard model.mode != .off, !model.isBusy, let engine else {
             return
         }
         checkMonitorTrip()
         if engine.isFaulted {
-            phase = .failed("Audio fault — turn noise cancellation off and on")
+            dispatch(.engineFaulted)
             return
         }
         if !engine.isRunning {
-            stopWithError("Engine stopped unexpectedly")
+            dispatch(.engineStoppedUnexpectedly)
             return
         }
         // Heartbeat: the device must keep delivering callbacks while
@@ -378,75 +276,16 @@ final class AppState: ObservableObject {
         if frames == lastFrameCount {
             stalledTicks += 1
             if stalledTicks >= 3 {
-                stopWithError("Audio stalled — device lost or audio system restarted")
+                dispatch(.audioStalled)
             }
         } else {
             lastFrameCount = frames
             stalledTicks = 0
         }
     }
-
-    /// Runtime stops (device loss, stalls) tear the engine down but keep
-    /// the mode: the pill shows what the user asked for, the red tint and
-    /// the message say it is not running, and selecting another
-    /// microphone (or re-tapping the segment) restarts into that mode.
-    private func stopWithError(_ message: String) {
-        teardownEngine()
-        previewError = nil
-        phase = .failed(message)
-    }
 }
 
-// MARK: - Microphone selection
-
-extension AppState {
-    func selectMicrophone(_ uid: String) {
-        guard uid != selectedInputUID else {
-            return
-        }
-        selectedInputUID = uid
-        applySelectedInput()
-    }
-
-    private func applySelectedInput() {
-        microphoneError = nil
-        // Changing the microphone while Off only updates the selection;
-        // clear a stale failure so the menu stops blaming the previous
-        // device the moment another one is chosen.
-        if mode == .off, case .failed = phase {
-            phase = .off
-        }
-        guard mode != .off, !isBusy, engine != nil, selectedInputUID != activeInputUID else {
-            return
-        }
-        // Pre-flight the new microphone before tearing anything down.
-        if let reason = microphoneCapabilityError(for: selectedInputUID) {
-            if let activeInputUID {
-                // The engine keeps running on the current microphone;
-                // put the checkmark back and explain under the list.
-                selectedInputUID = activeInputUID
-                microphoneError = reason
-            } else {
-                phase = .failed(reason)
-            }
-            return
-        }
-        // The private aggregate is composed around the microphone at
-        // start time, so a live change rebuilds the transport with the
-        // same model and mode (a brief gap is inherent). Because the mode
-        // keeps the user's intent across failures, this same path
-        // auto-recovers: picking a working microphone after a failed
-        // start restarts straight into the selected mode. If the rebuild
-        // itself fails, the previous device (which was working a moment
-        // ago) is restored instead of leaving the session dead.
-        let monitor = mode == .preview
-        let previousInputUID = activeInputUID
-        teardownEngine()
-        start(monitor: monitor, revertInputUID: previousInputUID)
-    }
-}
-
-// MARK: - Monitoring: meters polling and preview monitor control
+// MARK: - Monitoring: meters polling and preview availability
 
 extension AppState {
     /// Runs while the menu popover is visible (bound to the menu view's
@@ -468,7 +307,7 @@ extension AppState {
     }
 
     private func refreshLevels() {
-        guard mode != .off, let engine else {
+        guard model.mode != .off, let engine else {
             if inputLevel != 0 { inputLevel = 0 }
             if outputLevel != 0 { outputLevel = 0 }
             return
@@ -478,67 +317,26 @@ extension AppState {
         checkMonitorTrip()
     }
 
-    /// Sends the monitor toggle to the engine off the main actor,
-    /// serialized like every other engine transition: `isBusy` blocks
-    /// concurrent mode changes (and the pollers' engine calls) until the
-    /// outcome lands, so rapid taps cannot interleave.
-    private func applyMonitor(_ enabled: Bool, engine: RustEngine) {
-        isBusy = true
-        Task.detached {
-            let result = Result { try engine.setMonitor(enabled) }
-            await self.finishMonitorChange(result, enabled: enabled)
-        }
-    }
-
-    private func finishMonitorChange(_ result: Result<Void, Error>, enabled: Bool) {
-        isBusy = false
-        guard mode != .off else {
-            return
-        }
-        // The engine itself keeps running either way; the mode keeps the
-        // user's intent. On failure the pill's warning tint plus the
-        // message below the control say the preview is not playing, and
-        // re-tapping Preview retries. Settled-state rendering: a kept
-        // preview failure clears only when an enable actually succeeds
-        // (a successful disable after a feedback trip must not erase the
-        // trip's explanation).
-        phase = .running
-        switch result {
-        case .success:
-            if enabled {
-                previewError = nil
-            }
-        case let .failure(error):
-            previewError = error.localizedDescription
-        }
-    }
-
-    /// Reacts to the engine-side feedback killswitch: the worker already
-    /// silenced the preview, so release the playback device and tell the
-    /// user why. The mode stays on Preview (it is the user's intent);
-    /// the warning tint and the message say it is not playing, and
-    /// re-tapping Preview retries. Checked lock-free at 20 Hz while the
-    /// popover is open and at 1 Hz by the health poll.
+    /// Forwards the engine-side feedback killswitch to the reducer, which
+    /// releases the playback device and explains why. Checked lock-free
+    /// at 20 Hz while the popover is open and at 1 Hz by the health poll.
     private func checkMonitorTrip() {
-        guard mode != .off, !isBusy, let engine, engine.monitorTripped else {
+        guard model.mode != .off, !model.isBusy, let engine, engine.monitorTripped else {
             return
         }
-        previewError = "Preview stopped itself: feedback detected. Use headphones, then select Preview again."
-        applyMonitor(false, engine: engine)
+        dispatch(.monitorTripped)
     }
 
     /// Maintains a shown refusal message only: once a Preview attempt was
-    /// refused, re-check the default output so the message clears (or
-    /// updates) live as the user fixes it. Called from the default-output
-    /// listener, device hot-plug, and popover polling.
+    /// refused, re-sample the pre-flight so the reducer clears (or
+    /// updates) the message live as the user fixes the output. Called
+    /// from the default-output listener, device hot-plug, and popover
+    /// polling.
     private func refreshPreviewAvailability() {
-        guard previewUnavailableReason != nil else {
+        guard model.messages.previewUnavailableReason != nil else {
             return
         }
-        let reason = RustEngine.monitorTargetError
-        if reason != previewUnavailableReason {
-            previewUnavailableReason = reason
-        }
+        dispatch(.monitorTargetErrorChanged(RustEngine.monitorTargetError))
     }
 
     /// Follows default-output changes so a shown refusal message clears
@@ -559,5 +357,16 @@ extension AppState {
                 self?.refreshPreviewAvailability()
             }
         }
+    }
+}
+
+extension Result where Success == Void {
+    /// The failure as a user-facing message, or nil on success — the
+    /// shape completion events carry (`Result` itself is not `Equatable`).
+    fileprivate var errorMessage: String? {
+        if case let .failure(error) = self {
+            return error.localizedDescription
+        }
+        return nil
     }
 }

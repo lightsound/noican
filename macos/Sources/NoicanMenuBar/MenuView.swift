@@ -1,4 +1,5 @@
 import AppKit
+import NoicanState
 import SwiftUI
 
 /// The menu bar popover, top to bottom: a status header, the single
@@ -14,13 +15,16 @@ struct MenuView: View {
 
     private let contentPadding: CGFloat = 14
 
+    /// The settled reducer state every section renders from.
+    private var model: AppModel { state.model }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             modePicker
             Divider()
                 .padding(.horizontal, contentPadding)
-            if state.showsMonitoring {
+            if model.showsMonitoring {
                 monitoring
                 Divider()
                     .padding(.horizontal, contentPadding)
@@ -34,8 +38,8 @@ struct MenuView: View {
         // Ease the layout when status text or sections change height, so
         // the mode control glides instead of jumping (its sliding pill is
         // additionally isolated via geometryGroup in ModePicker).
-        .animation(.easeOut(duration: 0.15), value: state.phase)
-        .animation(.easeOut(duration: 0.15), value: state.mode)
+        .animation(.easeOut(duration: 0.15), value: model.phase)
+        .animation(.easeOut(duration: 0.15), value: model.mode)
         // Poll the engine's peak meters (and the feedback-trip flag) only
         // while the popover is open; the task is cancelled when the view
         // disappears.
@@ -54,15 +58,15 @@ struct MenuView: View {
                 // or everything below it (including the sliding pill)
                 // would shift mid-animation. Full errors render below
                 // the mode control.
-                Text(state.statusText)
+                Text(model.statusText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .help(state.engineErrorMessage ?? state.statusText)
+                    .help(model.engineErrorMessage ?? model.statusText)
             }
             Spacer(minLength: 0)
-            if state.isBusy {
+            if model.isBusy {
                 ProgressView()
                     .controlSize(.small)
             }
@@ -81,14 +85,14 @@ struct MenuView: View {
             // styles (hierarchical gray vs. plain colors) cannot
             // interpolate, so animating them cross-fades through
             // transparent — the dot visibly blinked on Off transitions.
-            .animation(nil, value: state.phase)
+            .animation(nil, value: model.phase)
     }
 
     /// Settled health only — no transitional color: the spinner already
     /// says "busy", and flashing the dot orange for a milliseconds-long
     /// Preview/On toggle just made it churn.
     private var statusColor: Color {
-        switch state.phase {
+        switch model.phase {
         case .off:
             .secondary.opacity(0.5)
         case .running:
@@ -106,24 +110,24 @@ struct MenuView: View {
     private var modePicker: some View {
         VStack(alignment: .leading, spacing: 6) {
             ModePicker(
-                mode: state.mode,
-                isBusy: state.isBusy,
-                isUnfulfilled: state.isModeUnfulfilled,
+                mode: model.mode,
+                isBusy: model.isBusy,
+                isUnfulfilled: model.isModeUnfulfilled,
                 select: { state.setMode($0) }
             )
-            if let message = state.engineErrorMessage {
+            if let message = model.engineErrorMessage {
                 Text(message)
                     .font(.caption2)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let reason = state.previewUnavailableReason {
+            if let reason = model.messages.previewUnavailableReason {
                 Text("Preview is unavailable: \(reason)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let message = state.previewError {
+            if let message = model.messages.previewError {
                 Text(message)
                     .font(.caption2)
                     .foregroundStyle(.red)
@@ -160,7 +164,7 @@ struct MenuView: View {
                     .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
                 microphoneList
-                if let message = state.microphoneError {
+                if let message = model.messages.microphoneError {
                     Text(message)
                         .font(.caption2)
                         .foregroundStyle(.red)
@@ -177,21 +181,21 @@ struct MenuView: View {
                 // re-enter the apply path (they would wipe the failure
                 // message they accompany).
                 Picker("Model", selection: Binding(
-                    get: { state.selectedModel },
+                    get: { model.selectedModelID },
                     set: { state.selectModel($0) }
                 )) {
-                    ForEach(state.models) { model in
-                        Text(modelLabel(model))
-                            .tag(model.id)
+                    ForEach(state.models) { entry in
+                        Text(modelLabel(entry))
+                            .tag(entry.id)
                             // Enrollment-gated models (tse-48k) stay visible
                             // but unselectable until the app grows an
                             // enrollment flow.
-                            .selectionDisabled(model.needsEnrollment)
+                            .selectionDisabled(entry.needsEnrollment)
                     }
                 }
                 .labelsHidden()
-                .disabled(state.isBusy)
-                if let message = state.modelError {
+                .disabled(model.isBusy)
+                if let message = model.messages.modelError {
                     Text(message)
                         .font(.caption2)
                         .foregroundStyle(.red)
@@ -210,17 +214,17 @@ struct MenuView: View {
     /// transport around the new device with the same model and mode.
     private var microphoneList: some View {
         VStack(alignment: .leading, spacing: 1) {
-            if state.inputDevices.isEmpty {
+            if model.inputDevices.isEmpty {
                 Text("No input devices")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .padding(.vertical, 3)
             }
-            ForEach(state.inputDevices) { device in
+            ForEach(model.inputDevices) { device in
                 MicrophoneRow(
                     device: device,
-                    isSelected: device.uid == state.selectedInputUID,
-                    isBusy: state.isBusy
+                    isSelected: device.uid == model.selectedInputUID,
+                    isBusy: model.isBusy
                 ) {
                     state.selectMicrophone(device.uid)
                 }
@@ -254,7 +258,7 @@ struct MenuView: View {
 /// text, ~28 pt row) with a native-menu-style hover highlight so the
 /// rows read as pressable, and an accent checkmark on the selection.
 private struct MicrophoneRow: View {
-    let device: AudioDeviceInfo
+    let device: InputDevice
     let isSelected: Bool
     let isBusy: Bool
     let select: () -> Void
