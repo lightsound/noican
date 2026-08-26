@@ -51,14 +51,18 @@ enum AudioDeviceCatalog {
         return identifiers.compactMap(deviceInfo)
     }
 
+    /// True for the loopback device noican routes into (stock BlackHole 2ch
+    /// in Phase 0, or the noican-branded fork later). It registers input
+    /// channels too, but selecting it as the microphone would only feed the
+    /// loopback back into itself, so pickers must exclude it.
+    static func isNoicanVirtualDevice(_ device: AudioDeviceInfo) -> Bool {
+        device.uid == "BlackHole2ch_UID"
+            || device.uid.lowercased().hasPrefix("com.lightsound.noican.")
+    }
+
     static func virtualOutput(in devices: [AudioDeviceInfo]) -> AudioDeviceInfo? {
         devices.first { device in
-            guard device.outputChannels > 0 else {
-                return false
-            }
-            let normalizedUID = device.uid.lowercased()
-            return device.uid == "BlackHole2ch_UID"
-                || normalizedUID.hasPrefix("com.lightsound.noican.")
+            device.outputChannels > 0 && isNoicanVirtualDevice(device)
         }
     }
 
