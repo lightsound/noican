@@ -372,7 +372,7 @@ extension AppState {
             return
         }
         let device = engine.monitorDeviceID
-        guard device != kAudioObjectUnknown else {
+        guard device != AudioObjectID(kAudioObjectUnknown) else {
             return
         }
         let reason: String?
@@ -398,7 +398,7 @@ extension AppState {
                 return
             }
             let device = engine.monitorDeviceID
-            guard device != kAudioObjectUnknown else {
+            guard device != AudioObjectID(kAudioObjectUnknown) else {
                 return
             }
             let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
@@ -408,11 +408,11 @@ extension AppState {
                 }
             }
             var address = Self.monitorDataSourceAddress
-            AudioObjectAddPropertyListenerBlock(device, &address, DispatchQueue.main, block)
+            _ = AudioObjectAddPropertyListenerBlock(device, &address, DispatchQueue.main, block)
             monitorSafetyListener = (device, block)
         } else if let listener = monitorSafetyListener {
             var address = Self.monitorDataSourceAddress
-            AudioObjectRemovePropertyListenerBlock(
+            _ = AudioObjectRemovePropertyListenerBlock(
                 listener.device,
                 &address,
                 DispatchQueue.main,
