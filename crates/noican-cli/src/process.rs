@@ -1,4 +1,4 @@
-//! Batch WAV processing: run inputs through selected models and organize
+//! Batch audio processing: run inputs through selected models and organize
 //! outputs for side-by-side comparison.
 
 use std::path::Path;
@@ -6,11 +6,11 @@ use std::path::Path;
 use anyhow::Context as _;
 use noican_core::Stage;
 
-use crate::wav;
+use crate::audio;
 
 /// Block size (48 kHz samples) used to drive stages. Mirrors a realistic
 /// real-time block so offline results match live behavior.
-pub const BLOCK_LEN: usize = 480;
+pub(crate) const BLOCK_LEN: usize = 480;
 
 /// Runs `input` through `stage`, compensating the stage's internal buffering
 /// latency so the output is time-aligned with the input.
@@ -18,7 +18,7 @@ pub const BLOCK_LEN: usize = 480;
 /// # Errors
 ///
 /// Propagates stage processing failures.
-pub fn run_stage_aligned(stage: &mut dyn Stage, input: &[f32]) -> anyhow::Result<Vec<f32>> {
+pub(crate) fn run_stage_aligned(stage: &mut dyn Stage, input: &[f32]) -> anyhow::Result<Vec<f32>> {
     let latency = stage.latency_samples();
     let padded_len = input.len() + latency;
     let mut output = vec![0.0_f32; padded_len.next_multiple_of(BLOCK_LEN)];
@@ -45,7 +45,7 @@ pub fn run_stage_aligned(stage: &mut dyn Stage, input: &[f32]) -> anyhow::Result
 /// # Errors
 ///
 /// Fails on I/O errors or when a stage cannot be created/run.
-pub fn process_file(
+pub(crate) fn process_file(
     input_path: &Path,
     out_dir: &Path,
     model_ids: &[String],
@@ -60,9 +60,9 @@ pub fn process_file(
     std::fs::create_dir_all(&file_dir)
         .with_context(|| format!("cannot create {}", file_dir.display()))?;
 
-    let input = wav::read_mono_48k(input_path)?;
+    let input = audio::read_mono_48k(input_path)?;
     let reference_path = file_dir.join("reference.wav");
-    wav::write_mono_48k(&reference_path, &input)?;
+    audio::write_mono_48k(&reference_path, &input)?;
     progress(&format!(
         "{}: {} samples @48k -> {}",
         stem,
@@ -74,7 +74,7 @@ pub fn process_file(
         let mut stage = make_stage(id)?;
         let output = run_stage_aligned(stage.as_mut(), &input)?;
         let out_path = file_dir.join(format!("{id}.wav"));
-        wav::write_mono_48k(&out_path, &output)?;
+        audio::write_mono_48k(&out_path, &output)?;
         progress(&format!("{stem}: {id} -> {}", out_path.display()));
     }
     Ok(())

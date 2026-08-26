@@ -182,7 +182,7 @@ mod tests {
     }
 
     fn sine(rate: u32, freq: f32, len: usize) -> Vec<f32> {
-        #[allow(clippy::cast_precision_loss, reason = "test signal indices are small")]
+        #[expect(clippy::cast_precision_loss, reason = "test signal indices are small")]
         (0..len)
             .map(|n| (2.0 * std::f32::consts::PI * freq * n as f32 / rate as f32).sin() * 0.5)
             .collect()

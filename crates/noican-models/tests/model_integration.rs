@@ -11,7 +11,7 @@
 //! The models directory defaults to `models/` at the workspace root and can
 //! be overridden with `NOICAN_MODELS_DIR`.
 
-#![allow(
+#![expect(
     clippy::print_stderr,
     reason = "test skip notices must be visible in the test log"
 )]
@@ -41,7 +41,7 @@ fn test_signal() -> Vec<f32> {
         rng_state ^= rng_state << 13;
         rng_state ^= rng_state >> 17;
         rng_state ^= rng_state << 5;
-        #[allow(
+        #[expect(
             clippy::cast_precision_loss,
             reason = "uniform noise precision is irrelevant here"
         )]
@@ -50,7 +50,7 @@ fn test_signal() -> Vec<f32> {
     };
     (0..ENGINE_SAMPLE_RATE as usize)
         .map(|n| {
-            #[allow(
+            #[expect(
                 clippy::cast_precision_loss,
                 reason = "sample indices fit f32 for a one-second signal"
             )]
@@ -132,7 +132,7 @@ fn dfn3_runs() {
 fn tse_runs_with_enrollment() {
     let mut embedding: Vec<f32> = (0..192)
         .map(|i| {
-            #[allow(clippy::cast_precision_loss, reason = "test embedding values only")]
+            #[expect(clippy::cast_precision_loss, reason = "test embedding values only")]
             let x = i as f32 * 0.37;
             x.sin()
         })

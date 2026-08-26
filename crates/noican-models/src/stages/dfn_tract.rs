@@ -27,7 +27,7 @@ struct SendModel(DfTract);
 // SAFETY: see the type-level comment — no `Rc` inside the wrapped value
 // can be observed from more than one thread because the value is only
 // accessible via `&mut` and is never cloned or shared.
-#[allow(
+#[expect(
     unsafe_code,
     clippy::non_send_fields_in_send_ty,
     reason = "tract's stateful plans are thread-confined here; see SendModel docs"

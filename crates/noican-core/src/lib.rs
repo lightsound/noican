@@ -1,4 +1,4 @@
-//! Core audio-processing abstractions for the noican engine.
+//! Core audio-processing abstractions for the Noican engine.
 //!
 //! This crate is platform-independent and free of inference-runtime
 //! dependencies. It defines the common stage interface that every
@@ -13,12 +13,16 @@
 //! - [`framed::FramedStage`]: adapts a `FrameProcessor` to a `Stage`,
 //!   handling resampling (integer factors) and frame accumulation.
 //! - [`resample`]: streaming polyphase FIR decimator/interpolator.
+//! - [`switch::SwitchingEngine`]: lock-free, click-free runtime switching
+//!   between prepared stages (the live-pipeline building block).
 
 pub mod error;
 pub mod framed;
 pub mod resample;
 pub mod stage;
+pub mod switch;
 
 pub use error::StageError;
 pub use framed::FramedStage;
 pub use stage::{ENGINE_SAMPLE_RATE, FrameProcessor, Passthrough, Stage};
+pub use switch::{StagePublisher, SwitchingEngine};

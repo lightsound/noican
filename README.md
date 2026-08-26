@@ -1,4 +1,4 @@
-# noican
+# Noican
 
 A personal, fully on-device noise-cancelling virtual microphone for macOS, in the spirit of [JoyCast](https://joycast.ai/).
 
@@ -6,8 +6,11 @@ The physical microphone signal is captured, cleaned in real time (noise suppress
 
 ## Status
 
-Phase 0 in progress: switchable audio engine (Rust) with a CLI batch-comparison
-mode; the real-time macOS pipeline and menu-bar UI are under construction.
+Phase 0 code-complete: switchable audio engine (Rust) with a CLI
+batch-comparison mode, plus the real-time macOS pipeline (AUHAL on a private
+Aggregate Device, routed into BlackHole 2ch) and a SwiftUI menu-bar app.
+Hardware acceptance (audio output, TCC, model switching on a real Mac) is
+tracked in [docs/macos-hardware-test.md](docs/macos-hardware-test.md).
 
 - [docs/tech-research.md](docs/tech-research.md) — consolidated technology research: candidate evaluation for every layer, final recommended stack, roadmap, and open questions.
 - [docs/models.md](docs/models.md) — supported models, weight download, and verification status.
@@ -26,20 +29,52 @@ cargo run -p noican-cli --release -- fetch
 cargo run -p noican-cli --release -- process my_recording.wav
 ```
 
-Quality gates (all enforced in CI): `cargo fmt --check`,
-`cargo clippy` with `pedantic`/`nursery` as errors, `cargo test`,
-`cargo deny check`, `cargo machete`.
+### CLI input formats
+
+`process` accepts WAV, AIFF/AIFC, CAF, and M4A (AAC or Apple Lossless)
+inputs; outputs are always mono 48 kHz 16-bit WAV. Compressed AIFC
+variants outside the PCM/µ-law/A-law family (e.g. IMA4) and other exotic
+encodings are not decodable here — convert them once with macOS's built-in
+`afconvert`:
+
+```sh
+afconvert -f WAVE -d LEI16@48000 input.aifc output.wav
+```
+
+### macOS menu bar app
+
+```sh
+# Requires: Apple Silicon, Rust target aarch64-apple-darwin, Swift 6.1+,
+# and the stock BlackHole 2ch virtual device (Phase 0).
+bash scripts/build-macos-app.sh   # produces dist/Noican.app
+```
+
+See [docs/macos-hardware-test.md](docs/macos-hardware-test.md) for the
+build details and the on-hardware acceptance checklist.
+
+### Quality gates
+
+All enforced in CI: `cargo fmt --check`; `cargo clippy` with the exhaustive
+rustc lint set plus `pedantic`/`nursery`/`cargo` as errors (opt-outs only
+via `#[expect(..., reason = "...")]`); rustdoc lints; `cargo test`;
+`cargo deny check`; `cargo machete`. On the macOS runner additionally:
+SwiftLint in strict mode and `swift build -Xswiftc -warnings-as-errors`.
 
 ## Workspace layout
 
 - `crates/noican-core` — engine-agnostic core: `Stage`/`FrameProcessor`
   traits at a fixed 48 kHz engine rate, streaming polyphase resampling,
-  frame adaptation. Every model is one trait implementation; models are
-  switchable at runtime.
+  frame adaptation, and the lock-free `SwitchingEngine` for click-free
+  runtime model switching.
 - `crates/noican-models` — model registry, SHA-256-verified weight
   fetching, and stage implementations (ONNX Runtime + tract backends).
 - `crates/noican-cli` — `noican` binary: `models` / `fetch` / `process`
-  (batch WAV comparison under strictly identical conditions).
+  (batch audio comparison under strictly identical conditions).
+- `crates/noican-coreaudio` — AUHAL real-time transport on a private
+  Aggregate Device (macOS; portable stub elsewhere).
+- `crates/noican-ffi` — C ABI consumed by the Swift control plane
+  (engine lifecycle + registry-driven model catalog).
+- `macos/` — SwiftPM package for the `MenuBarExtra` control-plane app.
 
 ## Scope
 

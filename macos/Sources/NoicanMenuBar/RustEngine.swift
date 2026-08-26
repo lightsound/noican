@@ -1,0 +1,127 @@
+import CNoican
+import CoreAudio
+import Foundation
+
+/// A model entry exposed by the Rust registry (never hardcoded here).
+struct ModelInfo: Hashable, Identifiable {
+    let id: String
+    let displayName: String
+    let needsEnrollment: Bool
+}
+
+/// Thin wrapper over the Rust C ABI. The handle is internally synchronized
+/// (a mutex-guarded control state on the Rust side), so calls may come from
+/// any thread; long operations (weight download, model construction) are
+/// expected to run off the main actor.
+final class RustEngine: @unchecked Sendable {
+    private let handle: UnsafeMutableRawPointer
+
+    init() throws {
+        guard let handle = noican_engine_create(nil) else {
+            throw RustEngineError.message("Could not create the Rust engine")
+        }
+        self.handle = handle
+    }
+
+    deinit {
+        noican_engine_destroy(handle)
+    }
+
+    func start(aggregateDevice: AudioObjectID, model: String) throws {
+        let result = model.withCString { id in
+            noican_engine_start(handle, aggregateDevice, id)
+        }
+        try requireSuccess(result)
+    }
+
+    func stop() {
+        noican_engine_stop(handle)
+    }
+
+    func setModel(_ model: String) throws {
+        let result = model.withCString { id in
+            noican_engine_set_model(handle, id)
+        }
+        try requireSuccess(result)
+    }
+
+    var isRunning: Bool {
+        noican_engine_is_running(handle) != 0
+    }
+
+    var isFaulted: Bool {
+        noican_engine_is_faulted(handle) != 0
+    }
+
+    /// Heartbeat: input frames delivered by the audio device since start.
+    /// Stops advancing when the device stops calling back.
+    var framesProcessed: UInt64 {
+        noican_engine_frames_processed(handle)
+    }
+
+    /// The selectable model catalog, read from the Rust registry.
+    static func models() -> [ModelInfo] {
+        (0..<noican_model_count()).compactMap { index in
+            guard
+                let id = copyString({ buffer, capacity in
+                    noican_model_id(index, buffer, capacity)
+                }),
+                let displayName = copyString({ buffer, capacity in
+                    noican_model_display_name(index, buffer, capacity)
+                })
+            else {
+                return nil
+            }
+            return ModelInfo(
+                id: id,
+                displayName: displayName,
+                needsEnrollment: noican_model_needs_enrollment(index) != 0
+            )
+        }
+    }
+
+    private var lastError: String {
+        Self.copyString { buffer, capacity in
+            noican_engine_last_error(handle, buffer, capacity)
+        } ?? "Unknown Rust engine error"
+    }
+
+    private func requireSuccess(_ result: Int32) throws {
+        guard result == 0 else {
+            throw RustEngineError.message(lastError)
+        }
+    }
+
+    private static func copyString(
+        _ copy: (UnsafeMutablePointer<CChar>?, Int) -> Int
+    ) -> String? {
+        let required = copy(nil, 0)
+        guard required > 1 else {
+            return nil
+        }
+        var bytes = [CChar](repeating: 0, count: required)
+        let reported = bytes.withUnsafeMutableBufferPointer { buffer in
+            copy(buffer.baseAddress, buffer.count)
+        }
+        guard reported == required else {
+            return nil
+        }
+        return bytes.withUnsafeBufferPointer { buffer in
+            guard let baseAddress = buffer.baseAddress else {
+                return nil
+            }
+            return String(cString: baseAddress)
+        }
+    }
+}
+
+enum RustEngineError: LocalizedError {
+    case message(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .message(message):
+            message
+        }
+    }
+}

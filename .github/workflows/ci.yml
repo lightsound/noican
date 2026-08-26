@@ -5,6 +5,9 @@ on:
     branches: [main, "cursor/**"]
   pull_request:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -31,6 +34,19 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  docs:
+    name: rustdoc (lints as errors)
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --workspace --no-deps --all-features --locked
 
   test:
     name: tests
@@ -62,3 +78,33 @@ jobs:
         with:
           tool: cargo-machete
       - run: cargo machete
+
+  macos:
+    name: macOS (Rust + Swift, warnings as errors)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.0
+          targets: aarch64-apple-darwin
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-arm64
+      - name: Install SwiftLint
+        run: brew install swiftlint
+      - name: Lint the Swift control plane (strict)
+        run: swiftlint lint --strict --config .swiftlint.yml
+      - name: Lint the workspace on the Apple Silicon target
+        run: >
+          cargo clippy --workspace --all-targets --all-features --locked
+          --target aarch64-apple-darwin -- -D warnings
+      - name: Test on macOS
+        run: cargo test --workspace --all-features --locked
+      - name: Build and ad-hoc sign the menu bar app (release, warnings as errors)
+        run: bash scripts/build-macos-app.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noican-macos-arm64
+          path: dist/Noican.app
