@@ -426,6 +426,19 @@ struct MicrophoneTests {
         #expect(state.messages.microphoneError?.contains("can't run at 48 kHz") == true)
     }
 
+    @Test("Re-clicking the selected microphone acknowledges a shown refusal")
+    func sameSelectionClearsRefusal() {
+        let running = runningModel()
+        let refused = drive(running, [.microphoneSelected(bluetoothMic.uid)])
+        #expect(refused.messages.microphoneError != nil)
+        #expect(refused.selectedInputUID == builtInMic.uid)
+
+        let (cleared, effects) = step(refused, .microphoneSelected(builtInMic.uid))
+        #expect(effects.isEmpty, "the engine is untouched")
+        #expect(cleared.machine == running.machine)
+        #expect(cleared.messages.microphoneError == nil, "the confirmation clears the message")
+    }
+
     @Test("Picking a working microphone after a failure restarts into the selected mode")
     func autoRecovery() {
         let failed = drive(readyModel(), [tap(.on), .startCompleted(error: "mic exploded")])

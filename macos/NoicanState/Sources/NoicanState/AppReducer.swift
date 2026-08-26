@@ -152,6 +152,12 @@ extension AppReducer {
         _ uid: String
     ) -> (state: AppModel, effects: [AppEffect]) {
         guard uid != state.selectedInputUID else {
+            // Re-clicking the already-selected microphone acknowledges a
+            // shown refusal: the message describes a *rejected other*
+            // device, so confirming the working one clears it (the
+            // engine and the selection are untouched).
+            var state = state
+            state.messages.microphoneError = nil
             return (state, [])
         }
         var state = state

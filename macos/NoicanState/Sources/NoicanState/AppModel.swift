@@ -107,7 +107,9 @@ public struct MessageSlots: Hashable, Sendable {
     public var previewUnavailableReason: String?
     /// Why the last microphone selection was refused in place (the device
     /// cannot run at 48 kHz) while the engine kept the previous one.
-    /// Shown under the microphone list; cleared on the next selection.
+    /// Shown under the microphone list; cleared on the next selection —
+    /// including a re-click of the already-selected microphone, which
+    /// acknowledges the message without touching the engine.
     public var microphoneError: String?
     /// Why the last model switch failed while the engine kept running the
     /// previous model. Shown under the Model picker (this is not an
