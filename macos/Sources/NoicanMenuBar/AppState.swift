@@ -9,21 +9,11 @@ final class AppState: ObservableObject {
     @Published var selectedModel = AppState.defaultModelID
     @Published private(set) var mode: EngineMode = .off
     @Published private(set) var isBusy = false
-    @Published private(set) var phase: EnginePhase = .off {
-        didSet {
-            if case .busy = phase {
-                return
-            }
-            settledPhase = phase
-        }
-    }
-    /// The last *settled* (non-busy) phase. Sections, colors, and error
-    /// text render from this instead of `phase`, so a transition that
-    /// fails quickly never flashes optimistic UI (blue pill, meters
-    /// sliding in, error text vanishing) before snapping back — the view
-    /// changes once, when the outcome is known. `phase` still drives the
-    /// spinner and the transitional status line.
-    @Published private(set) var settledPhase: EnginePhase = .off
+    /// The last *settled* outcome; `isBusy` alone expresses transitions.
+    /// Everything rendered from this (sections, colors, error text)
+    /// changes once per transition, when the outcome is known — a
+    /// transition that fails quickly never flashes optimistic UI.
+    @Published private(set) var phase: EnginePhase = .off
     /// Last preview failure (start failure, feedback trip, …), shown
     /// under the mode control. Preview failures never affect the engine
     /// phase: the meeting-facing path keeps running.
@@ -76,10 +66,7 @@ final class AppState: ObservableObject {
             engine = try RustEngine()
             refreshDevices()
         } catch {
-            // Property observers do not fire for direct assignments in an
-            // initializer; keep the settled mirror in sync by hand.
             phase = .failed(error.localizedDescription)
-            settledPhase = phase
         }
         if !models.contains(where: { $0.id == selectedModel }) {
             selectedModel = models.first?.id ?? ""
@@ -110,10 +97,12 @@ final class AppState: ObservableObject {
     }
 
     private func handleDevicesChanged() {
-        let runningInputUID = selectedInputUID
+        // The transport is bound to activeInputUID (the selection can
+        // legitimately differ, e.g. right after a refused switch).
+        let runningInputUID = activeInputUID
         refreshDevices()
         refreshPreviewAvailability()
-        guard mode != .off, !isBusy else {
+        guard mode != .off, !isBusy, let runningInputUID else {
             return
         }
         if !allDevices.contains(where: { $0.uid == runningInputUID && $0.inputChannels > 0 }) {
@@ -188,7 +177,19 @@ final class AppState: ObservableObject {
         }
     }
 
-    func applySelectedModel() {
+    /// User-initiated model pick (the Picker's binding setter).
+    /// Programmatic reverts in `finishModelSwitch` write `selectedModel`
+    /// directly, bypassing this — so they cannot wipe the failure message
+    /// they accompany.
+    func selectModel(_ id: String) {
+        guard id != selectedModel else {
+            return
+        }
+        selectedModel = id
+        applySelectedModel()
+    }
+
+    private func applySelectedModel() {
         modelError = nil
         // Changing the model while stopped starts nothing; clear a stale
         // failure message so the menu does not keep blaming the last
@@ -201,7 +202,6 @@ final class AppState: ObservableObject {
         }
         let model = selectedModel
         isBusy = true
-        phase = .busy
         // Detached: weight download and model construction must not run on
         // (or inherit) the main actor.
         Task.detached {
@@ -254,7 +254,6 @@ final class AppState: ObservableObject {
         let model = selectedModel
         let aggregate = self.aggregate
         isBusy = true
-        phase = .busy
         // Detached: aggregate creation polls the device until it is alive
         // (up to ~1.5 s) and engine start may download weights — neither may
         // block the main actor. `isBusy` keeps this the only operation
@@ -483,7 +482,6 @@ extension AppState {
     /// outcome lands, so rapid taps cannot interleave.
     private func applyMonitor(_ enabled: Bool, engine: RustEngine) {
         isBusy = true
-        phase = .busy
         Task.detached {
             let result = Result { try engine.setMonitor(enabled) }
             await self.finishMonitorChange(result, enabled: enabled)

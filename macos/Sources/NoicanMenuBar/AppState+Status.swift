@@ -3,20 +3,16 @@ import Foundation
 // MARK: - Status projections for the menu UI
 
 extension AppState {
-    /// One-line status for the header, rendered from the *settled* phase:
-    /// transitions never change it (the spinner is the busy feedback), so
-    /// each transition moves the text exactly once, settled to settled.
-    /// Deliberately never multi-line: text above the mode control must
-    /// not change the control's vertical position (the sliding pill would
-    /// move mid-animation). Full failure text lives in
+    /// One-line status for the header. `phase` is settled by definition,
+    /// so transitions do not churn this text (the spinner is the busy
+    /// feedback). Deliberately never multi-line: text above the mode
+    /// control must not change the control's vertical position (the
+    /// sliding pill would move mid-animation). Full failure text lives in
     /// `engineErrorMessage`, shown below the control instead.
     var statusText: String {
-        switch settledPhase {
+        switch phase {
         case .off:
             return inputDevices.isEmpty ? "No input device" : "Off"
-        case .busy:
-            // Unreachable: the settled mirror skips busy phases.
-            return "Working…"
         case .running:
             // No model name here: the Model picker below already shows it
             // (and reverts on failed switches, so it never lies).
@@ -30,22 +26,21 @@ extension AppState {
     }
 
     /// Full engine failure text, displayed under the mode control (with
-    /// the preview messages) so the header height stays constant. Keyed
-    /// to the settled phase: it stays visible while a retry is in flight
-    /// and clears only when the retry actually succeeds.
+    /// the preview messages) so the header height stays constant. It
+    /// stays visible while a retry is in flight and clears only when the
+    /// retry actually succeeds.
     var engineErrorMessage: String? {
-        if case let .failed(message) = settledPhase {
+        if case let .failed(message) = phase {
             return message
         }
         return nil
     }
 
     /// Whether the monitoring section (level meters) is shown: only for
-    /// a settled, healthy run. Keyed to the settled phase so the section
-    /// neither slides in during a start that may still fail nor
-    /// disappears during a model switch.
+    /// a settled, healthy run, so the section neither slides in during a
+    /// start that may still fail nor disappears during a model switch.
     var showsMonitoring: Bool {
-        mode != .off && settledPhase == .running
+        mode != .off && phase == .running
     }
 
     /// True while the selected mode is not actually delivering (start

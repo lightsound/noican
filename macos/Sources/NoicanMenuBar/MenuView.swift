@@ -80,22 +80,23 @@ struct MenuView: View {
     }
 
     private var statusColor: Color {
+        if state.isBusy {
+            return .orange
+        }
         switch state.phase {
         case .off:
-            .secondary.opacity(0.5)
-        case .busy:
-            .orange
+            return .secondary.opacity(0.5)
         case .running:
-            .green
+            return .green
         case .failed:
-            .red
+            return .red
         }
     }
 
     /// The single top-level control. Preview = engine + self-monitor;
     /// On = engine only. Both feed the virtual microphone. All prose
     /// feedback — engine failures, refused Preview presses (cleared live
-    /// once the output is safe), preview rollbacks and feedback trips —
+    /// once the output is safe), preview failures and feedback trips —
     /// renders below the control, where changing height cannot move it.
     private var modePicker: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -166,7 +167,14 @@ struct MenuView: View {
                     .font(.caption)
                     .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
-                Picker("Model", selection: $state.selectedModel) {
+                // User picks route through selectModel; programmatic
+                // reverts write the property directly and must not
+                // re-enter the apply path (they would wipe the failure
+                // message they accompany).
+                Picker("Model", selection: Binding(
+                    get: { state.selectedModel },
+                    set: { state.selectModel($0) }
+                )) {
                     ForEach(state.models) { model in
                         Text(modelLabel(model))
                             .tag(model.id)
@@ -178,9 +186,6 @@ struct MenuView: View {
                 }
                 .labelsHidden()
                 .disabled(state.isBusy)
-                .onChange(of: state.selectedModel) {
-                    state.applySelectedModel()
-                }
                 if let message = state.modelError {
                     Text(message)
                         .font(.caption2)
