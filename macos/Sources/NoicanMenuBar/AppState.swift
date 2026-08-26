@@ -72,6 +72,9 @@ final class AppState: ObservableObject {
     private let aggregate = AggregateDevice()
     private var engine: RustEngine?
     private var activeModelID: String?
+    /// Microphone the running transport was built around (the aggregate
+    /// is composed at start time, so a live change means a rebuild).
+    private var activeInputUID: String?
     /// Watches for engine faults/unexpected stops while enabled. Owned here
     /// (not by the menu view) so faults are detected even when the popover
     /// is closed.
@@ -219,6 +222,35 @@ final class AppState: ObservableObject {
         checkMonitorTrip()
     }
 
+    func selectMicrophone(_ uid: String) {
+        guard uid != selectedInputUID else {
+            return
+        }
+        selectedInputUID = uid
+        applySelectedInput()
+    }
+
+    private func applySelectedInput() {
+        // Changing the microphone while stopped only updates the
+        // selection; clear a stale failure (e.g. a 48 kHz-incapable
+        // Bluetooth microphone) so the menu stops blaming the previous
+        // device the moment another one is chosen.
+        if mode == .off, case .failed = phase {
+            phase = .off
+        }
+        guard mode != .off, !isBusy, let engine, selectedInputUID != activeInputUID else {
+            return
+        }
+        // The private aggregate is composed around the microphone at
+        // start time, so a live change rebuilds the transport with the
+        // same model and mode (a brief gap is inherent).
+        let monitor = mode == .preview
+        stopFaultPolling()
+        engine.stop()
+        aggregate.destroy()
+        start(monitor: monitor)
+    }
+
     func applySelectedModel() {
         // Changing the model while stopped starts nothing; clear a stale
         // failure message so the menu does not keep blaming the last
@@ -295,6 +327,7 @@ final class AppState: ObservableObject {
         switch result {
         case .success:
             activeModelID = model
+            activeInputUID = selectedInputUID
             startFaultPolling()
             // Preview mode is engine + monitor; the monitor half starts
             // once the transport is up, keeping `isBusy` until its
@@ -308,9 +341,7 @@ final class AppState: ObservableObject {
             }
         case let .failure(error):
             isBusy = false
-            engine?.stop()
-            aggregate.destroy()
-            mode = .off
+            stopEngine()
             phase = .failed(error.localizedDescription)
         }
     }
@@ -329,6 +360,7 @@ final class AppState: ObservableObject {
         aggregate.destroy()
         mode = .off
         activeModelID = nil
+        activeInputUID = nil
     }
 
     private func startFaultPolling() {

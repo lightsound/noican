@@ -140,13 +140,7 @@ struct MenuView: View {
                     .font(.caption)
                     .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
-                Picker("Microphone", selection: $state.selectedInputUID) {
-                    ForEach(state.inputDevices) { device in
-                        Text(device.name).tag(device.uid)
-                    }
-                }
-                .labelsHidden()
-                .disabled(state.mode != .off || state.isBusy)
+                microphoneList
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text("Model")
@@ -172,6 +166,49 @@ struct MenuView: View {
         }
         .padding(.horizontal, contentPadding)
         .padding(.vertical, 10)
+    }
+
+    /// All selectable inputs as an always-visible, checkmarked list
+    /// (Control Center style) instead of a popup: newly connected devices
+    /// appear immediately (the device list follows hot-plug), and the
+    /// microphone can be switched while running — the engine rebuilds its
+    /// transport around the new device with the same model and mode.
+    private var microphoneList: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            if state.inputDevices.isEmpty {
+                Text("No input devices")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .padding(.vertical, 3)
+            }
+            ForEach(state.inputDevices) { device in
+                microphoneRow(device)
+            }
+        }
+    }
+
+    private func microphoneRow(_ device: AudioDeviceInfo) -> some View {
+        let isSelected = device.uid == state.selectedInputUID
+        return Button {
+            state.selectMicrophone(device.uid)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .opacity(isSelected ? 1 : 0)
+                Text(device.name)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 3)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+        .disabled(state.isBusy)
     }
 
     private func modelLabel(_ model: ModelInfo) -> String {
