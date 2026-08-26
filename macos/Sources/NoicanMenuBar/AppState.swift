@@ -186,9 +186,14 @@ final class AppState: ObservableObject {
         checkMonitorTrip()
     }
 
-    /// Sends the monitor toggle to the engine off the main actor and
-    /// reconciles the published mode with the actual outcome.
+    /// Sends the monitor toggle to the engine off the main actor,
+    /// serialized like every other engine transition: `isBusy` blocks
+    /// concurrent mode changes (and the pollers' engine calls) until the
+    /// outcome is reconciled, so rapid taps can never leave the published
+    /// mode disagreeing with the actual monitor state.
     private func applyMonitor(_ enabled: Bool, engine: RustEngine) {
+        isBusy = true
+        phase = .busy(enabled ? "Starting preview…" : "Stopping preview…")
         Task.detached {
             let result = Result { try engine.setMonitor(enabled) }
             await self.finishMonitorChange(result, engine: engine)
@@ -196,25 +201,30 @@ final class AppState: ObservableObject {
     }
 
     private func finishMonitorChange(_ result: Result<Void, Error>, engine: RustEngine) {
+        isBusy = false
+        guard mode != .off else {
+            return
+        }
+        // Reconcile with the engine's actual monitor state on every
+        // completion — success or failure — so the segmented control
+        // never lies about what is audible.
+        mode = engine.isMonitoring ? .preview : .on
+        phase = .running
         if case let .failure(error) = result {
-            // The engine keeps running; only the monitor failed. Fall back
-            // to On and explain why.
-            if mode == .preview {
-                mode = engine.isMonitoring ? .preview : .on
-            }
             previewError = error.localizedDescription
         }
     }
 
     /// Reacts to the engine-side feedback killswitch: the worker already
-    /// silenced the preview, so release the playback device, fall back to
-    /// On, and tell the user why. Checked at 20 Hz while the popover is
-    /// open and at 1 Hz by the health poll.
+    /// silenced the preview, so release the playback device and tell the
+    /// user why (the mode falls back to On when the monitor is torn
+    /// down). Checked lock-free at 20 Hz while the popover is open and at
+    /// 1 Hz by the health poll, in any running mode — a trip is handled
+    /// even if a transition already moved the mode off Preview.
     private func checkMonitorTrip() {
-        guard mode == .preview, let engine, engine.monitorTripped else {
+        guard mode != .off, !isBusy, let engine, engine.monitorTripped else {
             return
         }
-        mode = .on
         previewError = "Preview stopped itself: feedback detected. Use headphones, then select Preview again."
         applyMonitor(false, engine: engine)
     }
@@ -292,18 +302,21 @@ final class AppState: ObservableObject {
     }
 
     private func finishStart(_ result: Result<Void, Error>, model: String, monitor: Bool) {
-        isBusy = false
         switch result {
         case .success:
             activeModelID = model
-            phase = .running
             startFaultPolling()
             // Preview mode is engine + monitor; the monitor half starts
-            // once the transport is up.
+            // once the transport is up, keeping `isBusy` until its
+            // outcome is reconciled.
             if monitor, let engine {
                 applyMonitor(true, engine: engine)
+            } else {
+                isBusy = false
+                phase = .running
             }
         case let .failure(error):
+            isBusy = false
             engine?.stop()
             aggregate.destroy()
             mode = .off

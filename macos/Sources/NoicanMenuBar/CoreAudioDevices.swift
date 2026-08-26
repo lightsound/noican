@@ -56,6 +56,11 @@ enum AudioDeviceCatalog {
     /// in Phase 0, or the Noican-branded fork later). It registers input
     /// channels too, but selecting it as the microphone would only feed the
     /// loopback back into itself, so pickers must exclude it.
+    ///
+    /// Keep in sync with the Rust preview-monitor policy
+    /// (`classify_monitor_target` in crates/noican-coreaudio/src/monitor.rs),
+    /// which matches the same UIDs and additionally rejects any
+    /// virtual/aggregate transport.
     static func isNoicanVirtualDevice(_ device: AudioDeviceInfo) -> Bool {
         device.uid == "BlackHole2ch_UID"
             || device.uid.lowercased().hasPrefix("com.lightsound.noican.")
