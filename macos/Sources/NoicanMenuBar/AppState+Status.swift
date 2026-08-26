@@ -15,12 +15,12 @@ extension AppState {
         case let .busy(message):
             return message
         case .running:
-            let name = displayName(for: activeModelID ?? selectedModel)
-            // "Preview" only while the monitor actually plays; after a
+            // No model name here: the Model picker below already shows it
+            // (and reverts on failed switches, so it never lies).
+            // "Previewing" only while the monitor actually plays; after a
             // trip or a monitor failure the engine still runs but the
             // preview does not.
-            let previewing = mode == .preview && previewError == nil
-            return previewing ? "Preview · \(name)" : "Running · \(name)"
+            return mode == .preview && previewError == nil ? "Previewing" : "Running"
         case .failed:
             return "Error"
         }

@@ -118,7 +118,8 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
    Off and appear while the engine runs.
 4. Select a physical microphone and `FastEnhancer-B 48k`.
 5. Select On and grant microphone access when macOS prompts.
-6. Confirm status changes to `Running · FastEnhancer-B 48k`.
+6. Confirm status changes to `Running` (the Model picker shows the
+   active model).
 7. In QuickTime, OBS, or a meeting app, select the BlackHole/Noican virtual
    device as the microphone.
 8. Record at least 30 seconds containing speech, steady fan noise, and
@@ -212,7 +213,7 @@ between them only arms or disarms the monitor.
 3. Speak: the processed voice must be audible with a modest constant
    delay (engine latency plus ~40 ms of monitor ring priming). The delay
    is by design, not a defect. The status line reads
-   `Previewing · <model>`.
+   `Previewing`.
 4. Headphones are mandatory: through speakers the processed microphone
    feeds back into itself (Phase 0/1 has no AEC). There is deliberately
    no persistent warning text — unsafe outputs are refused on press with
@@ -243,7 +244,7 @@ between them only arms or disarms the monitor.
 9. A monitor failure at runtime (one that passed the pre-flight check),
    including a feedback-guard trip: the pill stays on Preview with a red
    warning tint, the engine keeps running (status returns to
-   `Running · <model>`), and the reason renders under the control.
+   `Running`), and the reason renders under the control.
    Re-tapping Preview retries the monitor.
 10. Select Off, then Preview again: the preview must come back cleanly
     with no stale audio replayed and no double playback.
@@ -336,7 +337,7 @@ The five transport items that candidate B passed, plus the two items new to
 this build:
 
 1. **Running status**: selecting On (with mic permission granted) reaches
-   `Running · <model>` with the green indicator.
+   `Running` with the green indicator.
 2. **Audio reaches recordings**: a QuickTime/OBS recording from the virtual
    device contains the processed microphone signal.
 3. **Continuity**: no dropouts, periodic clicks, or runaway latency over a
