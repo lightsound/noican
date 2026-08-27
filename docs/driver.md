@@ -137,6 +137,14 @@ driver build breakage is caught; loading, Audio MIDI Setup visibility, and
 loopback behavior can only be verified on hardware with a Developer ID
 build (see the Driver check in docs/macos-hardware-test.md).
 
+Expected benign compiler output (upstream code, unpatched by design):
+`-Wformat-extra-args` on the `RETURN_FORMATTED_STRING` helpers — with
+`kHas_Driver_Name_Format=false` the `CFStringCreateWithFormat` branch is
+dead but still compiled, and our verbatim strings carry no `%i` — and the
+upstream `MACOSX_DEPLOYMENT_TARGET = 10.10` deprecation warning. The
+repo's warnings-as-errors gates cover the Rust and Swift app code, not
+this GPL build of upstream C.
+
 There is no icon asset yet: `kPlugIn_Icon` is set to `Noican.icns`, and
 the build copies `macos/Resources/Noican.icns` into the bundle if that
 file ever appears; until then macOS shows a generic device icon (the
