@@ -117,6 +117,24 @@ if [[ -f "$ROOT/macos/Resources/$ICON" ]]; then
   cp "$ROOT/macos/Resources/$ICON" "$RESOURCES/$ICON"
 fi
 
+# CFPlugIn factory UUIDs must be unique per plug-in, but upstream hardcodes
+# one in BlackHole.plist, so every unpatched BlackHole fork (stock BlackHole,
+# JoyCast, ...) ships the same UUID and coexisting forks trigger harmless but
+# noisy duplicate-UUID warnings during coreaudiod's bundle scan. Rewrite the
+# built bundle's Info.plist to a Noican-unique factory UUID (generated once
+# for this project). The factory *function* stays BlackHole_Create — the
+# UUID is plist-only metadata, so this is a bundle edit, not a source patch.
+# The Delete doubles as a guard: if an upstream bump ever changes the plist,
+# PlistBuddy fails here instead of silently shipping a stale rewrite.
+UPSTREAM_FACTORY_UUID="e395c745-4eea-4d94-bb92-46224221047c"
+NOICAN_FACTORY_UUID="16ccdad9-e4f7-4cd4-8e81-520694b78514"
+HAL_PLUGIN_TYPE_UUID="443ABAB8-E7B3-491A-B985-BEB9187030DB"
+/usr/libexec/PlistBuddy \
+  -c "Delete :CFPlugInFactories:$UPSTREAM_FACTORY_UUID" \
+  -c "Add :CFPlugInFactories:$NOICAN_FACTORY_UUID string BlackHole_Create" \
+  -c "Set :CFPlugInTypes:$HAL_PLUGIN_TYPE_UUID:0 $NOICAN_FACTORY_UUID" \
+  "$DRIVER/Contents/Info.plist"
+
 if [[ -n "${NOICAN_CODESIGN_IDENTITY:-}" ]]; then
   codesign --force --options runtime --timestamp \
     --sign "$NOICAN_CODESIGN_IDENTITY" "$DRIVER"
