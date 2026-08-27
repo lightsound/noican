@@ -46,6 +46,7 @@ struct ModelSelector: View {
                 ModelRow(
                     model: entry,
                     isSelected: entry.id == selectedID,
+                    isDefault: entry.id == AppState.defaultModelID,
                     isBusy: isBusy,
                     select: {
                         if entry.id != selectedID {
@@ -128,14 +129,17 @@ private struct RowFramePreference: PreferenceKey {
     }
 }
 
-/// One selectable model row: checkmark, name, and the trailing tagline,
-/// with the native-menu-style hover highlight. Enrollment-gated models
-/// render disabled with the reason (their profile still shows on
-/// hover). Hover enter/leave is reported upward — the shared profile
-/// card belongs to the list, not the row.
+/// One selectable model row: checkmark and name, with the
+/// native-menu-style hover highlight. No per-row descriptions — the
+/// hover card carries the profile, so trailing text would repeat it;
+/// the only annotations are "Default" on the first-launch model and
+/// "requires enrollment" on disabled rows (a disabled row must explain
+/// itself immediately). Hover enter/leave is reported upward — the
+/// shared profile card belongs to the list, not the row.
 private struct ModelRow: View {
     let model: ModelInfo
     let isSelected: Bool
+    let isDefault: Bool
     let isBusy: Bool
     let select: () -> Void
     let hoverChanged: (Bool) -> Void
@@ -154,10 +158,12 @@ private struct ModelRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 0)
-                Text(model.needsEnrollment ? "requires enrollment" : model.tagline)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
+                if let annotation {
+                    Text(annotation)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
             }
             .opacity(model.needsEnrollment ? 0.5 : 1)
             .padding(.horizontal, 6)
@@ -177,6 +183,13 @@ private struct ModelRow: View {
             isHovering = hovering
             hoverChanged(hovering)
         }
+    }
+
+    private var annotation: String? {
+        if model.needsEnrollment {
+            return "requires enrollment"
+        }
+        return isDefault ? "Default" : nil
     }
 }
 
