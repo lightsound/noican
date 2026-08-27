@@ -115,11 +115,45 @@ struct LaunchAtLoginTests {
     func toggleIsOptimistic() {
         let (state, effects) = step(readyModel(), .launchAtLoginToggled(true))
         #expect(state.isLaunchAtLoginEnabled)
+        #expect(state.isLaunchAtLoginBusy, "the attempt claims the serialization gate")
         #expect(effects == [.setLaunchAtLogin(enabled: true)])
 
         let settled = drive(state, [.launchAtLoginChangeCompleted(isEnabled: true, error: nil)])
         #expect(settled.isLaunchAtLoginEnabled)
+        #expect(!settled.isLaunchAtLoginBusy, "the completion releases the gate")
         #expect(settled.messages.launchAtLoginError == nil)
+    }
+
+    @Test("Rapid re-toggles are serialized: one attempt in flight at a time")
+    func rapidTogglesAreSerialized() {
+        // Flip on, then flip off before the registration settles: the
+        // second flip must be ignored (two concurrent register/unregister
+        // calls would race and the toggle would settle on whichever
+        // completion arrived last).
+        let requested = drive(readyModel(), [.launchAtLoginToggled(true)])
+        let (whileBusy, busyEffects) = step(requested, .launchAtLoginToggled(false))
+        #expect(whileBusy == requested, "a flip while busy changes nothing")
+        #expect(busyEffects.isEmpty, "no second registration attempt is spawned")
+
+        // A status read racing the attempt is stale and ignored too.
+        let read = drive(requested, [.launchAtLoginStatusRead(isEnabled: false)])
+        #expect(read.isLaunchAtLoginEnabled, "the in-flight attempt owns the toggle")
+
+        // After the completion, toggling works again.
+        let settled = drive(requested, [.launchAtLoginChangeCompleted(isEnabled: true, error: nil)])
+        let (next, nextEffects) = step(settled, .launchAtLoginToggled(false))
+        #expect(next.isLaunchAtLoginBusy)
+        #expect(nextEffects == [.setLaunchAtLogin(enabled: false)])
+    }
+
+    @Test("A completion without a claimed attempt is stale and ignored")
+    func staleCompletionIgnored() {
+        let (state, effects) = step(
+            readyModel(),
+            .launchAtLoginChangeCompleted(isEnabled: true, error: nil)
+        )
+        #expect(state == readyModel())
+        #expect(effects.isEmpty)
     }
 
     @Test("A failed registration snaps the toggle back and explains why")

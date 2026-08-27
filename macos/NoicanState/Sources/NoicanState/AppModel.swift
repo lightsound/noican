@@ -173,6 +173,12 @@ public struct AppModel: Hashable, Sendable {
     /// at launch, moved optimistically by a toggle, and snapped back to
     /// the re-read real status when the registration attempt completes.
     public var isLaunchAtLoginEnabled: Bool
+    /// Whether a login-item registration attempt is in flight. Serializes
+    /// toggles exactly like `EngineMachine.busy` serializes engine
+    /// transitions: a toggle while one is pending is ignored, so two
+    /// concurrent attempts can never race and settle the toggle on
+    /// whichever completion happens to arrive last.
+    public var isLaunchAtLoginBusy: Bool
     /// The user-facing message slots.
     public var messages: MessageSlots
     /// Whether the Rust engine handle was created. When false, mode and
@@ -189,6 +195,7 @@ public struct AppModel: Hashable, Sendable {
         isVirtualOutputPresent: Bool = false,
         intensity: Double = 1.0,
         isLaunchAtLoginEnabled: Bool = false,
+        isLaunchAtLoginBusy: Bool = false,
         messages: MessageSlots = MessageSlots(),
         isEngineAvailable: Bool = true
     ) {
@@ -200,6 +207,7 @@ public struct AppModel: Hashable, Sendable {
         self.isVirtualOutputPresent = isVirtualOutputPresent
         self.intensity = intensity
         self.isLaunchAtLoginEnabled = isLaunchAtLoginEnabled
+        self.isLaunchAtLoginBusy = isLaunchAtLoginBusy
         self.messages = messages
         self.isEngineAvailable = isEngineAvailable
     }

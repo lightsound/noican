@@ -281,6 +281,10 @@ struct MenuView: View {
                 ))
                 .toggleStyle(.switch)
                 .font(.callout)
+                // One registration attempt at a time: the reducer ignores
+                // flips while one is in flight, so reflect that here
+                // instead of letting the switch move and snap back.
+                .disabled(model.isLaunchAtLoginBusy)
                 Spacer(minLength: 0)
                 Button("Quit") {
                     NSApplication.shared.terminate(nil)

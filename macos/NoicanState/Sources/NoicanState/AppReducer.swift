@@ -177,15 +177,20 @@ extension AppReducer {
     /// attempt follows as an effect); `launchAtLoginChangeCompleted`
     /// snaps it back to the re-read real status when the attempt fails,
     /// so the toggle never lies for longer than the attempt takes.
+    /// Exactly one attempt may be in flight (`isLaunchAtLoginBusy`):
+    /// a re-toggle before the outcome lands is ignored, because two
+    /// concurrent register/unregister calls would race and the toggle
+    /// would settle on whichever completion arrived last.
     private static func launchAtLoginToggled(
         _ state: AppModel,
         _ enabled: Bool
     ) -> (state: AppModel, effects: [AppEffect]) {
-        guard enabled != state.isLaunchAtLoginEnabled else {
+        guard !state.isLaunchAtLoginBusy, enabled != state.isLaunchAtLoginEnabled else {
             return (state, [])
         }
         var state = state
         state.isLaunchAtLoginEnabled = enabled
+        state.isLaunchAtLoginBusy = true
         state.messages.launchAtLoginError = nil
         return (state, [.setLaunchAtLogin(enabled: enabled)])
     }
@@ -355,16 +360,22 @@ extension AppReducer {
     }
 
     /// The registration attempt settled: show the *re-read* real status
-    /// (an optimistic toggle that failed snaps back here) and surface
-    /// the failure reason under the toggle. Registration is inherently
-    /// environment-dependent (app location, signature), so the outcome
-    /// is authoritative and the request is not.
+    /// (an optimistic toggle that failed snaps back here), surface the
+    /// failure reason under the toggle, and release the serialization
+    /// gate. Registration is inherently environment-dependent (app
+    /// location, signature), so the outcome is authoritative and the
+    /// request is not. A completion without a claimed attempt is stale
+    /// by construction and ignored.
     private static func launchAtLoginChangeCompleted(
         _ state: AppModel,
         _ isEnabled: Bool,
         _ error: String?
     ) -> (state: AppModel, effects: [AppEffect]) {
+        guard state.isLaunchAtLoginBusy else {
+            return (state, [])
+        }
         var state = state
+        state.isLaunchAtLoginBusy = false
         state.isLaunchAtLoginEnabled = isEnabled
         state.messages.launchAtLoginError = error
         return (state, [])
@@ -410,11 +421,15 @@ extension AppReducer {
 
     /// Seeds the login-item toggle from the `SMAppService` status read
     /// at launch (the service is the source of truth; the app persists
-    /// nothing about it).
+    /// nothing about it). Ignored while an attempt is in flight — its
+    /// completion re-reads the status and is the fresher answer.
     private static func launchAtLoginStatusRead(
         _ state: AppModel,
         _ isEnabled: Bool
     ) -> (state: AppModel, effects: [AppEffect]) {
+        guard !state.isLaunchAtLoginBusy else {
+            return (state, [])
+        }
         var state = state
         state.isLaunchAtLoginEnabled = isEnabled
         return (state, [])

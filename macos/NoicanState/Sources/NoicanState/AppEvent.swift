@@ -29,7 +29,9 @@ public enum AppEvent: Hashable, Sendable {
     case intensityChanged(Double)
     /// The login-item toggle was flipped. Optimistic: the toggle moves
     /// immediately and `launchAtLoginChangeCompleted` snaps it back to
-    /// the real status when registration fails.
+    /// the real status when registration fails. Serialized: at most one
+    /// registration attempt is in flight, and a flip while one is
+    /// pending is ignored (concurrent attempts would race).
     case launchAtLoginToggled(Bool)
 
     // MARK: Effect completions
