@@ -1,20 +1,22 @@
+import AppKit
 import SwiftUI
 
 /// The model list with hover profile cards.
 ///
 /// Every catalog entry renders as a Control-Center-style row (same
 /// chrome as the microphone list above). Hovering a row pops the
-/// model's profile card out beside the menu — four dot-scale ratings
+/// model's profile card out beside that row — four dot-scale ratings
 /// whose axes all point the same way (more filled = better) plus the
 /// raw facts — so a normal user can compare models without knowing
 /// their names.
 ///
-/// One popover serves the whole list: it appears after a short delay on
-/// the first hover, then **stays up while the pointer moves between
-/// rows** (only its content swaps — re-presenting per row made the card
-/// blink on every move), and hides after a short grace period once the
-/// pointer leaves the rows entirely (the grace also bridges the gaps
-/// between rows).
+/// One card serves the whole list: it appears after a short delay on
+/// the first hover, then **stays up and follows the pointer from row to
+/// row** (position and content update in place — re-presenting per row
+/// made the card blink), and hides after a short grace period once the
+/// pointer leaves the rows (the grace also bridges the gaps between
+/// rows). SwiftUI's `.popover` cannot move while presented, so the card
+/// is hosted by [`HoverCardPresenter`]'s AppKit popover instead.
 ///
 /// This replaces a system `Picker`: AppKit menus cannot host hover
 /// tracking or custom row views, so the rows are ordinary SwiftUI
@@ -32,6 +34,11 @@ struct ModelSelector: View {
     /// flash the card) and the disappearance (row-to-row gaps must not
     /// blink it).
     @State private var hoverTransition: Task<Void, Never>?
+    /// Row frames in the list's coordinate space, for anchoring the
+    /// card beside the hovered row.
+    @State private var rowFrames: [String: CGRect] = [:]
+
+    private static let coordinateSpace = "model-selector"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -49,25 +56,36 @@ struct ModelSelector: View {
                         hoverChanged(entry, hovering)
                     }
                 )
-            }
-        }
-        // One shared popover anchored to the list, so moving between
-        // rows swaps the card's content without re-presenting it.
-        .popover(
-            isPresented: Binding(
-                get: { hoveredModel != nil },
-                set: { presented in
-                    if !presented {
-                        hoveredModel = nil
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: RowFramePreference.self,
+                            value: [entry.id: proxy.frame(in: .named(Self.coordinateSpace))]
+                        )
                     }
                 }
-            ),
-            attachmentAnchor: .rect(.bounds),
-            arrowEdge: .trailing
-        ) {
-            if let hoveredModel {
-                ModelDetailCard(model: hoveredModel)
             }
+        }
+        .coordinateSpace(name: Self.coordinateSpace)
+        .onPreferenceChange(RowFramePreference.self) { frames in
+            // The macOS 15 SDK marks this closure @Sendable while
+            // preference changes are in fact delivered on the main
+            // actor; assumeIsolated bridges the annotation gap.
+            MainActor.assumeIsolated {
+                rowFrames = frames
+            }
+        }
+        // Invisible AppKit anchor spanning the list; it owns the one
+        // NSPopover whose position tracks the hovered row.
+        .background {
+            HoverCardPresenter(
+                model: hoveredModel,
+                anchorRect: hoveredModel.flatMap { rowFrames[$0.id] } ?? .zero
+            )
+        }
+        .onDisappear {
+            hoverTransition?.cancel()
+            hoveredModel = nil
         }
     }
 
@@ -84,13 +102,13 @@ struct ModelSelector: View {
                     }
                 }
             } else {
-                // Already up: swap the content in place, no re-present.
+                // Already up: move to this row in place, no re-present.
                 hoveredModel = entry
             }
         } else {
             // Grace period so the gap between rows (and the moment of a
             // click) does not blink the card; entering the next row
-            // cancels this and swaps instead.
+            // cancels this and moves the card instead.
             hoverTransition = Task {
                 try? await Task.sleep(for: .milliseconds(150))
                 if !Task.isCancelled {
@@ -98,6 +116,15 @@ struct ModelSelector: View {
                 }
             }
         }
+    }
+}
+
+/// Row frames keyed by model id, collected in the list's space.
+private struct RowFramePreference: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { _, next in next }
     }
 }
 
@@ -151,6 +178,105 @@ private struct ModelRow: View {
             hoverChanged(hovering)
         }
     }
+}
+
+/// AppKit-backed presenter for the hover profile card.
+///
+/// SwiftUI's `.popover` cannot reposition while presented — changing
+/// its anchor or item dismisses and re-presents, which blinked the card
+/// on every row change. `NSPopover` can: its `positioningRect` may be
+/// updated live. This representable spans the list as an invisible,
+/// SwiftUI-coordinate (flipped) anchor view and drives one popover:
+/// show on the first hover, move + swap content in place across rows,
+/// close on leave. `.applicationDefined` behavior keeps AppKit from
+/// auto-dismissing it (the hover state machine owns its lifetime).
+private struct HoverCardPresenter: NSViewRepresentable {
+    let model: ModelInfo?
+    let anchorRect: CGRect
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> FlippedAnchorView {
+        FlippedAnchorView()
+    }
+
+    func updateNSView(_ nsView: FlippedAnchorView, context: Context) {
+        context.coordinator.update(anchor: nsView, model: model, anchorRect: anchorRect)
+    }
+
+    static func dismantleNSView(_ nsView: FlippedAnchorView, coordinator: Coordinator) {
+        coordinator.hide()
+    }
+
+    /// Owns the popover across SwiftUI updates. Presentation is
+    /// deferred one main-actor hop: `updateNSView` runs inside SwiftUI's
+    /// view update, where presenting an AppKit window synchronously can
+    /// re-enter layout. The latest desired state wins (stale hops apply
+    /// whatever is current, so rapid hover changes coalesce).
+    @MainActor
+    final class Coordinator {
+        private var popover: NSPopover?
+        private var hosting: NSHostingController<ModelDetailCard>?
+        private weak var anchor: NSView?
+        private var desired: (model: ModelInfo, rect: CGRect)?
+
+        func update(anchor: NSView, model: ModelInfo?, anchorRect: CGRect) {
+            self.anchor = anchor
+            if let model, !anchorRect.isEmpty {
+                desired = (model, anchorRect)
+            } else {
+                desired = nil
+            }
+            Task { @MainActor in
+                self.apply()
+            }
+        }
+
+        func hide() {
+            desired = nil
+            if popover?.isShown == true {
+                popover?.performClose(nil)
+            }
+        }
+
+        private func apply() {
+            guard let desired, let anchor, anchor.window != nil else {
+                hide()
+                return
+            }
+            let popover = ensurePopover(for: desired.model)
+            hosting?.rootView = ModelDetailCard(model: desired.model)
+            if popover.isShown {
+                popover.positioningRect = desired.rect
+            } else {
+                popover.show(relativeTo: desired.rect, of: anchor, preferredEdge: .maxX)
+            }
+        }
+
+        private func ensurePopover(for model: ModelInfo) -> NSPopover {
+            if let popover {
+                return popover
+            }
+            let hosting = NSHostingController(rootView: ModelDetailCard(model: model))
+            hosting.sizingOptions = .preferredContentSize
+            let popover = NSPopover()
+            popover.behavior = .applicationDefined
+            popover.animates = true
+            popover.contentViewController = hosting
+            self.hosting = hosting
+            self.popover = popover
+            return popover
+        }
+    }
+}
+
+/// Invisible anchor with SwiftUI's top-left origin, so row frames
+/// measured in SwiftUI coordinates serve directly as AppKit
+/// positioning rects.
+private final class FlippedAnchorView: NSView {
+    override var isFlipped: Bool { true }
 }
 
 /// The hover card: name, purpose tag, four dot-scale ratings, and the
