@@ -13,12 +13,16 @@
 //! - [`framed::FramedStage`]: adapts a `FrameProcessor` to a `Stage`,
 //!   handling resampling (integer factors) and frame accumulation.
 //! - [`resample`]: streaming polyphase FIR decimator/interpolator.
+//! - [`capture`]: native-rate microphone capture support — the input
+//!   resampler (integer factor + micro-ratio drift stage) and the
+//!   ring-occupancy drift servo for non-48 kHz microphones (issue #7).
 //! - [`switch::SwitchingEngine`]: lock-free, click-free runtime switching
 //!   between prepared stages (the live-pipeline building block).
 //! - [`mix::IntensityControl`]: the atomic dry/wet ("strength") control
 //!   whose blend runs inside the switching engine, with the dry path
 //!   delay-compensated by the active stage's reported latency.
 
+pub mod capture;
 pub mod error;
 pub mod framed;
 pub mod mix;
@@ -26,6 +30,7 @@ pub mod resample;
 pub mod stage;
 pub mod switch;
 
+pub use capture::{DriftServo, InputResampler};
 pub use error::StageError;
 pub use framed::FramedStage;
 pub use mix::IntensityControl;

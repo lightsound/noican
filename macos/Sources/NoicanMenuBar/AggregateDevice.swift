@@ -22,8 +22,8 @@ final class AggregateDevice: @unchecked Sendable {
         // setting the rate on the aggregate alone is rejected ('nope') by
         // some configurations while the mic idles at another rate (16 kHz
         // Bluetooth profiles, 44.1 kHz defaults, ...).
-        try ensure48k(input, role: "microphone \"\(input.name)\"")
-        try ensure48k(virtualOutput, role: "virtual output \"\(virtualOutput.name)\"")
+        try Self.ensure48k(input, role: "microphone \"\(input.name)\"")
+        try Self.ensure48k(virtualOutput, role: "virtual output \"\(virtualOutput.name)\"")
         let subdevices: [[String: Any]] = [
             [
                 kAudioSubDeviceUIDKey: input.uid,
@@ -68,15 +68,21 @@ final class AggregateDevice: @unchecked Sendable {
         identifier = AudioObjectID(kAudioObjectUnknown)
     }
 
-    private func ensure48k(_ device: AudioDeviceInfo, role: String) throws {
+    /// Switches `device` to 48 kHz (polling the asynchronous change),
+    /// or throws when it cannot run there. Shared with the split
+    /// native-capture path, which has no aggregate but must still hold
+    /// the virtual output at the 48 kHz engine rate for consumers.
+    static func ensure48k(_ device: AudioDeviceInfo, role: String) throws {
         let target = 48_000.0
         if let rate = AudioDeviceCatalog.nominalSampleRate(device.id),
             abs(rate - target) < 0.5 {
             return
         }
         guard AudioDeviceCatalog.supportsSampleRate(device.id, target) else {
-            // Typical case: Bluetooth headset microphones (8/16/24 kHz
-            // telephony profiles). Phase 0 requires a 48 kHz-capable input.
+            // Defensive only: microphones that cannot run at 48 kHz
+            // (Bluetooth telephony profiles) are routed to the split
+            // native-capture transport by the control plane (issue #7)
+            // and never reach the aggregate path.
             throw CoreAudioControlError(
                 operation: "The \(role) cannot run at 48 kHz",
                 status: kAudioDeviceUnsupportedFormatError

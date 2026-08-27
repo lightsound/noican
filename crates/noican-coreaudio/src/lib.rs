@@ -1,4 +1,4 @@
-//! AUHAL transport between a private Aggregate Device and the Rust engine.
+//! AUHAL transport between Core Audio devices and the Rust engine.
 //!
 //! Ported from the Phase 0 transport candidate that passed hardware
 //! acceptance on macOS 26 / Apple Silicon (mic permission → Running,
@@ -6,6 +6,12 @@
 //! drive [`noican_core::SwitchingEngine`] so the processing path — including
 //! the 16 kHz polyphase resampling in [`noican_core::FramedStage`] — is the
 //! exact code the CLI comparison mode exercises.
+//!
+//! Two transport shapes exist: one AUHAL on a private Aggregate Device
+//! for 48 kHz-capable microphones (the original path, unchanged), and a
+//! split transport — a native-rate capture AUHAL plus a 48 kHz virtual-
+//! output AUHAL bridged by a drift-compensating resampler — for
+//! telephony-profile microphones such as Bluetooth headsets (issue #7).
 //!
 //! Real-time rules (docs/tech-research.md §9): the Core Audio render
 //! callback only calls `AudioUnitRender`, moves `f32` samples through
@@ -132,6 +138,22 @@ impl Runtime {
     /// Always returns [`CoreAudioError::UnsupportedPlatform`].
     pub fn start(
         _aggregate_device: u32,
+        _engine: SwitchingEngine,
+        _levels: Arc<StreamLevels>,
+        _monitor_state: Arc<std::sync::atomic::AtomicI32>,
+    ) -> Result<Self, CoreAudioError> {
+        Err(CoreAudioError::UnsupportedPlatform)
+    }
+
+    /// Rejects split-transport startup on non-macOS targets.
+    ///
+    /// # Errors
+    ///
+    /// Always returns [`CoreAudioError::UnsupportedPlatform`].
+    pub fn start_native(
+        _input_device: u32,
+        _output_device: u32,
+        _capture_rate: u32,
         _engine: SwitchingEngine,
         _levels: Arc<StreamLevels>,
         _monitor_state: Arc<std::sync::atomic::AtomicI32>,

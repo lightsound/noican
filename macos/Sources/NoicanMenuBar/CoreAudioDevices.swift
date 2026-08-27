@@ -144,6 +144,15 @@ enum AudioDeviceCatalog {
     /// Whether the device advertises support for `rate`. Returns true when
     /// the supported-rate list is unreadable (let the actual set decide).
     static func supportsSampleRate(_ device: AudioObjectID, _ rate: Double) -> Bool {
+        advertisesSampleRate(device, rate) ?? true
+    }
+
+    /// Tri-state form of `supportsSampleRate`: whether the device's
+    /// advertised rate list contains `rate`, or nil when the list is
+    /// unreadable. Callers that have another source of truth (the
+    /// reducer's device snapshot) use the tri-state to fall back to it
+    /// instead of failing open onto the wrong transport path.
+    static func advertisesSampleRate(_ device: AudioObjectID, _ rate: Double) -> Bool? {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyAvailableNominalSampleRates,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -154,7 +163,7 @@ enum AudioDeviceCatalog {
             AudioObjectGetPropertyDataSize(device, &address, 0, nil, &byteCount) == noErr,
             byteCount >= UInt32(MemoryLayout<AudioValueRange>.size)
         else {
-            return true
+            return nil
         }
         let count = Int(byteCount) / MemoryLayout<AudioValueRange>.size
         var ranges = [AudioValueRange](repeating: AudioValueRange(), count: count)
@@ -165,7 +174,7 @@ enum AudioDeviceCatalog {
             return AudioObjectGetPropertyData(device, &address, 0, nil, &byteCount, baseAddress)
         }
         guard status == noErr else {
-            return true
+            return nil
         }
         return ranges.contains { range in
             range.mMinimum - 0.5 <= rate && rate <= range.mMaximum + 0.5

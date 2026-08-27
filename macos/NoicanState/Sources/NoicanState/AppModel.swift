@@ -105,11 +105,12 @@ public struct MessageSlots: Hashable, Sendable {
     /// pressable and explains itself on press, which confuses less than
     /// a segment that cannot be pressed.
     public var previewUnavailableReason: String?
-    /// Why the last microphone selection was refused in place (the device
-    /// cannot run at 48 kHz) while the engine kept the previous one.
-    /// Shown under the microphone list; cleared on the next selection —
-    /// including a re-click of the already-selected microphone, which
-    /// acknowledges the message without touching the engine.
+    /// Why the last microphone selection was refused in place (the
+    /// device's rate cannot reach the 48 kHz engine rate by an integer
+    /// factor) while the engine kept the previous one. Shown under the
+    /// microphone list; cleared on the next selection — including a
+    /// re-click of the already-selected microphone, which acknowledges
+    /// the message without touching the engine.
     public var microphoneError: String?
     /// Why the last model switch failed while the engine kept running the
     /// previous model. Shown under the Model picker (this is not an
@@ -269,15 +270,27 @@ extension AppModel {
     /// while off, torn down, or rebuilding (`starting` claims a fresh
     /// transport whose watch begins on success).
     public var hasLiveTransport: Bool {
+        transportSession != nil
+    }
+
+    /// The session whose engine transport is currently up, *including*
+    /// through busy monitor/model transitions (which keep the transport
+    /// running) and through a fault that left it up. This is what
+    /// per-device observers must key on — the input-rate listener keyed
+    /// on `liveSession` would detach for the length of every Preview
+    /// toggle or model switch and miss a profile flip in that window.
+    /// Nil while off, torn down, or rebuilding (`starting` claims a
+    /// fresh transport).
+    public var transportSession: EngineSession? {
         switch machine {
-        case .settled(.running), .busy(.settingMonitor, _):
-            true
+        case let .settled(.running(session)), let .busy(.settingMonitor(_, session), _):
+            return session
         case let .settled(.failed(_, session)):
-            session != nil
+            return session
         case let .busy(.switchingModel(_, session), _):
-            session != nil
+            return session
         case .settled(.off), .busy(.starting, _):
-            false
+            return nil
         }
     }
 }
@@ -337,5 +350,26 @@ extension AppModel {
     /// is not running".
     public var isModeUnfulfilled: Bool {
         engineErrorMessage != nil || (mode == .preview && messages.previewError != nil)
+    }
+
+    /// Informational caption for a telephony-profile selection, shown
+    /// under the microphone list (secondary style — a property of the
+    /// device, not an error): Bluetooth headset microphones are captured
+    /// at their narrow-band native rate and resampled (issue #7), which
+    /// cannot restore full-band quality, and using the headset's
+    /// microphone drops the whole headset into the phone profile, so
+    /// its *playback* quality degrades too while the engine runs. A
+    /// pure projection of the selection — no state, no clearing rules.
+    public var microphoneNotice: String? {
+        guard
+            let device = inputDevices.first(where: { $0.uid == selectedInputUID }),
+            case let .nativeRate(hertz) = device.capture
+        else {
+            return nil
+        }
+        let rate = device.rateLabel ?? "\(hertz) Hz"
+        return "\(device.name) captures at \(rate) (Bluetooth phone profile): audio is "
+            + "narrow-band — resampling can't restore full quality — and headset "
+            + "playback quality also drops while the microphone is in use."
     }
 }

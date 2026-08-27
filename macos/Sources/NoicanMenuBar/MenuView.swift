@@ -170,6 +170,16 @@ struct MenuView: View {
                         .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                // Telephony-profile (Bluetooth headset) selections are a
+                // supported path with an inherent quality trade-off; the
+                // secondary style says "property of the device", not
+                // "error".
+                if let notice = model.microphoneNotice {
+                    Text(notice)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text("Model")
@@ -330,6 +340,13 @@ private struct MicrophoneRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 0)
+                // Non-48 kHz devices carry their native rate so the
+                // narrow-band trade-off is visible before selecting.
+                if let rate = device.rateLabel {
+                    Text(rate)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 5)

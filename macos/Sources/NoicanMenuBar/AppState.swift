@@ -60,6 +60,19 @@ final class AppState: ObservableObject {
     /// monitor enable settles; always removed when the monitor disarms
     /// (`syncMonitorSafetyObservation`).
     private var monitorSafetyListener: (device: AudioObjectID, block: AudioObjectPropertyListenerBlock)?
+    /// Rate the running transport captures at when the native-capture
+    /// (split) path is active, or nil on the 48 kHz aggregate path.
+    /// Recorded by the start effect and used as the baseline the
+    /// nominal-rate listener compares against.
+    private var activeCaptureRate: Double?
+    /// Watches the running session's microphone for nominal-rate changes
+    /// while the native-capture path is active: Bluetooth headsets
+    /// renegotiate between A2DP and HFP profiles, and the split
+    /// transport captures at the rate fixed at start time, so a change
+    /// means the transport must be rebuilt. Registered when a
+    /// native-capture start settles; always removed when the session
+    /// ends (`syncInputRateObservation`).
+    private var inputRateListener: (device: AudioObjectID, block: AudioObjectPropertyListenerBlock)?
 
     init() {
         var initialPhase = EnginePhase.off
@@ -148,6 +161,7 @@ final class AppState: ObservableObject {
         }
         syncFaultPolling()
         syncMonitorSafetyObservation()
+        syncInputRateObservation()
     }
 
     private func perform(_ effect: AppEffect) {
@@ -185,16 +199,42 @@ final class AppState: ObservableObject {
         }
         let aggregate = self.aggregate
         let modelID = attempt.modelID
+        // Snapshot capability, kept as the fallback vote for the
+        // transport-shape decision below.
+        let snapshotCapture = model.inputDevices.first { $0.uid == attempt.inputUID }?.capture
         // Detached: aggregate creation polls the device until it is alive
         // (up to ~1.5 s) and engine start may download weights — neither
         // may block the main actor. The busy machine state keeps this the
         // only operation touching `aggregate`/`engine` until it finishes.
         Task.detached {
+            var captureRate: Double?
             let result = Result {
-                let aggregateID = try aggregate.create(input: input, virtualOutput: virtualOutput)
-                try engine.start(aggregateDevice: aggregateID, model: modelID)
+                if Self.shouldUseAggregate(for: input.id, snapshot: snapshotCapture) {
+                    let aggregateID = try aggregate.create(
+                        input: input, virtualOutput: virtualOutput
+                    )
+                    try engine.start(aggregateDevice: aggregateID, model: modelID)
+                } else {
+                    // The virtual output feeds consumers and must stay at
+                    // 48 kHz; the aggregate path switches it inside
+                    // `create`, the split path must do it explicitly.
+                    try AggregateDevice.ensure48k(
+                        virtualOutput, role: "virtual output \"\(virtualOutput.name)\""
+                    )
+                    // The effective capture rate settles when capture
+                    // starts (Bluetooth renegotiates profiles), so read
+                    // it as late as possible; the Rust side validates it.
+                    let rate = AudioDeviceCatalog.nominalSampleRate(input.id) ?? 0
+                    captureRate = rate
+                    try engine.startNative(
+                        inputDevice: input.id,
+                        virtualOutput: virtualOutput.id,
+                        captureRate: rate,
+                        model: modelID
+                    )
+                }
             }
-            await self.finish(.startCompleted(error: result.errorMessage))
+            await self.finishStart(captureRate: captureRate, error: result.errorMessage)
         }
     }
 
@@ -327,7 +367,10 @@ final class AppState: ObservableObject {
                     InputDevice(
                         uid: device.uid,
                         name: device.name,
-                        supports48kHz: AudioDeviceCatalog.supportsSampleRate(device.id, 48_000)
+                        capture: CaptureSupport.classify(
+                            supports48kHz: AudioDeviceCatalog.supportsSampleRate(device.id, 48_000),
+                            nominalRate: AudioDeviceCatalog.nominalSampleRate(device.id) ?? 0
+                        )
                     )
                 }
             dispatch(.devicesChanged(
@@ -398,6 +441,10 @@ final class AppState: ObservableObject {
         }
         checkMonitorTrip()
         checkMonitorSafety()
+        // Belt and braces for the nominal-rate listener: a profile flip
+        // landing during a busy transition is dropped by the listener's
+        // busy guard, so the poll re-checks once per second.
+        checkInputRate()
         if engine.isFaulted {
             dispatch(.engineFaulted)
             return
@@ -550,6 +597,130 @@ extension AppState {
         AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyDataSource,
             mScope: kAudioObjectPropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+    }
+
+    /// Transport shape for a start effect: 48 kHz-capable microphones
+    /// keep the original aggregate path unchanged; other devices
+    /// (Bluetooth telephony profiles) are captured natively through the
+    /// split transport and resampled inside it (issue #7). Decided from
+    /// *live* facts at effect time — a rate-change rebuild can race a
+    /// profile flip, and a device that meanwhile reached a
+    /// 48 kHz-capable state must take the aggregate path instead of
+    /// failing rate validation.
+    ///
+    /// When the advertised-rate list is unreadable (the tri-state probe
+    /// reads nil), the live *nominal rate* — readable independently —
+    /// outranks the reducer's possibly stale snapshot: a device sitting
+    /// at a rate the split transport cannot convert (48 kHz itself, or
+    /// a non-divisor like 44.1 kHz) goes to the aggregate path, whose
+    /// `ensure48k` returns immediately for a device already at 48 kHz
+    /// and produces the precise refusal otherwise. Only for a live
+    /// telephony-rate (or unreadable) nominal does the snapshot decide:
+    /// a `.nativeRate` pre-flight takes the split path — failing open
+    /// onto the aggregate would poll `ensure48k` for two seconds and
+    /// then fail a device the reducer already approved for native
+    /// capture — while unknown or non-native snapshots keep Phase 0's
+    /// fail-open behavior.
+    private nonisolated static func shouldUseAggregate(
+        for device: AudioObjectID,
+        snapshot: CaptureSupport?
+    ) -> Bool {
+        if let advertises48k = AudioDeviceCatalog.advertisesSampleRate(device, 48_000) {
+            return advertises48k
+        }
+        if let nominal = AudioDeviceCatalog.nominalSampleRate(device),
+           case .unsupported = CaptureSupport.classify(
+               supports48kHz: false, nominalRate: nominal
+           ) {
+            return true
+        }
+        if case .nativeRate = snapshot {
+            return false
+        }
+        return true
+    }
+
+    /// Completion entry point for start effects: records the capture
+    /// rate the split transport was built around (nil on the aggregate
+    /// path or on failure) as the baseline for the nominal-rate
+    /// listener, then dispatches the outcome.
+    private func finishStart(captureRate: Double?, error: String?) {
+        activeCaptureRate = error == nil ? captureRate : nil
+        dispatch(.startCompleted(error: error))
+    }
+
+    /// Keeps the nominal-rate listener in lockstep with the transport:
+    /// registered on the session's microphone when a native-capture
+    /// start settles (`activeCaptureRate` is the split path's marker)
+    /// and kept through busy monitor/model transitions — the transport
+    /// stays up during those, so keying on `liveSession` would drop the
+    /// listener for the length of every Preview toggle. Removed the
+    /// moment the transport is gone. The 48 kHz aggregate path never
+    /// registers one, so its behavior is unchanged. Bluetooth headsets
+    /// renegotiate profiles (A2DP ↔ HFP), and the split transport
+    /// captures at the rate fixed at start time, so a live change must
+    /// rebuild the transport.
+    private func syncInputRateObservation() {
+        if let session = model.transportSession,
+           activeCaptureRate != nil,
+           let device = allDevices.first(where: { $0.uid == session.inputUID }) {
+            guard inputRateListener == nil else {
+                return
+            }
+            let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+                // Delivered on the main queue, which is the main actor.
+                MainActor.assumeIsolated {
+                    self?.checkInputRate()
+                }
+            }
+            var address = Self.nominalSampleRateAddress
+            _ = AudioObjectAddPropertyListenerBlock(device.id, &address, DispatchQueue.main, block)
+            inputRateListener = (device.id, block)
+            // The effective rate settles at capture start (Bluetooth
+            // renegotiates when the HFP link comes up), which can race
+            // the start effect's read: compare once at attach time so a
+            // renegotiation that landed during the start is caught now
+            // rather than waiting for a notification that may never
+            // fire again.
+            checkInputRate()
+        } else if let listener = inputRateListener {
+            var address = Self.nominalSampleRateAddress
+            _ = AudioObjectRemovePropertyListenerBlock(
+                listener.device,
+                &address,
+                DispatchQueue.main,
+                listener.block
+            )
+            inputRateListener = nil
+        }
+    }
+
+    /// Re-reads the running microphone's nominal rate and rebuilds the
+    /// transport (via the reducer) when it no longer matches the rate
+    /// the transport was started with. Comparing against the recorded
+    /// baseline filters spurious notifications; the busy machine
+    /// serializes overlapping rebuilds (a flip landing *during* a busy
+    /// transition is dropped here and caught by the attach-time check
+    /// or the 1 Hz health poll after the transition settles).
+    private func checkInputRate() {
+        guard
+            let expected = activeCaptureRate,
+            !model.isBusy, let session = model.transportSession,
+            let device = allDevices.first(where: { $0.uid == session.inputUID }),
+            let rate = AudioDeviceCatalog.nominalSampleRate(device.id),
+            abs(rate - expected) > 0.5
+        else {
+            return
+        }
+        dispatch(.inputSampleRateChanged)
+    }
+
+    private static var nominalSampleRateAddress: AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
     }
