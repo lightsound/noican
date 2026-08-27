@@ -146,7 +146,12 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
    - the Model picker (below the Microphone list) listing **every
      registry stage**: Passthrough, FastEnhancer T/B/S/M/L, DPDFNet2,
      DPDFNet8, DeepFilterNet3, UL-UNAS, Hush, and TSE Conv-TasNet 48k
-     marked "requires enrollment".
+     marked "requires enrollment". Every other row carries a one-line
+     purpose tag (e.g. "balanced default", "strongest cleanup"), and a
+     rating card with four dot rows (Noise removal / Voice quality /
+     Responsiveness / Efficiency) renders under the picker, updating
+     with the selection; hovering it shows the raw facts (native rate,
+     measured delay, size).
    The monitoring section (level bars) must be absent while the mode is
    Off and appear while the engine runs.
 4. Select a physical microphone and `FastEnhancer-B 48k`.

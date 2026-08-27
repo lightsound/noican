@@ -195,6 +195,12 @@ struct MenuView: View {
                 }
                 .labelsHidden()
                 .disabled(model.isBusy)
+                // Profile of the selected model, so the choice does not
+                // require knowing the model names (ratings and text come
+                // from the Rust registry, not the UI).
+                if let selected = state.models.first(where: { $0.id == model.selectedModelID }) {
+                    ModelTraitCard(model: selected)
+                }
                 if let message = model.messages.modelError {
                     Text(message)
                         .font(.caption2)
@@ -255,10 +261,15 @@ struct MenuView: View {
         }
     }
 
+    /// Picker row: display name plus the registry's one-line purpose tag
+    /// (enrollment gating wins — it explains why the row is disabled).
     private func modelLabel(_ model: ModelInfo) -> String {
-        model.needsEnrollment
-            ? "\(model.displayName) — requires enrollment"
-            : model.displayName
+        if model.needsEnrollment {
+            return "\(model.displayName) — requires enrollment"
+        }
+        return model.tagline.isEmpty
+            ? model.displayName
+            : "\(model.displayName) — \(model.tagline)"
     }
 
     /// Whole-percent strength readout next to the section label.
