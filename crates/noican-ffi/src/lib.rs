@@ -163,7 +163,78 @@ pub unsafe extern "C" fn noican_engine_start(
         Ok(model) => model,
         Err(error) => return set_error(handle, error),
     };
+    start_with(handle, model, |engine, levels, monitor_state| {
+        Runtime::start(aggregate_device, engine, levels, monitor_state)
+            .map_err(|error| error.to_string())
+    })
+}
 
+/// Starts the split transport for a microphone that cannot run at the
+/// 48 kHz engine rate (issue #7).
+///
+/// `input_device` is the microphone's Core Audio device ID and
+/// `capture_sample_rate` its current nominal rate in Hz, which must be a
+/// proper integer divisor of 48000 (Bluetooth telephony profiles:
+/// 8/16/24 kHz). `output_device` is the Noican/`BlackHole` virtual
+/// output. No Aggregate Device is involved: the microphone is captured
+/// natively and resampled to 48 kHz inside the transport, with clock
+/// drift between the two devices compensated by a ring-occupancy servo.
+/// The split path adds a 50 ms output cushion; the aggregate path
+/// ([`noican_engine_start`]) is unchanged.
+///
+/// Missing model weights are downloaded first (on this control thread,
+/// without holding the control lock).
+///
+/// # Safety
+///
+/// `handle` must be a live engine handle and `model_id` must point to a
+/// valid NUL-terminated string for the duration of this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_engine_start_native(
+    handle: *mut c_void,
+    input_device: u32,
+    output_device: u32,
+    capture_sample_rate: f64,
+    model_id: *const c_char,
+) -> i32 {
+    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+        return FAILURE;
+    };
+    let model = match parse_model_id(model_id) {
+        Ok(model) => model,
+        Err(error) => return set_error(handle, error),
+    };
+    let capture_rate = match validate_capture_rate(capture_sample_rate) {
+        Ok(rate) => rate,
+        Err(error) => return set_error(handle, error),
+    };
+    start_with(handle, model, |engine, levels, monitor_state| {
+        Runtime::start_native(
+            input_device,
+            output_device,
+            capture_rate,
+            engine,
+            levels,
+            monitor_state,
+        )
+        .map_err(|error| error.to_string())
+    })
+}
+
+/// Shared start flow behind [`noican_engine_start`] and
+/// [`noican_engine_start_native`]: claims an epoch (tearing down any
+/// running transport), prepares the stage and engine unlocked, starts
+/// the runtime through `start_runtime`, and commits unless a newer
+/// control operation superseded the epoch.
+fn start_with(
+    handle: &EngineHandle,
+    model: String,
+    start_runtime: impl FnOnce(
+        SwitchingEngine,
+        Arc<StreamLevels>,
+        Arc<AtomicI32>,
+    ) -> Result<Runtime, String>,
+) -> i32 {
     // Short lock: tear down any running transport and claim an epoch.
     let (models_dir, epoch, old_runtime) = {
         let mut control = match handle.state.lock() {
@@ -189,8 +260,7 @@ pub unsafe extern "C" fn noican_engine_start(
         let (publisher, engine) =
             SwitchingEngine::new(stage, SWITCH_FADE_SAMPLES, WORKER_BLOCK_SAMPLES, intensity)
                 .map_err(|error| error.to_string())?;
-        let runtime = Runtime::start(aggregate_device, engine, levels, monitor_state)
-            .map_err(|error| error.to_string())?;
+        let runtime = start_runtime(engine, levels, monitor_state)?;
         Ok((publisher, runtime))
     });
     let (publisher, mut runtime) = match built {
@@ -219,6 +289,33 @@ pub unsafe extern "C" fn noican_engine_start(
     control.active_model = Some(model);
     control.last_error.clear();
     SUCCESS
+}
+
+/// Validates a native capture rate: finite, integral, and a proper
+/// integer divisor of the 48 kHz engine rate. Rejecting here — before
+/// any weight download or audio object — keeps the failure instant and
+/// its message precise.
+fn validate_capture_rate(rate: f64) -> Result<u32, String> {
+    let rounded = rate.round();
+    if !rate.is_finite() || (rate - rounded).abs() > 0.5 || !(1.0..48_000.0).contains(&rounded) {
+        return Err(format!(
+            "invalid capture sample rate {rate} Hz (expected a telephony-profile \
+             rate below 48000 Hz)"
+        ));
+    }
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "bounded to 1..48000 by the range check above"
+    )]
+    let hertz = rounded as u32;
+    if !48_000_u32.is_multiple_of(hertz) {
+        return Err(format!(
+            "capture rate {hertz} Hz is not an integer divisor of the 48000 Hz \
+             engine rate (Bluetooth telephony profiles are 8/16/24 kHz)"
+        ));
+    }
+    Ok(hertz)
 }
 
 /// Stops AUHAL while preserving the reusable control handle.
@@ -980,6 +1077,72 @@ mod tests {
         assert_eq!(unsafe { noican_engine_set_intensity(handle, 0.7) }, SUCCESS);
         unsafe { noican_engine_stop(handle) };
         assert!((unsafe { noican_engine_intensity(handle) } - 0.7).abs() < f32::EPSILON);
+        unsafe { noican_engine_destroy(handle) };
+    }
+
+    #[test]
+    fn capture_rate_validation_accepts_only_integer_divisors() {
+        for rate in [8_000.0, 12_000.0, 16_000.0, 24_000.0] {
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "test rates are small integers"
+            )]
+            let expected = rate as u32;
+            assert_eq!(validate_capture_rate(rate), Ok(expected));
+        }
+        for rate in [
+            0.0,
+            -16_000.0,
+            44_100.0,
+            32_000.0,
+            48_000.0,
+            96_000.0,
+            16_000.7,
+            f64::NAN,
+            f64::INFINITY,
+        ] {
+            let error = validate_capture_rate(rate).expect_err("must be rejected");
+            assert!(
+                error.contains("Hz"),
+                "unhelpful message for {rate}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn start_native_rejects_bad_rates_before_any_slow_work() {
+        let handle = unsafe { noican_engine_create(ptr::null()) };
+        assert!(!handle.is_null());
+        let model = c"passthrough";
+        let result = unsafe { noican_engine_start_native(handle, 0, 0, 44_100.0, model.as_ptr()) };
+        assert_eq!(result, FAILURE);
+        let error = read_string(|buffer, capacity| unsafe {
+            noican_engine_last_error(handle, buffer, capacity)
+        })
+        .expect("rate refusal records an error");
+        assert!(
+            error.contains("44100") && error.contains("divisor"),
+            "unhelpful message: {error}"
+        );
+        // A valid telephony rate passes validation; on portable builds
+        // the transport itself then refuses (and macOS refuses the
+        // nonexistent device 0), but never with the rate message.
+        let result = unsafe { noican_engine_start_native(handle, 0, 0, 16_000.0, model.as_ptr()) };
+        assert_eq!(result, FAILURE);
+        let error = read_string(|buffer, capacity| unsafe {
+            noican_engine_last_error(handle, buffer, capacity)
+        })
+        .expect("start failure records an error");
+        assert!(
+            !error.contains("divisor"),
+            "a valid rate must not be blamed: {error}"
+        );
+        #[cfg(not(target_os = "macos"))]
+        assert!(
+            error.contains("only on macOS"),
+            "portable builds refuse the transport: {error}"
+        );
         unsafe { noican_engine_destroy(handle) };
     }
 

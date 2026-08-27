@@ -11,6 +11,17 @@ extern "C" {
 void *noican_engine_create(const char *models_directory);
 void noican_engine_destroy(void *handle);
 int32_t noican_engine_start(void *handle, uint32_t aggregate_device, const char *model_id);
+
+/* Split transport for microphones that cannot run at the 48 kHz engine
+ * rate (issue #7): captures input_device at capture_sample_rate (its
+ * current nominal rate in Hz — must be a proper integer divisor of
+ * 48000; Bluetooth telephony profiles are 8/16/24 kHz) and feeds
+ * output_device (the Noican/BlackHole virtual output) at 48 kHz, with
+ * the rate conversion and clock-drift compensation inside the
+ * transport. No Aggregate Device is involved; the 48 kHz path
+ * (noican_engine_start) is unchanged. */
+int32_t noican_engine_start_native(void *handle, uint32_t input_device, uint32_t output_device,
+                                   double capture_sample_rate, const char *model_id);
 void noican_engine_stop(void *handle);
 int32_t noican_engine_set_model(void *handle, const char *model_id);
 int32_t noican_engine_is_running(const void *handle);
