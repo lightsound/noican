@@ -199,6 +199,9 @@ final class AppState: ObservableObject {
         }
         let aggregate = self.aggregate
         let modelID = attempt.modelID
+        // Snapshot capability, kept as the fallback vote for the
+        // transport-shape decision below.
+        let snapshotCapture = model.inputDevices.first { $0.uid == attempt.inputUID }?.capture
         // Detached: aggregate creation polls the device until it is alive
         // (up to ~1.5 s) and engine start may download weights — neither
         // may block the main actor. The busy machine state keeps this the
@@ -206,16 +209,7 @@ final class AppState: ObservableObject {
         Task.detached {
             var captureRate: Double?
             let result = Result {
-                // Transport shape: 48 kHz-capable microphones keep the
-                // original aggregate path unchanged; other devices
-                // (Bluetooth telephony profiles) are captured natively
-                // through the split transport and resampled inside it
-                // (issue #7). Decided from *live* facts at effect time,
-                // not the reducer's snapshot: a rate-change rebuild can
-                // race a profile flip, and a device that meanwhile
-                // reached a 48 kHz-capable state must take the
-                // aggregate path instead of failing rate validation.
-                if AudioDeviceCatalog.supportsSampleRate(input.id, 48_000) {
+                if Self.shouldUseAggregate(for: input.id, snapshot: snapshotCapture) {
                     let aggregateID = try aggregate.create(
                         input: input, virtualOutput: virtualOutput
                     )
@@ -605,6 +599,34 @@ extension AppState {
             mScope: kAudioObjectPropertyScopeOutput,
             mElement: kAudioObjectPropertyElementMain
         )
+    }
+
+    /// Transport shape for a start effect: 48 kHz-capable microphones
+    /// keep the original aggregate path unchanged; other devices
+    /// (Bluetooth telephony profiles) are captured natively through the
+    /// split transport and resampled inside it (issue #7). Decided from
+    /// *live* facts at effect time — a rate-change rebuild can race a
+    /// profile flip, and a device that meanwhile reached a
+    /// 48 kHz-capable state must take the aggregate path instead of
+    /// failing rate validation. When the live rate list is unreadable
+    /// (the tri-state probe reads nil), the reducer's pre-flighted
+    /// snapshot is the fallback vote: failing open onto the aggregate
+    /// would poll `ensure48k` for two seconds and then fail a telephony
+    /// device the snapshot already approved for native capture. With an
+    /// unknown or non-native snapshot, Phase 0's fail-open behavior is
+    /// kept (the aggregate path's `ensure48k` produces the precise
+    /// refusal).
+    private nonisolated static func shouldUseAggregate(
+        for device: AudioObjectID,
+        snapshot: CaptureSupport?
+    ) -> Bool {
+        if let advertises48k = AudioDeviceCatalog.advertisesSampleRate(device, 48_000) {
+            return advertises48k
+        }
+        if case .nativeRate = snapshot {
+            return false
+        }
+        return true
     }
 
     /// Completion entry point for start effects: records the capture

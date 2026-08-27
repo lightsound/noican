@@ -75,14 +75,17 @@ const NATIVE_CHUNK_SAMPLES: usize = 480;
 /// the split path only; the aggregate path is untouched.
 const OUTPUT_PRIME_SAMPLES: usize = 2_400;
 
-/// Consecutive engine blocks the output ring may sit effectively full
-/// before the worker flags a fault (3 s at 10 ms blocks, matching the
-/// control plane's stall horizon). On the aggregate path a dead output
-/// device kills the single shared callback and trips the frame
-/// heartbeat; on the split path the capture callback keeps the
-/// heartbeat advancing, so a virtual-output side that stopped draining
-/// — the ring pinned at capacity while capture stays alive — is itself
-/// the stall signal and must surface as a fault.
+/// Consecutive engine blocks the output callback may stay silent before
+/// the worker flags a fault (3 s of processed capture at 10 ms blocks,
+/// matching the control plane's stall horizon). On the aggregate path a
+/// dead output device kills the single shared callback and trips the
+/// frame heartbeat; on the split path the capture callback keeps that
+/// heartbeat advancing, so the output side carries its own pulse
+/// counter and the worker faults when it stops moving while capture is
+/// alive. Watching the callback pulse — not ring occupancy — keeps a
+/// transient ring-filling hiccup from latching a false fault: a full
+/// ring drains only at the servo's ppm trickle, but a live callback
+/// keeps pulsing regardless.
 const OUTPUT_STALL_BLOCKS: usize = 300;
 
 /// Render context of the input-only capture AUHAL.
@@ -102,6 +105,11 @@ pub(super) struct CaptureContext {
 /// Render context of the output-only AUHAL on the virtual output.
 pub(super) struct OutputContext {
     output: Consumer<f32>,
+    /// Heartbeat: render callbacks delivered since start (relaxed
+    /// atomic add is real-time safe). The worker watches it to detect a
+    /// virtual-output side that stopped calling back (see
+    /// [`OUTPUT_STALL_BLOCKS`]).
+    pulses: Arc<AtomicU64>,
 }
 
 /// Everything the split-transport inference worker owns or shares.
@@ -113,6 +121,8 @@ struct SplitWorkerLinks {
     levels: Arc<StreamLevels>,
     resampler: InputResampler,
     servo: DriftServo,
+    /// The output callback's pulse counter (see [`OutputContext`]).
+    output_pulses: Arc<AtomicU64>,
 }
 
 /// Builds and starts the split transport (see the module docs and
@@ -159,8 +169,10 @@ pub(super) fn start(
     // Output half: output-only AUHAL on the virtual output at 48 kHz.
     let mut output_unit = AuhalUnit::create()?;
     configure_output_auhal(output_unit.raw(), output_device)?;
+    let output_pulses = Arc::new(AtomicU64::new(0));
     let output_context = ContextGuard::new(OutputContext {
         output: output_consumer,
+        pulses: Arc::clone(&output_pulses),
     });
     attach_render_callback(
         output_unit.raw(),
@@ -183,6 +195,7 @@ pub(super) fn start(
         levels,
         resampler,
         servo: DriftServo::new(OUTPUT_PRIME_SAMPLES),
+        output_pulses,
     };
     let worker = thread::Builder::new()
         .name("noican-inference".to_owned())
@@ -375,6 +388,7 @@ fn split_processing_loop(
         levels,
         mut resampler,
         mut servo,
+        output_pulses,
     } = links;
     levels.reset();
     let membership = WorkgroupGuard::join(workgroup);
@@ -392,7 +406,8 @@ fn split_processing_loop(
         std::collections::VecDeque::with_capacity(NATIVE_CHUNK_SAMPLES * 6 + WORKER_BLOCK_SAMPLES);
     let mut input_block = [0.0_f32; WORKER_BLOCK_SAMPLES];
     let mut output_block = [0.0_f32; WORKER_BLOCK_SAMPLES];
-    let mut output_full_blocks = 0_usize;
+    let mut last_output_pulses = 0_u64;
+    let mut output_idle_blocks = 0_usize;
     while !shutdown.load(Ordering::Acquire) {
         let mut popped = 0;
         while popped < NATIVE_CHUNK_SAMPLES {
@@ -429,21 +444,23 @@ fn split_processing_loop(
             // Drift servo: total samples buffered between the capture
             // clock (producer) and the output clock (consumer), in
             // engine-rate samples. A trend here *is* clock drift.
-            let output_occupancy = output_capacity - output.slots();
-            let buffered = output_occupancy + pending.len() + input.slots().saturating_mul(factor);
+            let buffered = (output_capacity - output.slots())
+                + pending.len()
+                + input.slots().saturating_mul(factor);
             resampler.set_drift_ppm(servo.update(buffered));
-            // Output-side heartbeat (see OUTPUT_STALL_BLOCKS): the servo
-            // holds healthy occupancy near its 50 ms target, so a ring
-            // pinned at capacity — the block above could not fit — for
-            // seconds means the output callback stopped draining while
-            // capture is still alive.
-            if output_occupancy + WORKER_BLOCK_SAMPLES > output_capacity {
-                output_full_blocks = output_full_blocks.saturating_add(1);
-                if output_full_blocks >= OUTPUT_STALL_BLOCKS {
+            // Output-side heartbeat (see OUTPUT_STALL_BLOCKS): blocks
+            // only run while capture delivers, so a pulse counter that
+            // stops moving here means the output callback went silent
+            // while the microphone is still alive.
+            let pulses = output_pulses.load(Ordering::Relaxed);
+            if pulses == last_output_pulses {
+                output_idle_blocks = output_idle_blocks.saturating_add(1);
+                if output_idle_blocks >= OUTPUT_STALL_BLOCKS {
                     faulted.store(true, Ordering::Release);
                 }
             } else {
-                output_full_blocks = 0;
+                last_output_pulses = pulses;
+                output_idle_blocks = 0;
             }
         }
     }
@@ -553,5 +570,8 @@ unsafe extern "C" fn output_render_callback(
             *channel = value;
         }
     }
+    // Heartbeat for the worker's output-side stall watch (relaxed
+    // atomic add: real-time safe, like the capture frame counter).
+    context.pulses.fetch_add(1, Ordering::Relaxed);
     NO_ERR
 }
