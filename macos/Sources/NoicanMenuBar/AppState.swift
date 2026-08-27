@@ -608,20 +608,33 @@ extension AppState {
     /// *live* facts at effect time — a rate-change rebuild can race a
     /// profile flip, and a device that meanwhile reached a
     /// 48 kHz-capable state must take the aggregate path instead of
-    /// failing rate validation. When the live rate list is unreadable
-    /// (the tri-state probe reads nil), the reducer's pre-flighted
-    /// snapshot is the fallback vote: failing open onto the aggregate
-    /// would poll `ensure48k` for two seconds and then fail a telephony
-    /// device the snapshot already approved for native capture. With an
-    /// unknown or non-native snapshot, Phase 0's fail-open behavior is
-    /// kept (the aggregate path's `ensure48k` produces the precise
-    /// refusal).
+    /// failing rate validation.
+    ///
+    /// When the advertised-rate list is unreadable (the tri-state probe
+    /// reads nil), the live *nominal rate* — readable independently —
+    /// outranks the reducer's possibly stale snapshot: a device sitting
+    /// at a rate the split transport cannot convert (48 kHz itself, or
+    /// a non-divisor like 44.1 kHz) goes to the aggregate path, whose
+    /// `ensure48k` returns immediately for a device already at 48 kHz
+    /// and produces the precise refusal otherwise. Only for a live
+    /// telephony-rate (or unreadable) nominal does the snapshot decide:
+    /// a `.nativeRate` pre-flight takes the split path — failing open
+    /// onto the aggregate would poll `ensure48k` for two seconds and
+    /// then fail a device the reducer already approved for native
+    /// capture — while unknown or non-native snapshots keep Phase 0's
+    /// fail-open behavior.
     private nonisolated static func shouldUseAggregate(
         for device: AudioObjectID,
         snapshot: CaptureSupport?
     ) -> Bool {
         if let advertises48k = AudioDeviceCatalog.advertisesSampleRate(device, 48_000) {
             return advertises48k
+        }
+        if let nominal = AudioDeviceCatalog.nominalSampleRate(device),
+           case .unsupported = CaptureSupport.classify(
+               supports48kHz: false, nominalRate: nominal
+           ) {
+            return true
         }
         if case .nativeRate = snapshot {
             return false
