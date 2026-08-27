@@ -78,6 +78,13 @@ public enum AppEvent: Hashable, Sendable {
     /// is showing, so the message clears (or updates) live as the user
     /// fixes the default output.
     case monitorTargetErrorChanged(String?)
+    /// The running microphone renegotiated its nominal sample rate
+    /// after the transport was built around the old one (Bluetooth
+    /// headsets flip between A2DP and HFP profiles). The shell only
+    /// dispatches this after confirming the rate actually differs from
+    /// the rate the transport captures at, so the reducer's job is to
+    /// rebuild the transport into the current mode.
+    case inputSampleRateChanged
     /// The engine-side feedback killswitch tripped: the worker already
     /// silenced the preview; the monitor device must be released and the
     /// user told why.

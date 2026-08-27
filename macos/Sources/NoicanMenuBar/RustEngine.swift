@@ -34,6 +34,25 @@ final class RustEngine: @unchecked Sendable {
         try requireSuccess(result)
     }
 
+    /// Starts the split transport for a microphone that cannot run at
+    /// the 48 kHz engine rate (issue #7): the microphone is captured
+    /// natively at `captureRate` (its current nominal rate; must be an
+    /// integer divisor of 48 kHz — Bluetooth telephony profiles) and
+    /// resampled to 48 kHz inside the transport, with clock drift
+    /// between the two devices compensated there. No Aggregate Device
+    /// is involved.
+    func startNative(
+        inputDevice: AudioObjectID,
+        virtualOutput: AudioObjectID,
+        captureRate: Double,
+        model: String
+    ) throws {
+        let result = model.withCString { id in
+            noican_engine_start_native(handle, inputDevice, virtualOutput, captureRate, id)
+        }
+        try requireSuccess(result)
+    }
+
     func stop() {
         noican_engine_stop(handle)
     }

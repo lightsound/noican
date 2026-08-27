@@ -45,6 +45,8 @@ public enum AppReducer {
             return modelSwitchCompleted(state, error)
         case let .devicesChanged(inputs, allInputUIDs, isVirtualOutputPresent):
             return devicesChanged(state, inputs, allInputUIDs, isVirtualOutputPresent)
+        case .inputSampleRateChanged:
+            return inputSampleRateChanged(state)
         case let .monitorTargetErrorChanged(reason):
             return monitorTargetErrorChanged(state, reason)
         case .monitorTripped:
@@ -464,6 +466,26 @@ extension AppReducer {
         return (state, [])
     }
 
+    /// The running microphone's nominal rate changed under the transport
+    /// (Bluetooth A2DP ↔ HFP renegotiation): the transport captures at
+    /// the rate fixed at start time, so rebuild it into the current mode
+    /// around the new rate — the same automatic recovery a live
+    /// microphone switch performs. The shell pre-filters spurious
+    /// notifications (same rate) and the busy machine serializes
+    /// overlapping rebuilds, so this cannot storm.
+    private static func inputSampleRateChanged(
+        _ state: AppModel
+    ) -> (state: AppModel, effects: [AppEffect]) {
+        guard state.mode != .off, !state.isBusy, state.liveSession != nil else {
+            return (state, [])
+        }
+        return startTransition(
+            state,
+            monitor: state.mode == .preview,
+            revertInputUID: nil
+        )
+    }
+
     /// Maintains a shown refusal message only: once a Preview attempt was
     /// refused, the shell re-samples the pre-flight so the message clears
     /// (or updates) live as the user fixes the default output.
@@ -641,11 +663,15 @@ extension AppReducer {
     /// Why `device` cannot serve as the engine's microphone, or nil when
     /// it can. Decided from the snapshot taken at device-refresh time —
     /// no Core Audio call, so it is safe before any transition.
+    /// Telephony-rate devices (Bluetooth headset microphones) are *not*
+    /// refused: the transport captures them natively and resamples
+    /// (issue #7). Only rates that cannot reach 48 kHz by an integer
+    /// factor remain unusable.
     private static func capabilityError(of device: InputDevice) -> String? {
-        guard device.supports48kHz else {
-            return "The microphone \"\(device.name)\" can't run at 48 kHz "
-                + "(Bluetooth headset mics use telephony rates) — choose another microphone."
+        guard case let .unsupported(hertz) = device.capture else {
+            return nil
         }
-        return nil
+        return "The microphone \"\(device.name)\" runs at \(hertz) Hz, which Noican "
+            + "can't resample to the 48 kHz engine rate — choose another microphone."
     }
 }

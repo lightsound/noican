@@ -62,10 +62,11 @@ struct StartStopTests {
 
     @Test("Pre-flight failures settle synchronously, without a busy round-trip")
     func preflightFailures() {
-        // Incapable microphone.
-        let incapable = step(readyModel(selectedInputUID: bluetoothMic.uid), tap(.on))
+        // Incapable microphone (a rate no integer factor reaches 48 kHz
+        // from — telephony-rate Bluetooth microphones are accepted now).
+        let incapable = step(readyModel(selectedInputUID: unsupportedMic.uid), tap(.on))
         #expect(!incapable.state.isBusy)
-        #expect(incapable.state.engineErrorMessage?.contains("can't run at 48 kHz") == true)
+        #expect(incapable.state.engineErrorMessage?.contains("can't resample") == true)
         #expect(incapable.effects == [.stopEngine])
 
         // Missing virtual output.
@@ -370,17 +371,17 @@ struct MicrophoneTests {
     @Test("An incapable microphone is refused in place while running")
     func incapableRefusedInPlace() {
         let running = runningModel()
-        let (state, effects) = step(running, .microphoneSelected(bluetoothMic.uid))
+        let (state, effects) = step(running, .microphoneSelected(unsupportedMic.uid))
         #expect(effects.isEmpty, "the engine keeps running uninterrupted")
         #expect(state.machine == running.machine)
         #expect(state.selectedInputUID == builtInMic.uid, "the checkmark returns")
-        #expect(state.messages.microphoneError?.contains("can't run at 48 kHz") == true)
+        #expect(state.messages.microphoneError?.contains("can't resample") == true)
     }
 
     @Test("Re-clicking the selected microphone acknowledges a shown refusal")
     func sameSelectionClearsRefusal() {
         let running = runningModel()
-        let refused = drive(running, [.microphoneSelected(bluetoothMic.uid)])
+        let refused = drive(running, [.microphoneSelected(unsupportedMic.uid)])
         #expect(refused.messages.microphoneError != nil)
         #expect(refused.selectedInputUID == builtInMic.uid)
 

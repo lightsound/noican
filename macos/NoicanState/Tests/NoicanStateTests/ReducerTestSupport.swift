@@ -2,14 +2,21 @@
 
 // MARK: - Shared fixtures and drivers for the reducer test suites
 
-let builtInMic = InputDevice(uid: "builtin", name: "MacBook Pro Microphone", supports48kHz: true)
-let usbMic = InputDevice(uid: "usb", name: "USB Microphone", supports48kHz: true)
-let bluetoothMic = InputDevice(uid: "bt", name: "AirPods", supports48kHz: false)
+let builtInMic = InputDevice(uid: "builtin", name: "MacBook Pro Microphone", capture: .engineRate)
+let usbMic = InputDevice(uid: "usb", name: "USB Microphone", capture: .engineRate)
+/// A telephony-profile Bluetooth headset microphone: selectable since
+/// issue #7 (captured natively at 16 kHz and resampled in the transport).
+let bluetoothMic = InputDevice(uid: "bt", name: "AirPods", capture: .nativeRate(hertz: 16_000))
+/// A device whose rate cannot reach 48 kHz by an integer factor — the
+/// remaining refusal case.
+let unsupportedMic = InputDevice(
+    uid: "odd", name: "Legacy 44.1 kHz Interface", capture: .unsupported(hertz: 44_100)
+)
 
 /// A ready-to-start model: engine available, devices present, defaults
 /// selected — the state right after launch on a healthy machine.
 func readyModel(
-    devices: [InputDevice] = [builtInMic, usbMic, bluetoothMic],
+    devices: [InputDevice] = [builtInMic, usbMic, bluetoothMic, unsupportedMic],
     selectedInputUID: String = builtInMic.uid,
     selectedModelID: String = "fastenhancer-b"
 ) -> AppModel {

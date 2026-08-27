@@ -75,8 +75,10 @@ final class AggregateDevice: @unchecked Sendable {
             return
         }
         guard AudioDeviceCatalog.supportsSampleRate(device.id, target) else {
-            // Typical case: Bluetooth headset microphones (8/16/24 kHz
-            // telephony profiles). Phase 0 requires a 48 kHz-capable input.
+            // Defensive only: microphones that cannot run at 48 kHz
+            // (Bluetooth telephony profiles) are routed to the split
+            // native-capture transport by the control plane (issue #7)
+            // and never reach the aggregate path.
             throw CoreAudioControlError(
                 operation: "The \(role) cannot run at 48 kHz",
                 status: kAudioDeviceUnsupportedFormatError

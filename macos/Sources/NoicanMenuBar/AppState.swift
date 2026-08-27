@@ -60,6 +60,19 @@ final class AppState: ObservableObject {
     /// monitor enable settles; always removed when the monitor disarms
     /// (`syncMonitorSafetyObservation`).
     private var monitorSafetyListener: (device: AudioObjectID, block: AudioObjectPropertyListenerBlock)?
+    /// Rate the running transport captures at when the native-capture
+    /// (split) path is active, or nil on the 48 kHz aggregate path.
+    /// Recorded by the start effect and used as the baseline the
+    /// nominal-rate listener compares against.
+    private var activeCaptureRate: Double?
+    /// Watches the running session's microphone for nominal-rate changes
+    /// while the native-capture path is active: Bluetooth headsets
+    /// renegotiate between A2DP and HFP profiles, and the split
+    /// transport captures at the rate fixed at start time, so a change
+    /// means the transport must be rebuilt. Registered when a
+    /// native-capture start settles; always removed when the session
+    /// ends (`syncInputRateObservation`).
+    private var inputRateListener: (device: AudioObjectID, block: AudioObjectPropertyListenerBlock)?
 
     init() {
         var initialPhase = EnginePhase.off
@@ -148,6 +161,7 @@ final class AppState: ObservableObject {
         }
         syncFaultPolling()
         syncMonitorSafetyObservation()
+        syncInputRateObservation()
     }
 
     private func perform(_ effect: AppEffect) {
@@ -185,16 +199,40 @@ final class AppState: ObservableObject {
         }
         let aggregate = self.aggregate
         let modelID = attempt.modelID
+        // Transport shape: 48 kHz-capable microphones keep the original
+        // aggregate path unchanged; telephony-rate devices (Bluetooth
+        // headsets) are captured natively through the split transport
+        // and resampled inside it (issue #7). Decided from the same
+        // snapshot the reducer pre-flighted.
+        let selected = model.inputDevices.first { $0.uid == attempt.inputUID }
+        let needsNativeCapture = selected.map(Self.isNativeCapture) ?? false
         // Detached: aggregate creation polls the device until it is alive
         // (up to ~1.5 s) and engine start may download weights — neither
         // may block the main actor. The busy machine state keeps this the
         // only operation touching `aggregate`/`engine` until it finishes.
         Task.detached {
+            var captureRate: Double?
             let result = Result {
-                let aggregateID = try aggregate.create(input: input, virtualOutput: virtualOutput)
-                try engine.start(aggregateDevice: aggregateID, model: modelID)
+                if needsNativeCapture {
+                    // The effective rate settles when capture starts
+                    // (Bluetooth renegotiates profiles), so read it as
+                    // late as possible; the Rust side validates it.
+                    let rate = AudioDeviceCatalog.nominalSampleRate(input.id) ?? 0
+                    captureRate = rate
+                    try engine.startNative(
+                        inputDevice: input.id,
+                        virtualOutput: virtualOutput.id,
+                        captureRate: rate,
+                        model: modelID
+                    )
+                } else {
+                    let aggregateID = try aggregate.create(
+                        input: input, virtualOutput: virtualOutput
+                    )
+                    try engine.start(aggregateDevice: aggregateID, model: modelID)
+                }
             }
-            await self.finish(.startCompleted(error: result.errorMessage))
+            await self.finishStart(captureRate: captureRate, error: result.errorMessage)
         }
     }
 
@@ -327,7 +365,10 @@ final class AppState: ObservableObject {
                     InputDevice(
                         uid: device.uid,
                         name: device.name,
-                        supports48kHz: AudioDeviceCatalog.supportsSampleRate(device.id, 48_000)
+                        capture: CaptureSupport.classify(
+                            supports48kHz: AudioDeviceCatalog.supportsSampleRate(device.id, 48_000),
+                            nominalRate: AudioDeviceCatalog.nominalSampleRate(device.id) ?? 0
+                        )
                     )
                 }
             dispatch(.devicesChanged(
@@ -550,6 +591,85 @@ extension AppState {
         AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyDataSource,
             mScope: kAudioObjectPropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+    }
+
+    /// Whether the device takes the native-capture (split) path.
+    private static func isNativeCapture(_ device: InputDevice) -> Bool {
+        if case .nativeRate = device.capture {
+            return true
+        }
+        return false
+    }
+
+    /// Completion entry point for start effects: records the capture
+    /// rate the split transport was built around (nil on the aggregate
+    /// path or on failure) as the baseline for the nominal-rate
+    /// listener, then dispatches the outcome.
+    private func finishStart(captureRate: Double?, error: String?) {
+        activeCaptureRate = error == nil ? captureRate : nil
+        dispatch(.startCompleted(error: error))
+    }
+
+    /// Keeps the nominal-rate listener in lockstep with the settled
+    /// machine state: registered on the session's microphone when a
+    /// native-capture start settles (`activeCaptureRate` is the split
+    /// path's marker), and always removed the moment the session ends —
+    /// the 48 kHz aggregate path never registers one, so its behavior
+    /// is unchanged. Bluetooth headsets renegotiate profiles
+    /// (A2DP ↔ HFP), and the split transport captures at the rate fixed
+    /// at start time, so a live change must rebuild the transport.
+    private func syncInputRateObservation() {
+        if let session = model.liveSession,
+           activeCaptureRate != nil,
+           let device = allDevices.first(where: { $0.uid == session.inputUID }) {
+            guard inputRateListener == nil else {
+                return
+            }
+            let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+                // Delivered on the main queue, which is the main actor.
+                MainActor.assumeIsolated {
+                    self?.checkInputRate()
+                }
+            }
+            var address = Self.nominalSampleRateAddress
+            _ = AudioObjectAddPropertyListenerBlock(device.id, &address, DispatchQueue.main, block)
+            inputRateListener = (device.id, block)
+        } else if let listener = inputRateListener {
+            var address = Self.nominalSampleRateAddress
+            _ = AudioObjectRemovePropertyListenerBlock(
+                listener.device,
+                &address,
+                DispatchQueue.main,
+                listener.block
+            )
+            inputRateListener = nil
+        }
+    }
+
+    /// Re-reads the running microphone's nominal rate and rebuilds the
+    /// transport (via the reducer) when it no longer matches the rate
+    /// the transport was started with. Comparing against the recorded
+    /// baseline filters spurious notifications; the busy machine
+    /// serializes overlapping rebuilds.
+    private func checkInputRate() {
+        guard
+            let expected = activeCaptureRate,
+            !model.isBusy, let session = model.liveSession,
+            let device = allDevices.first(where: { $0.uid == session.inputUID }),
+            let rate = AudioDeviceCatalog.nominalSampleRate(device.id),
+            abs(rate - expected) > 0.5
+        else {
+            return
+        }
+        dispatch(.inputSampleRateChanged)
+    }
+
+    private static var nominalSampleRateAddress: AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
     }
