@@ -28,8 +28,9 @@ final class AppState: ObservableObject {
     let models = RustEngine.models()
 
     /// Model selected on first launch (also labeled "Default" in the
-    /// model list).
-    static let defaultModelID = "fastenhancer-b"
+    /// model list, and the target of the Balanced quality preset —
+    /// nonisolated so the preset table can reference it).
+    nonisolated static let defaultModelID = "fastenhancer-b"
 
     /// `UserDefaults` keys for the persisted preferences. Only picker
     /// state is persisted (microphone UID, model id, strength) — never
