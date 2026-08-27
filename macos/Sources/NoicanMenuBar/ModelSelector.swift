@@ -54,24 +54,29 @@ struct ModelSelector: View {
         HoverDetailRow(
             model: selected,
             isBusy: isBusy,
-            action: { isExpanded = true }
-        ) {
-            HStack(spacing: 8) {
-                Text(selected?.displayName ?? "Select a model")
-                    .font(.callout)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 0)
-                if let tagline = selected?.tagline, !tagline.isEmpty {
-                    Text(tagline)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+            action: { isExpanded = true },
+            label: {
+                collapsedLabel
             }
+        )
+    }
+
+    private var collapsedLabel: some View {
+        HStack(spacing: 8) {
+            Text(selected?.displayName ?? "Select a model")
+                .font(.callout)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
+            if let tagline = selected?.tagline, !tagline.isEmpty {
+                Text(tagline)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -89,25 +94,30 @@ private struct ModelRow: View {
         HoverDetailRow(
             model: model,
             isBusy: isBusy || model.needsEnrollment,
-            action: select
-        ) {
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
-                    .opacity(isSelected ? 1 : 0)
-                Text(model.displayName)
-                    .font(.callout)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 0)
-                Text(model.needsEnrollment ? "requires enrollment" : model.tagline)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
+            action: select,
+            label: {
+                rowLabel
             }
-            .opacity(model.needsEnrollment ? 0.5 : 1)
+        )
+    }
+
+    private var rowLabel: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+                .opacity(isSelected ? 1 : 0)
+            Text(model.displayName)
+                .font(.callout)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
+            Text(model.needsEnrollment ? "requires enrollment" : model.tagline)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
         }
+        .opacity(model.needsEnrollment ? 0.5 : 1)
     }
 }
 
