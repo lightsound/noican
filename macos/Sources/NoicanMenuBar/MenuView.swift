@@ -277,17 +277,17 @@ struct MenuView: View {
                 // and signature — see docs/macos-hardware-test.md).
                 // A checkbox, not a switch: this is a secondary setting
                 // in a utility footer, and macOS reserves the prominent
-                // switch style for primary states.
+                // switch style for primary states. Deliberately not
+                // disabled while a registration attempt is in flight —
+                // the reducer's serialization already ignores such
+                // clicks, and the disabled dimming made the label
+                // flicker gray on every click.
                 Toggle("Start at login", isOn: Binding(
                     get: { model.isLaunchAtLoginEnabled },
                     set: { state.setLaunchAtLogin($0) }
                 ))
                 .toggleStyle(.checkbox)
                 .font(.callout)
-                // One registration attempt at a time: the reducer ignores
-                // flips while one is in flight, so reflect that here
-                // instead of letting the switch move and snap back.
-                .disabled(model.isLaunchAtLoginBusy)
                 Spacer(minLength: 0)
                 Button("Quit") {
                     NSApplication.shared.terminate(nil)
