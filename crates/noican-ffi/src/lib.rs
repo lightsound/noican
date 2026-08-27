@@ -32,7 +32,7 @@ use std::{
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
 
-use noican_core::{Stage, StagePublisher, SwitchingEngine};
+use noican_core::{IntensityControl, Stage, StagePublisher, SwitchingEngine};
 use noican_coreaudio::{Runtime, StreamLevels, WORKER_BLOCK_SAMPLES, monitor::MonitorState};
 use noican_models::{CatalogEntry, ModelSpec, StageOptions};
 
@@ -67,6 +67,13 @@ struct EngineHandle {
     /// between off and playing, the worker's feedback guard moves it to
     /// tripped, and it reads off whenever no runtime is up.
     monitor_state: Arc<AtomicI32>,
+    /// The dry/wet ("strength") control shared with each runtime's
+    /// [`SwitchingEngine`]. One atomic, kept outside the control mutex:
+    /// slider moves apply instantly without waiting on slow control work
+    /// and never rebuild the engine. Owned by the handle (not the
+    /// runtime) so the value set while stopped carries into the next
+    /// start.
+    intensity: IntensityControl,
 }
 
 fn default_models_dir() -> PathBuf {
@@ -110,6 +117,7 @@ pub unsafe extern "C" fn noican_engine_create(models_directory: *const c_char) -
         }),
         levels: Arc::new(StreamLevels::new()),
         monitor_state: Arc::new(AtomicI32::new(MonitorState::Off.as_raw())),
+        intensity: IntensityControl::default(),
     });
     Box::into_raw(handle).cast()
 }
@@ -175,10 +183,11 @@ pub unsafe extern "C" fn noican_engine_start(
     // Slow work, unlocked: download/construct the stage, start the runtime.
     let levels = Arc::clone(&handle.levels);
     let monitor_state = Arc::clone(&handle.monitor_state);
+    let intensity = handle.intensity.clone();
     let built = guard_panics(&model, || {
         let stage = prepare_stage(&models_dir, &model)?;
         let (publisher, engine) =
-            SwitchingEngine::new(stage, SWITCH_FADE_SAMPLES, WORKER_BLOCK_SAMPLES)
+            SwitchingEngine::new(stage, SWITCH_FADE_SAMPLES, WORKER_BLOCK_SAMPLES, intensity)
                 .map_err(|error| error.to_string())?;
         let runtime = Runtime::start(aggregate_device, engine, levels, monitor_state)
             .map_err(|error| error.to_string())?;
@@ -544,6 +553,46 @@ pub unsafe extern "C" fn noican_engine_output_level(handle: *const c_void) -> f3
     handle.levels.output()
 }
 
+/// Sets the dry/wet intensity ("strength"): 1.0 is fully processed
+/// output, 0.0 is the raw microphone, values between blend the two with
+/// the dry path delay-compensated by the active model's reported latency
+/// (so a partial mix does not comb-filter).
+///
+/// One atomic store — never blocks, never rebuilds the engine, safe at
+/// UI slider rates and while stopped (the value carries into the next
+/// start). Out-of-range values are clamped; non-finite values are
+/// ignored. The same mix feeds the virtual microphone and the preview
+/// monitor. Returns 0, or -1 for a null handle.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_engine_set_intensity(handle: *mut c_void, intensity: f32) -> i32 {
+    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+        return FAILURE;
+    };
+    handle.intensity.set(intensity);
+    SUCCESS
+}
+
+/// Reads the current dry/wet intensity (0.0–1.0; 1.0 for a null handle,
+/// matching the default).
+///
+/// One atomic load — never blocks, regardless of what the control plane
+/// is doing.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_engine_intensity(handle: *const c_void) -> f32 {
+    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+        return 1.0;
+    };
+    handle.intensity.get()
+}
+
 /// Copies the latest control-plane error as UTF-8.
 ///
 /// Returns the required byte count including the terminating NUL.
@@ -889,6 +938,44 @@ mod tests {
         }
         #[cfg(not(target_os = "macos"))]
         assert!(required > 0, "portable builds always refuse");
+    }
+
+    #[test]
+    fn intensity_defaults_to_full_clamps_and_round_trips() {
+        let handle = unsafe { noican_engine_create(ptr::null()) };
+        assert!(!handle.is_null());
+        assert!((unsafe { noican_engine_intensity(handle) } - 1.0).abs() < f32::EPSILON);
+        assert_eq!(unsafe { noican_engine_set_intensity(handle, 0.3) }, SUCCESS);
+        assert!((unsafe { noican_engine_intensity(handle) } - 0.3).abs() < f32::EPSILON);
+        // Out-of-range values clamp; non-finite values are ignored.
+        assert_eq!(unsafe { noican_engine_set_intensity(handle, 5.0) }, SUCCESS);
+        assert!((unsafe { noican_engine_intensity(handle) } - 1.0).abs() < f32::EPSILON);
+        assert_eq!(unsafe { noican_engine_set_intensity(handle, -1.0) }, SUCCESS);
+        assert!(unsafe { noican_engine_intensity(handle) }.abs() < f32::EPSILON);
+        assert_eq!(
+            unsafe { noican_engine_set_intensity(handle, f32::NAN) },
+            SUCCESS
+        );
+        assert!(unsafe { noican_engine_intensity(handle) }.abs() < f32::EPSILON);
+        unsafe { noican_engine_destroy(handle) };
+    }
+
+    #[test]
+    fn intensity_calls_are_null_safe_and_value_survives_while_stopped() {
+        // Null handles: setter fails cleanly, getter reads the default.
+        assert_eq!(
+            unsafe { noican_engine_set_intensity(ptr::null_mut(), 0.5) },
+            FAILURE
+        );
+        assert!((unsafe { noican_engine_intensity(ptr::null()) } - 1.0).abs() < f32::EPSILON);
+        // The value is owned by the handle, not a runtime: setting it
+        // while stopped works and persists (it seeds the next start).
+        let handle = unsafe { noican_engine_create(ptr::null()) };
+        assert!(!handle.is_null());
+        assert_eq!(unsafe { noican_engine_set_intensity(handle, 0.7) }, SUCCESS);
+        unsafe { noican_engine_stop(handle) };
+        assert!((unsafe { noican_engine_intensity(handle) } - 0.7).abs() < f32::EPSILON);
+        unsafe { noican_engine_destroy(handle) };
     }
 
     #[test]
