@@ -292,7 +292,7 @@ struct MenuView: View {
                 .keyboardShortcut("q")
             }
             if let message = model.messages.launchAtLoginError {
-                Text("Could not update the login item: \(message)")
+                Text(message)
                     .font(.caption2)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)

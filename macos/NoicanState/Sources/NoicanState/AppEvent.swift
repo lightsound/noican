@@ -47,8 +47,10 @@ public enum AppEvent: Hashable, Sendable {
     /// `AppEffect.setLaunchAtLogin` finished. `isEnabled` is the real
     /// `SMAppService` status re-read after the attempt (registration
     /// depends on the app's location and signature, so the outcome —
-    /// not the request — is what the toggle must show), and `error`
-    /// renders under the toggle when the attempt failed.
+    /// not the request — is what the toggle must show; registered but
+    /// pending the user's approval counts as on), and `error` renders
+    /// under the toggle when something needs the user's attention — a
+    /// failure reason or the pending-approval notice.
     case launchAtLoginChangeCompleted(isEnabled: Bool, error: String?)
 
     // MARK: Environment observations

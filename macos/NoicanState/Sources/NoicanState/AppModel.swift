@@ -117,11 +117,13 @@ public struct MessageSlots: Hashable, Sendable {
     /// Cleared by the next pick and by any engine teardown (the message
     /// would describe a torn-down engine).
     public var modelError: String?
-    /// Why the last login-item registration attempt failed (development
-    /// builds outside /Applications commonly cannot register), shown
-    /// under the toggle — which the completion event has already moved
-    /// back to the real `SMAppService` status. Cleared by the next
-    /// toggle attempt and by a later successful completion.
+    /// Login-item outcome that needs the user's attention, shown under
+    /// the toggle: why the last registration attempt failed (development
+    /// builds outside /Applications commonly cannot register), or the
+    /// pending-approval notice when macOS wants consent in System
+    /// Settings. The completion event that carries it has already moved
+    /// the toggle to the re-read real status. Cleared by the next toggle
+    /// attempt and by a later clean completion.
     public var launchAtLoginError: String?
 
     public init(

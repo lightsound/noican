@@ -82,7 +82,7 @@ final class AppState: ObservableObject {
         // stored microphone against the live list.
         restorePreferences()
         dispatch(.launchAtLoginStatusRead(
-            isEnabled: SMAppService.mainApp.status == .enabled
+            isEnabled: Self.isLoginItemRegistered(SMAppService.mainApp.status)
         ))
         registerDeviceListener()
         registerDefaultOutputListener()
@@ -224,15 +224,27 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Whether the login item counts as on for the toggle. Registered
+    /// but pending the user's consent (`requiresApproval` — common for
+    /// development builds and previously denied items) reads as on: the
+    /// registration itself succeeded and the remaining step lives in
+    /// System Settings, so snapping the toggle off would misreport a
+    /// successful attempt (and invite a pointless re-register loop).
+    private static func isLoginItemRegistered(_ status: SMAppService.Status) -> Bool {
+        status == .enabled || status == .requiresApproval
+    }
+
     /// Registers or unregisters the login item off the main actor
     /// (registration can touch the service database). The completion
     /// carries the *re-read* status: registration depends on the app's
     /// location and signature (development builds under dist/ commonly
     /// fail), so the outcome — not the request — is what the reducer
-    /// must show, together with the failure reason under the toggle.
+    /// must show, together with the reason under the toggle: a failure,
+    /// or the pending-approval notice when macOS wants the user's
+    /// consent in System Settings.
     private func applyLaunchAtLogin(_ enabled: Bool) {
         Task.detached {
-            var failure: String?
+            var message: String?
             do {
                 if enabled {
                     try SMAppService.mainApp.register()
@@ -240,10 +252,16 @@ final class AppState: ObservableObject {
                     try await SMAppService.mainApp.unregister()
                 }
             } catch {
-                failure = error.localizedDescription
+                message = "Could not update the login item: \(error.localizedDescription)"
             }
-            let isEnabled = SMAppService.mainApp.status == .enabled
-            await self.finish(.launchAtLoginChangeCompleted(isEnabled: isEnabled, error: failure))
+            let status = SMAppService.mainApp.status
+            if message == nil, enabled, status == .requiresApproval {
+                message = "Registered — allow Noican in System Settings › General › Login Items to finish enabling it."
+            }
+            await self.finish(.launchAtLoginChangeCompleted(
+                isEnabled: Self.isLoginItemRegistered(status),
+                error: message
+            ))
         }
     }
 
