@@ -143,19 +143,19 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
    - the Off / Preview / On mode control (sliding-pill segments),
    - the Microphone list showing every physical input with a checkmark
      on the selection,
-   - the Model selector (below the Microphone list): collapsed, one row
-     showing the selected model and its purpose tag (e.g. "balanced
-     default"); clicking expands **every registry stage** as rows —
-     Passthrough, FastEnhancer T/B/S/M/L, DPDFNet2, DPDFNet8,
-     DeepFilterNet3, UL-UNAS, Hush, and TSE Conv-TasNet 48k disabled as
-     "requires enrollment". Hovering any row (including the collapsed
-     one) pops the model's profile card out beside the menu after a
-     short delay: name, tag, four dot ratings (Noise removal / Voice
-     quality / Responsiveness / Efficiency, all "more is better"), and
-     the raw facts (native rate, measured delay, size). The card must
-     follow the hovered row, disappear on leave, and — critically —
-     hovering must never close the menu popover itself. Picking a row
-     selects the model and collapses the list.
+   - the Model selector (below the Microphone list): **every registry
+     stage** as always-visible rows with a checkmark on the selection
+     and a trailing purpose tag (e.g. "balanced default") — Passthrough,
+     FastEnhancer T/B/S/M/L, DPDFNet2, DPDFNet8, DeepFilterNet3,
+     UL-UNAS, Hush, and TSE Conv-TasNet 48k disabled as "requires
+     enrollment". Hovering a row pops the model's profile card out
+     beside the menu after a short delay: name, tag, four dot ratings
+     (Noise removal / Voice quality / Responsiveness / Efficiency, all
+     "more is better"), and the raw facts (native rate, measured delay,
+     size). Once up, the card must **stay up while the pointer moves
+     between rows, swapping only its content** (no per-row blink), hide
+     shortly after the pointer leaves the rows, and — critically —
+     hovering must never close the menu popover itself.
    The monitoring section (level bars) must be absent while the mode is
    Off and appear while the engine runs.
 4. Select a physical microphone and `FastEnhancer-B 48k`.

@@ -179,8 +179,8 @@ struct MenuView: View {
                 // User picks route through selectModel; programmatic
                 // reverts write the reducer state directly and must not
                 // re-enter the apply path (they would wipe the failure
-                // message they accompany). Collapsed by default; hover
-                // any row for the model's profile card.
+                // message they accompany). Hover any row for the model's
+                // profile card.
                 ModelSelector(
                     models: state.models,
                     selectedID: model.selectedModelID,
