@@ -84,6 +84,10 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The BlackHole submodule is only needed to build the virtual
+          # driver, which only the macOS job does.
+          submodules: true
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.98.0
@@ -108,7 +112,16 @@ jobs:
         run: cargo test --workspace --all-features --locked
       - name: Build and ad-hoc sign the menu bar app (release, warnings as errors)
         run: bash scripts/build-macos-app.sh
+      - name: Build and ad-hoc sign the virtual driver (BlackHole fork)
+        # Compile check only: coreaudiod loads Developer-ID-signed drivers,
+        # so the installable artifact is built on a machine with the
+        # identity (NOICAN_CODESIGN_IDENTITY), not in CI.
+        run: bash scripts/build-driver.sh
       - uses: actions/upload-artifact@v4
         with:
           name: noican-macos-arm64
           path: dist/Noican.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noican-driver-universal-adhoc
+          path: dist/Noican.driver
