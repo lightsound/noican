@@ -40,6 +40,16 @@ ICON="Noican.icns"
 CHANNELS=2
 SAMPLE_RATES="44100,48000"
 DRIVER_VERSION="${NOICAN_DRIVER_VERSION:-0.1.0}"
+# CFPlugIn factory UUID: must be unique per plug-in, but upstream hardcodes
+# one in BlackHole.plist, shared by every unpatched fork (stock BlackHole,
+# JoyCast, ...); coexisting forks then trigger harmless but noisy
+# duplicate-UUID warnings during coreaudiod's bundle scan. The build
+# rewrites the bundle's Info.plist to this Noican-unique UUID (generated
+# once for this project). The HAL plug-in *type* UUID is Apple's and never
+# changes; the factory function name stays BlackHole_Create.
+UPSTREAM_FACTORY_UUID="e395c745-4eea-4d94-bb92-46224221047c"
+NOICAN_FACTORY_UUID="16ccdad9-e4f7-4cd4-8e81-520694b78514"
+HAL_PLUGIN_TYPE_UUID="443ABAB8-E7B3-491A-B985-BEB9187030DB"
 
 DIST="$ROOT/dist"
 BUILD_DIR="$DIST/driver-build"
@@ -63,23 +73,26 @@ fi
 # with spaces inside a single token (upstream README, "Customizing
 # BlackHole"). kLatency_Frame_Size is deliberately absent: v0.7.1 defines
 # it without an #ifndef guard, so passing it would redefine the macro.
-PREPROCESSOR_DEFS="kDriver_Name=\\\"$DEVICE_UID_BASE\\\""
-PREPROCESSOR_DEFS+=" kHas_Driver_Name_Format=false"
-PREPROCESSOR_DEFS+=" kDevice_Name=\\\"${DEVICE_NAME// /\\ }\\\""
-PREPROCESSOR_DEFS+=" kDevice2_Name=\\\"${DEVICE2_NAME// /\\ }\\\""
-PREPROCESSOR_DEFS+=" kPlugIn_BundleID=\\\"$BUNDLE_ID\\\""
-PREPROCESSOR_DEFS+=" kPlugIn_Icon=\\\"$ICON\\\""
-PREPROCESSOR_DEFS+=" kManufacturer_Name=\\\"${MANUFACTURER_NAME// /\\ }\\\""
-PREPROCESSOR_DEFS+=" kNumber_Of_Channels=$CHANNELS"
-PREPROCESSOR_DEFS+=" kSampleRates='$SAMPLE_RATES'"
 # The primary device is the visible 2-in/2-out loopback; the mirror stays
 # hidden, exactly like stock BlackHole 2ch (explicit for documentation).
-PREPROCESSOR_DEFS+=" kDevice_IsHidden=false"
-PREPROCESSOR_DEFS+=" kDevice_HasInput=true"
-PREPROCESSOR_DEFS+=" kDevice_HasOutput=true"
-PREPROCESSOR_DEFS+=" kDevice2_IsHidden=true"
-PREPROCESSOR_DEFS+=" kDevice2_HasInput=true"
-PREPROCESSOR_DEFS+=" kDevice2_HasOutput=true"
+GCC_DEFS=(
+  "kDriver_Name=\\\"$DEVICE_UID_BASE\\\""
+  "kHas_Driver_Name_Format=false"
+  "kDevice_Name=\\\"${DEVICE_NAME// /\\ }\\\""
+  "kDevice2_Name=\\\"${DEVICE2_NAME// /\\ }\\\""
+  "kPlugIn_BundleID=\\\"$BUNDLE_ID\\\""
+  "kPlugIn_Icon=\\\"$ICON\\\""
+  "kManufacturer_Name=\\\"${MANUFACTURER_NAME// /\\ }\\\""
+  "kNumber_Of_Channels=$CHANNELS"
+  "kSampleRates='$SAMPLE_RATES'"
+  "kDevice_IsHidden=false"
+  "kDevice_HasInput=true"
+  "kDevice_HasOutput=true"
+  "kDevice2_IsHidden=true"
+  "kDevice2_HasInput=true"
+  "kDevice2_HasOutput=true"
+)
+PREPROCESSOR_DEFS="${GCC_DEFS[*]}"
 
 rm -rf "$BUILD_DIR" "$DRIVER"
 mkdir -p "$BUILD_DIR"
@@ -117,18 +130,10 @@ if [[ -f "$ROOT/macos/Resources/$ICON" ]]; then
   cp "$ROOT/macos/Resources/$ICON" "$RESOURCES/$ICON"
 fi
 
-# CFPlugIn factory UUIDs must be unique per plug-in, but upstream hardcodes
-# one in BlackHole.plist, so every unpatched BlackHole fork (stock BlackHole,
-# JoyCast, ...) ships the same UUID and coexisting forks trigger harmless but
-# noisy duplicate-UUID warnings during coreaudiod's bundle scan. Rewrite the
-# built bundle's Info.plist to a Noican-unique factory UUID (generated once
-# for this project). The factory *function* stays BlackHole_Create — the
-# UUID is plist-only metadata, so this is a bundle edit, not a source patch.
-# The Delete doubles as a guard: if an upstream bump ever changes the plist,
+# Rewrite the factory UUID (see the constant block above for why). This is
+# plist-only metadata — a bundle edit, not a source patch. The Delete
+# doubles as a guard: if an upstream bump ever changes the plist,
 # PlistBuddy fails here instead of silently shipping a stale rewrite.
-UPSTREAM_FACTORY_UUID="e395c745-4eea-4d94-bb92-46224221047c"
-NOICAN_FACTORY_UUID="16ccdad9-e4f7-4cd4-8e81-520694b78514"
-HAL_PLUGIN_TYPE_UUID="443ABAB8-E7B3-491A-B985-BEB9187030DB"
 /usr/libexec/PlistBuddy \
   -c "Delete :CFPlugInFactories:$UPSTREAM_FACTORY_UUID" \
   -c "Add :CFPlugInFactories:$NOICAN_FACTORY_UUID string BlackHole_Create" \
