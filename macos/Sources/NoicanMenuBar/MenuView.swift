@@ -202,6 +202,29 @@ struct MenuView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Strength")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Text(intensityLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                // Dry/wet mix applied inside the inference worker as one
+                // atomic value: dragging never rebuilds the engine and
+                // stays live during busy transitions, so the slider is
+                // deliberately not disabled with the pickers. Preview
+                // plays the same mix the virtual microphone receives.
+                Slider(value: Binding(
+                    get: { model.intensity },
+                    set: { state.setIntensity($0) }
+                ), in: 0...1)
+                .controlSize(.small)
+            }
         }
         .padding(.horizontal, contentPadding)
         .padding(.vertical, 10)
@@ -238,15 +261,38 @@ struct MenuView: View {
             : model.displayName
     }
 
+    /// Whole-percent strength readout next to the section label.
+    private var intensityLabel: String {
+        "\(Int((model.intensity * 100).rounded()))%"
+    }
+
     // Device hot-plug is followed automatically (AppState registers a
     // Core Audio device-list listener), so no manual refresh is needed.
     private var footer: some View {
-        HStack {
-            Spacer()
-            Button("Quit") {
-                NSApplication.shared.terminate(nil)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                // The toggle renders the settled/optimistic reducer state;
+                // a failed registration snaps it back with the reason
+                // shown below (registration depends on the app's location
+                // and signature — see docs/macos-hardware-test.md).
+                Toggle("Start at login", isOn: Binding(
+                    get: { model.isLaunchAtLoginEnabled },
+                    set: { state.setLaunchAtLogin($0) }
+                ))
+                .toggleStyle(.switch)
+                .font(.callout)
+                Spacer(minLength: 0)
+                Button("Quit") {
+                    NSApplication.shared.terminate(nil)
+                }
+                .keyboardShortcut("q")
             }
-            .keyboardShortcut("q")
+            if let message = model.messages.launchAtLoginError {
+                Text("Could not update the login item: \(message)")
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .controlSize(.small)
         .padding(.horizontal, contentPadding)

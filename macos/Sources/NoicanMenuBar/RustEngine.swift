@@ -106,6 +106,16 @@ final class RustEngine: @unchecked Sendable {
         noican_engine_output_level(handle)
     }
 
+    /// Publishes the dry/wet strength (0 = raw microphone, 1 = fully
+    /// processed; out-of-range values clamp, non-finite values are
+    /// ignored). One atomic store — never blocks, never rebuilds the
+    /// engine, safe at slider rates and while stopped (the value seeds
+    /// the next start). The same mix feeds the virtual microphone and
+    /// the preview monitor.
+    func setIntensity(_ value: Float) {
+        _ = noican_engine_set_intensity(handle, value)
+    }
+
     var isRunning: Bool {
         noican_engine_is_running(handle) != 0
     }
