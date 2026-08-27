@@ -177,30 +177,16 @@ struct MenuView: View {
                     .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
                 // User picks route through selectModel; programmatic
-                // reverts write the property directly and must not
+                // reverts write the reducer state directly and must not
                 // re-enter the apply path (they would wipe the failure
-                // message they accompany).
-                Picker("Model", selection: Binding(
-                    get: { model.selectedModelID },
-                    set: { state.selectModel($0) }
-                )) {
-                    ForEach(state.models) { entry in
-                        Text(modelLabel(entry))
-                            .tag(entry.id)
-                            // Enrollment-gated models (tse-48k) stay visible
-                            // but unselectable until the app grows an
-                            // enrollment flow.
-                            .selectionDisabled(entry.needsEnrollment)
-                    }
-                }
-                .labelsHidden()
-                .disabled(model.isBusy)
-                // Profile of the selected model, so the choice does not
-                // require knowing the model names (ratings and text come
-                // from the Rust registry, not the UI).
-                if let selected = state.models.first(where: { $0.id == model.selectedModelID }) {
-                    ModelTraitCard(model: selected)
-                }
+                // message they accompany). Collapsed by default; hover
+                // any row for the model's profile card.
+                ModelSelector(
+                    models: state.models,
+                    selectedID: model.selectedModelID,
+                    isBusy: model.isBusy,
+                    select: { state.selectModel($0) }
+                )
                 if let message = model.messages.modelError {
                     Text(message)
                         .font(.caption2)
@@ -259,17 +245,6 @@ struct MenuView: View {
                 }
             }
         }
-    }
-
-    /// Picker row: display name plus the registry's one-line purpose tag
-    /// (enrollment gating wins — it explains why the row is disabled).
-    private func modelLabel(_ model: ModelInfo) -> String {
-        if model.needsEnrollment {
-            return "\(model.displayName) — requires enrollment"
-        }
-        return model.tagline.isEmpty
-            ? model.displayName
-            : "\(model.displayName) — \(model.tagline)"
     }
 
     /// Whole-percent strength readout next to the section label.
