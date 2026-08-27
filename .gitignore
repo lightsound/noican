@@ -7,6 +7,9 @@
 # CLI batch-processing outputs
 /out
 
+# Build artifacts (dist/Noican.app, dist/Noican.driver)
+/dist
+
 # SwiftPM build directories
 .build/
 
