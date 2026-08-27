@@ -30,10 +30,10 @@ use std::{
 };
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicI32, Ordering};
 
 use noican_core::{Stage, StagePublisher, SwitchingEngine};
-use noican_coreaudio::{Runtime, StreamLevels, WORKER_BLOCK_SAMPLES};
+use noican_coreaudio::{Runtime, StreamLevels, WORKER_BLOCK_SAMPLES, monitor::MonitorState};
 use noican_models::{CatalogEntry, ModelSpec, StageOptions};
 
 const SUCCESS: i32 = 0;
@@ -60,11 +60,13 @@ struct EngineHandle {
     /// The worker resets it to silence on start and exit, so readers see
     /// 0 whenever the engine is stopped.
     levels: Arc<StreamLevels>,
-    /// Feedback-trip flag shared with each runtime's monitor. Kept
-    /// outside the control mutex for the same reason as `levels`: the UI
-    /// polls it at 20 Hz and must never wait on a slow monitor start.
-    /// Cleared by every monitor toggle and on runtime (re)start.
-    monitor_tripped: Arc<AtomicBool>,
+    /// The [`MonitorState`] cell shared with each runtime's monitor
+    /// control and inference worker. Kept outside the control mutex for
+    /// the same reason as `levels`: the UI polls it at 20 Hz and must
+    /// never wait on a slow monitor start. Monitor toggles move it
+    /// between off and playing, the worker's feedback guard moves it to
+    /// tripped, and it reads off whenever no runtime is up.
+    monitor_state: Arc<AtomicI32>,
 }
 
 fn default_models_dir() -> PathBuf {
@@ -107,7 +109,7 @@ pub unsafe extern "C" fn noican_engine_create(models_directory: *const c_char) -
             epoch: 0,
         }),
         levels: Arc::new(StreamLevels::new()),
-        monitor_tripped: Arc::new(AtomicBool::new(false)),
+        monitor_state: Arc::new(AtomicI32::new(MonitorState::Off.as_raw())),
     });
     Box::into_raw(handle).cast()
 }
@@ -172,13 +174,13 @@ pub unsafe extern "C" fn noican_engine_start(
 
     // Slow work, unlocked: download/construct the stage, start the runtime.
     let levels = Arc::clone(&handle.levels);
-    let monitor_tripped = Arc::clone(&handle.monitor_tripped);
+    let monitor_state = Arc::clone(&handle.monitor_state);
     let built = guard_panics(&model, || {
         let stage = prepare_stage(&models_dir, &model)?;
         let (publisher, engine) =
             SwitchingEngine::new(stage, SWITCH_FADE_SAMPLES, WORKER_BLOCK_SAMPLES)
                 .map_err(|error| error.to_string())?;
-        let runtime = Runtime::start(aggregate_device, engine, levels, monitor_tripped)
+        let runtime = Runtime::start(aggregate_device, engine, levels, monitor_state)
             .map_err(|error| error.to_string())?;
         Ok((publisher, runtime))
     });
@@ -338,7 +340,9 @@ pub unsafe extern "C" fn noican_engine_is_faulted(handle: *const c_void) -> i32 
 /// the control lock for the monitor start/stop transition — starting an
 /// output device can take a moment, so callers should serialize their own
 /// control calls behind a busy flag while a toggle is in flight (the
-/// level and trip getters stay lock-free and are always safe to poll).
+/// level and monitor-state getters stay lock-free and are always safe to
+/// poll). A toggle in either direction clears a pending feedback trip
+/// (see [`noican_engine_monitor_state`]).
 ///
 /// # Safety
 ///
@@ -397,29 +401,80 @@ pub unsafe extern "C" fn noican_monitor_target_error(
     }
 }
 
-/// Returns 1 while the preview self-monitor is playing, otherwise 0.
+/// Checks whether a *specific* output device may (still) receive the
+/// preview.
+///
+/// The same vetting as [`noican_monitor_target_error`], but against a
+/// caller-chosen device instead of the current default output.
+/// The UI runs it against the device the running monitor actually plays
+/// on (see [`noican_engine_monitor_device`]): after enable time the
+/// default output can move on while the monitor stays put, and a
+/// built-in device can flip its data source from the headphone jack to
+/// the internal speakers without any device-list or default-output
+/// notification — re-classifying the monitor's own device is what
+/// catches that. A vanished device is *not* reported here (unreadable
+/// properties fail open by policy); device loss is visible in the device
+/// list and is the caller's check.
+///
+/// Returns 0 when the device may receive the preview. Otherwise copies
+/// the human-readable refusal reason as UTF-8 and returns the required
+/// byte count including the terminating NUL.
+///
+/// # Safety
+///
+/// A non-null `buffer` must be writable for `capacity` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_monitor_device_error(
+    device: u32,
+    buffer: *mut c_char,
+    capacity: usize,
+) -> usize {
+    match noican_coreaudio::check_monitor_device(device) {
+        Ok(()) => 0,
+        Err(error) => unsafe { copy_string(&error.to_string(), buffer, capacity) },
+    }
+}
+
+/// Device ID the running preview monitor plays on, or 0 while no monitor
+/// AUHAL is up (stopped engine, preview off).
+///
+/// The target is resolved on the Rust side at enable time and stays
+/// fixed until the next toggle, so this is how the UI learns which
+/// device to watch for losing its safety
+/// (`noican_monitor_device_error`, device-list changes).
+///
+/// Reads the control mutex (never held across slow work), so it is meant
+/// for event-driven and low-rate callers — not the 20 Hz poll path.
 ///
 /// # Safety
 ///
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn noican_engine_is_monitoring(handle: *const c_void) -> i32 {
+pub unsafe extern "C" fn noican_engine_monitor_device(handle: *const c_void) -> u32 {
     let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
         return 0;
     };
     handle.state.lock().map_or(0, |state| {
-        i32::from(state.runtime.as_ref().is_some_and(Runtime::is_monitoring))
+        state
+            .runtime
+            .as_ref()
+            .and_then(Runtime::monitor_device)
+            .unwrap_or(0)
     })
 }
 
-/// Returns 1 when the feedback guard auto-stopped the preview tee
-/// (sustained near-clipping monitor output — the preview was feeding back
-/// into the microphone) since the last monitor toggle, otherwise 0.
+/// The preview monitor's state as one value.
 ///
-/// On 1, callers should disable the monitor (`noican_engine_set_monitor`
-/// with 0) to release the playback device and tell the user why; the
-/// meeting-facing path is unaffected. The flag clears on the next monitor
-/// toggle in either direction and on engine (re)start.
+/// 0 = off (no monitor AUHAL, including a stopped engine and a null
+/// handle), 1 = playing, 2 = tripped. The protocol lives in the
+/// [`MonitorState`] enum shared with the engine — including that
+/// *tripped* means the monitor AUHAL is still up but silenced (the
+/// feedback guard disarmed the tee), and that the next
+/// `noican_engine_set_monitor` call in either direction clears it
+/// (enable re-arms, disable tears down).
+///
+/// On 2, callers should disable the monitor to release the playback
+/// device and tell the user why; the meeting-facing path is unaffected.
 ///
 /// Reads one atomic without taking the control lock, so it never blocks —
 /// safe to poll at UI rates even while a monitor start is in progress.
@@ -428,11 +483,11 @@ pub unsafe extern "C" fn noican_engine_is_monitoring(handle: *const c_void) -> i
 ///
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn noican_engine_monitor_tripped(handle: *const c_void) -> i32 {
+pub unsafe extern "C" fn noican_engine_monitor_state(handle: *const c_void) -> i32 {
     let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
-        return 0;
+        return MonitorState::Off.as_raw();
     };
-    i32::from(handle.monitor_tripped.load(Ordering::Acquire))
+    MonitorState::from_raw(handle.monitor_state.load(Ordering::Acquire)).as_raw()
 }
 
 /// Heartbeat: total input frames delivered since the engine started.
@@ -722,18 +777,62 @@ mod tests {
     fn monitor_calls_are_safe_while_stopped() {
         let handle = unsafe { noican_engine_create(ptr::null()) };
         assert!(!handle.is_null());
-        assert_eq!(unsafe { noican_engine_is_monitoring(handle) }, 0);
+        assert_eq!(
+            unsafe { noican_engine_monitor_state(handle) },
+            MonitorState::Off.as_raw()
+        );
         // Disabling an already-off monitor is an idempotent no-op.
         assert_eq!(unsafe { noican_engine_set_monitor(handle, 0) }, SUCCESS);
-        // Enabling without a running engine fails with a clear reason.
+        assert_eq!(
+            unsafe { noican_engine_monitor_state(handle) },
+            MonitorState::Off.as_raw()
+        );
+        // Enabling without a running engine fails with a clear reason and
+        // leaves the state off.
         assert_eq!(unsafe { noican_engine_set_monitor(handle, 1) }, FAILURE);
         let error = read_string(|buffer, capacity| unsafe {
             noican_engine_last_error(handle, buffer, capacity)
         })
         .expect("enable failure records an error");
         assert!(error.contains("not running"), "unhelpful message: {error}");
-        assert_eq!(unsafe { noican_engine_is_monitoring(handle) }, 0);
-        assert_eq!(unsafe { noican_engine_monitor_tripped(handle) }, 0);
+        assert_eq!(
+            unsafe { noican_engine_monitor_state(handle) },
+            MonitorState::Off.as_raw()
+        );
+        unsafe { noican_engine_destroy(handle) };
+    }
+
+    #[test]
+    fn monitor_state_getter_is_null_safe_and_lock_free_under_state_changes() {
+        // Null handles read as off.
+        assert_eq!(
+            unsafe { noican_engine_monitor_state(ptr::null()) },
+            MonitorState::Off.as_raw()
+        );
+        // The getter reflects every protocol value written to the shared
+        // cell (as the monitor control and the worker's trip do), and
+        // maps unknown values back to off instead of leaking them.
+        let handle = unsafe { noican_engine_create(ptr::null()) };
+        assert!(!handle.is_null());
+        let engine = unsafe { &*handle.cast::<EngineHandle>() };
+        for state in [
+            MonitorState::Playing,
+            MonitorState::Tripped,
+            MonitorState::Off,
+        ] {
+            engine
+                .monitor_state
+                .store(state.as_raw(), Ordering::Release);
+            assert_eq!(
+                unsafe { noican_engine_monitor_state(handle) },
+                state.as_raw()
+            );
+        }
+        engine.monitor_state.store(99, Ordering::Release);
+        assert_eq!(
+            unsafe { noican_engine_monitor_state(handle) },
+            MonitorState::Off.as_raw()
+        );
         unsafe { noican_engine_destroy(handle) };
     }
 
@@ -759,6 +858,32 @@ mod tests {
         if required > 0 {
             let reason = read_string(|buffer, capacity| unsafe {
                 noican_monitor_target_error(buffer, capacity)
+            });
+            assert!(reason.is_some(), "nonzero result must yield a reason");
+        }
+        #[cfg(not(target_os = "macos"))]
+        assert!(required > 0, "portable builds always refuse");
+    }
+
+    #[test]
+    fn monitor_device_reads_zero_and_null_safe_while_stopped() {
+        let handle = unsafe { noican_engine_create(ptr::null()) };
+        assert!(!handle.is_null());
+        assert_eq!(unsafe { noican_engine_monitor_device(handle) }, 0);
+        assert_eq!(unsafe { noican_engine_monitor_device(ptr::null()) }, 0);
+        unsafe { noican_engine_destroy(handle) };
+    }
+
+    #[test]
+    fn monitor_device_check_is_null_safe_and_consistent() {
+        // Same contract as the default-output check: a null buffer only
+        // measures, and a nonzero result re-reads as a NUL-terminated
+        // reason string. Device 0 (kAudioObjectUnknown) has unreadable
+        // properties, which fail open on macOS by policy.
+        let required = unsafe { noican_monitor_device_error(0, ptr::null_mut(), 0) };
+        if required > 0 {
+            let reason = read_string(|buffer, capacity| unsafe {
+                noican_monitor_device_error(0, buffer, capacity)
             });
             assert!(reason.is_some(), "nonzero result must yield a reason");
         }

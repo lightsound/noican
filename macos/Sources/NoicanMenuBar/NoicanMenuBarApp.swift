@@ -1,4 +1,5 @@
 import AppKit
+import NoicanState
 import SwiftUI
 
 @main
@@ -9,7 +10,7 @@ struct NoicanMenuBarApp: App {
         MenuBarExtra {
             MenuView(state: state)
         } label: {
-            MenuBarIcon(mode: state.mode, isUnfulfilled: state.isModeUnfulfilled)
+            MenuBarIcon(mode: state.model.mode, isUnfulfilled: state.model.isModeUnfulfilled)
         }
         .menuBarExtraStyle(.window)
     }

@@ -15,7 +15,7 @@ use std::{
     ptr,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering},
     },
     thread::{self, JoinHandle},
 };
@@ -30,7 +30,7 @@ use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
 mod monitor;
 
 use monitor::MonitorControl;
-pub use monitor::check_monitor_target;
+pub use monitor::{check_monitor_device, check_monitor_target};
 
 type OSStatus = i32;
 type AudioUnit = *mut c_void;
@@ -348,10 +348,12 @@ impl Runtime {
     ///
     /// `levels` receives per-block input/output peak meters from the
     /// inference worker for the lifetime of this runtime; the worker
-    /// resets it to silence on start and on exit. `monitor_tripped` is
-    /// raised by the worker's feedback guard and cleared on every monitor
-    /// toggle; keeping it caller-owned lets the control plane read it
-    /// without any lock.
+    /// resets it to silence on start and on exit. `monitor_state` is the
+    /// shared [`crate::monitor::MonitorState`] cell: monitor toggles move
+    /// it between off and playing here, the worker's feedback guard moves
+    /// it to tripped, and keeping it caller-owned lets the control plane
+    /// poll it without any lock. It reads off whenever this runtime is
+    /// down (reset on start and by the stop path's disable).
     ///
     /// # Errors
     ///
@@ -362,7 +364,7 @@ impl Runtime {
         aggregate_device: u32,
         engine: SwitchingEngine,
         levels: Arc<StreamLevels>,
-        monitor_tripped: Arc<AtomicBool>,
+        monitor_state: Arc<AtomicI32>,
     ) -> Result<Self, CoreAudioError> {
         let samples_ready = Arc::new(DispatchSemaphore::new()?);
         let mut unit = AuhalUnit::create()?;
@@ -389,7 +391,7 @@ impl Runtime {
         unit.initialize()?;
 
         let workgroup = audio_workgroup(unit.raw())?;
-        let (monitor_control, tee) = monitor::monitor_pair(monitor_tripped);
+        let (monitor_control, tee) = monitor::monitor_pair(monitor_state);
         let shutdown = Arc::new(AtomicBool::new(false));
         let worker_shutdown = Arc::clone(&shutdown);
         let worker_fault = Arc::clone(&faulted);
@@ -508,13 +510,16 @@ impl Runtime {
         }
     }
 
-    /// Whether the monitor AUHAL is up. During a feedback trip the tee is
-    /// disarmed (the monitor renders silence) but the AUHAL stays up until
-    /// the next [`Runtime::set_monitor`] call, so this remains true
-    /// through that window.
+    /// Device the running preview monitor plays on (resolved and vetted
+    /// at enable time), or `None` while the monitor is down. The control
+    /// plane re-vets this device with [`check_monitor_device`] while the
+    /// preview plays: the safety decision made at enable time can be
+    /// invalidated later (headphone jack unplugged → the same built-in
+    /// device flips to the internal speakers) without the monitor
+    /// noticing.
     #[must_use]
-    pub const fn is_monitoring(&self) -> bool {
-        self.monitor.is_active()
+    pub fn monitor_device(&self) -> Option<u32> {
+        self.monitor.active_device()
     }
 }
 

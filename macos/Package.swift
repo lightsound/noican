@@ -10,6 +10,12 @@ let package = Package(
     products: [
         .executable(name: "NoicanMenuBar", targets: ["NoicanMenuBar"]),
     ],
+    dependencies: [
+        // The pure state machine (reducer + projections). A standalone
+        // package so its tests run without the Rust staticlib this
+        // executable links; see macos/NoicanState/Package.swift.
+        .package(path: "NoicanState"),
+    ],
     targets: [
         .target(
             name: "CNoican",
@@ -18,7 +24,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "NoicanMenuBar",
-            dependencies: ["CNoican"],
+            dependencies: [
+                "CNoican",
+                .product(name: "NoicanState", package: "NoicanState"),
+            ],
             path: "Sources/NoicanMenuBar",
             linkerSettings: [
                 .unsafeFlags([

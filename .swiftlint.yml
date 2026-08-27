@@ -2,6 +2,15 @@ strict: true
 
 included:
   - macos/Sources/NoicanMenuBar
+  - macos/NoicanState/Sources/NoicanState
+  - macos/NoicanState/Tests/NoicanStateTests
+
+# The reducer's event dispatch is one exhaustive switch by design (every
+# event visibly routed in one place); counting its cases as complexity
+# would punish exactly that shape. Non-switch branching keeps the default
+# thresholds.
+cyclomatic_complexity:
+  ignores_case_statements: true
 
 line_length:
   warning: 140

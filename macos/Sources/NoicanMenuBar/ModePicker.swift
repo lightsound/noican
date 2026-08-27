@@ -1,3 +1,4 @@
+import NoicanState
 import SwiftUI
 
 /// Custom three-segment mode control: a capsule track with a highlight
