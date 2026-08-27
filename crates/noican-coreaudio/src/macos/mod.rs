@@ -28,6 +28,7 @@ use crate::observe::StreamLevels;
 use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
 
 mod monitor;
+mod split;
 
 use monitor::MonitorControl;
 pub use monitor::{check_monitor_device, check_monitor_target};
@@ -51,8 +52,10 @@ const AUDIO_FORMAT_LINEAR_PCM: u32 = fourcc(*b"lpcm");
 
 const AUDIO_OUTPUT_UNIT_PROPERTY_CURRENT_DEVICE: u32 = 2_000;
 const AUDIO_OUTPUT_UNIT_PROPERTY_ENABLE_IO: u32 = 2_003;
+const AUDIO_OUTPUT_UNIT_PROPERTY_SET_INPUT_CALLBACK: u32 = 2_005;
 const AUDIO_OUTPUT_UNIT_PROPERTY_OS_WORKGROUP: u32 = 2_015;
 const AUDIO_UNIT_PROPERTY_STREAM_FORMAT: u32 = 8;
+const AUDIO_UNIT_PROPERTY_MAXIMUM_FRAMES_PER_SLICE: u32 = 14;
 const AUDIO_UNIT_PROPERTY_SET_RENDER_CALLBACK: u32 = 23;
 
 const AUDIO_UNIT_SCOPE_GLOBAL: u32 = 0;
@@ -275,24 +278,28 @@ impl Drop for AuhalUnit {
     }
 }
 
-/// Owns the heap-allocated [`CallbackContext`] during setup, reclaiming it
+/// Owns a heap-allocated callback context during setup, reclaiming it
 /// on any early error return (safe because the audio unit is never started
 /// on those paths, so no callback can observe the pointer).
-struct ContextGuard(*mut CallbackContext);
+struct ContextGuard<T>(*mut T);
 
-impl ContextGuard {
-    const fn raw(&self) -> *mut CallbackContext {
+impl<T> ContextGuard<T> {
+    fn new(context: T) -> Self {
+        Self(Box::into_raw(Box::new(context)))
+    }
+
+    const fn raw(&self) -> *mut T {
         self.0
     }
 
-    const fn into_raw(self) -> *mut CallbackContext {
+    const fn into_raw(self) -> *mut T {
         let context = self.0;
         std::mem::forget(self);
         context
     }
 }
 
-impl Drop for ContextGuard {
+impl<T> Drop for ContextGuard<T> {
     fn drop(&mut self) {
         unsafe {
             drop(Box::from_raw(self.0));
@@ -323,11 +330,85 @@ struct WorkerLinks {
     levels: Arc<StreamLevels>,
 }
 
-/// Running AUHAL instance and inference worker.
+/// The AUHAL instance(s) a running transport owns, with their callback
+/// contexts. Raw pointers are stored as integers so the runtime stays
+/// `Send`; they are only dereferenced on the control thread that owns
+/// the runtime, after callbacks have been stopped.
+#[derive(Debug)]
+enum Transport {
+    /// One AUHAL on the private Aggregate Device (48 kHz microphones —
+    /// the original, unchanged path).
+    Aggregate {
+        /// The AUHAL instance.
+        unit: usize,
+        /// Its [`CallbackContext`].
+        context: usize,
+    },
+    /// Two AUHALs for non-48 kHz microphones (issue #7): an input-only
+    /// unit capturing the microphone at its native rate and an
+    /// output-only unit feeding the virtual output at 48 kHz, bridged by
+    /// the drift-compensating worker (see [`split`]).
+    Split {
+        /// Input-only AUHAL on the microphone device.
+        capture_unit: usize,
+        /// Its [`split::CaptureContext`].
+        capture_context: usize,
+        /// Output-only AUHAL on the virtual output device.
+        output_unit: usize,
+        /// Its [`split::OutputContext`].
+        output_context: usize,
+    },
+}
+
+impl Transport {
+    /// Stops every audio unit (callbacks cease before the worker joins).
+    fn stop_units(&self) {
+        match self {
+            Self::Aggregate { unit, .. } => stop_output_unit(*unit as AudioUnit),
+            Self::Split {
+                capture_unit,
+                output_unit,
+                ..
+            } => {
+                stop_output_unit(*capture_unit as AudioUnit);
+                stop_output_unit(*output_unit as AudioUnit);
+            }
+        }
+    }
+
+    /// Disposes the audio unit(s) and reclaims the callback context(s).
+    ///
+    /// # Safety
+    ///
+    /// Callbacks must no longer be running (units stopped, worker
+    /// joined), and this must be called at most once.
+    unsafe fn dispose(&self) {
+        match self {
+            Self::Aggregate { unit, context } => unsafe {
+                dispose_unit(*unit as AudioUnit);
+                drop(Box::from_raw(*context as *mut CallbackContext));
+            },
+            Self::Split {
+                capture_unit,
+                capture_context,
+                output_unit,
+                output_context,
+            } => unsafe {
+                dispose_unit(*capture_unit as AudioUnit);
+                drop(Box::from_raw(
+                    *capture_context as *mut split::CaptureContext,
+                ));
+                dispose_unit(*output_unit as AudioUnit);
+                drop(Box::from_raw(*output_context as *mut split::OutputContext));
+            },
+        }
+    }
+}
+
+/// Running AUHAL transport and inference worker.
 #[derive(Debug)]
 pub struct Runtime {
-    unit: usize,
-    callback: usize,
+    transport: Transport,
     shutdown: Arc<AtomicBool>,
     faulted: Arc<AtomicBool>,
     samples_ready: Arc<DispatchSemaphore>,
@@ -374,14 +455,14 @@ impl Runtime {
         let (output_producer, output_consumer) = RingBuffer::new(RING_CAPACITY);
         let faulted = Arc::new(AtomicBool::new(false));
         let frames = Arc::new(AtomicU64::new(0));
-        let context = ContextGuard(Box::into_raw(Box::new(CallbackContext {
+        let context = ContextGuard::new(CallbackContext {
             unit: unit.raw(),
             input: input_producer,
             output: output_consumer,
             faulted: Arc::clone(&faulted),
             samples_ready: Arc::clone(&samples_ready),
             frames: Arc::clone(&frames),
-        })));
+        });
         attach_render_callback(
             unit.raw(),
             render_callback,
@@ -424,8 +505,10 @@ impl Runtime {
             return Err(error);
         }
         Ok(Self {
-            unit: unit.into_raw() as usize,
-            callback: context.into_raw() as usize,
+            transport: Transport::Aggregate {
+                unit: unit.into_raw() as usize,
+                context: context.into_raw() as usize,
+            },
             shutdown,
             faulted,
             samples_ready,
@@ -436,22 +519,64 @@ impl Runtime {
         })
     }
 
-    /// Stops callbacks, leaves the audio workgroup, and disposes AUHAL.
+    /// Opens the split transport for a microphone that cannot run at the
+    /// 48 kHz engine rate (issue #7): an input-only AUHAL captures
+    /// `input_device` at `capture_rate` Hz (its native telephony-profile
+    /// rate — must be an integer divisor of 48 kHz), and an output-only
+    /// AUHAL feeds `output_device` (the `BlackHole`/Noican virtual
+    /// output) at 48 kHz. The inference worker bridges the two clock
+    /// domains, converting to the engine rate with a drift-compensating
+    /// resampler steered by ring occupancy
+    /// ([`noican_core::capture`]).
+    ///
+    /// No Aggregate Device is involved: an aggregate drives all
+    /// subdevices at one rate, so it cannot hold a 16 kHz microphone and
+    /// the 48 kHz virtual output at the same time.
+    ///
+    /// `levels` and `monitor_state` behave exactly as in
+    /// [`Runtime::start`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreAudioError`] when `capture_rate` is not an integer
+    /// divisor of 48 kHz, or when AUHAL setup or worker startup fails.
+    /// Every error path releases both AUHAL instances, the callback
+    /// contexts, and the worker.
+    pub fn start_native(
+        input_device: u32,
+        output_device: u32,
+        capture_rate: u32,
+        engine: SwitchingEngine,
+        levels: Arc<StreamLevels>,
+        monitor_state: Arc<AtomicI32>,
+    ) -> Result<Self, CoreAudioError> {
+        split::start(
+            input_device,
+            output_device,
+            capture_rate,
+            engine,
+            levels,
+            monitor_state,
+        )
+    }
+
+    /// Stops callbacks, leaves the audio workgroup, and disposes the
+    /// AUHAL instance(s).
     pub fn stop(&mut self) {
         if !self.running {
             return;
         }
         self.monitor.disable();
-        let unit = self.unit as AudioUnit;
-        stop_output_unit(unit);
+        self.transport.stop_units();
         self.shutdown.store(true, Ordering::Release);
         self.samples_ready.signal();
         if let Some(worker) = self.worker.take() {
             let _ignored = worker.join();
         }
-        dispose_unit(unit);
+        // Units are stopped and the worker joined, and `running` guards
+        // against a second call.
         unsafe {
-            drop(Box::from_raw(self.callback as *mut CallbackContext));
+            self.transport.dispose();
         }
         self.running = false;
     }
@@ -597,8 +722,14 @@ fn configure_auhal(unit: AudioUnit, device: AudioDeviceId) -> Result<(), CoreAud
 /// Packed-float PCM at the 48 kHz engine rate with `channels` interleaved
 /// channels (shared by the main capture/render and monitor formats).
 const fn pcm_format(channels: u32) -> AudioStreamBasicDescription {
+    pcm_format_at(48_000.0, channels)
+}
+
+/// Packed-float PCM at an arbitrary rate (the split transport captures
+/// at the microphone's native telephony-profile rate).
+const fn pcm_format_at(sample_rate: f64, channels: u32) -> AudioStreamBasicDescription {
     AudioStreamBasicDescription {
-        sample_rate: 48_000.0,
+        sample_rate,
         format_id: AUDIO_FORMAT_LINEAR_PCM,
         format_flags: AUDIO_FORMAT_FLAG_IS_FLOAT | AUDIO_FORMAT_FLAG_IS_PACKED,
         bytes_per_packet: 4 * channels,
@@ -709,6 +840,70 @@ fn audio_workgroup(unit: AudioUnit) -> Result<usize, CoreAudioError> {
 /// device period at 256 frames / 48 kHz).
 const WORKER_WAIT_NS: i64 = 2_000_000;
 
+/// Membership of the device's audio `os_workgroup` for the lifetime of a
+/// worker loop; leaves the workgroup on drop. A failed join is reported
+/// through [`WorkgroupGuard::joined`] so the loop can flag the fault.
+struct WorkgroupGuard {
+    workgroup: *mut c_void,
+    token: WorkgroupJoinToken,
+    joined: bool,
+}
+
+impl WorkgroupGuard {
+    fn join(workgroup: usize) -> Self {
+        let workgroup = workgroup as *mut c_void;
+        let mut token = WorkgroupJoinToken::default();
+        let joined = unsafe { os_workgroup_join(workgroup, &raw mut token) } == 0;
+        Self {
+            workgroup,
+            token,
+            joined,
+        }
+    }
+
+    const fn joined(&self) -> bool {
+        self.joined
+    }
+}
+
+impl Drop for WorkgroupGuard {
+    fn drop(&mut self) {
+        if self.joined {
+            unsafe {
+                os_workgroup_leave(self.workgroup, &raw mut self.token);
+            }
+        }
+    }
+}
+
+/// Runs the engine on one block and fans the result out to the meters,
+/// the preview tee, and the output ring — the per-block step shared by
+/// the aggregate and split worker loops. An engine failure emits silence
+/// and flags the fault; output-ring overrun drops samples rather than
+/// blocking.
+fn run_block(
+    engine: &mut SwitchingEngine,
+    input_block: &[f32],
+    output_block: &mut [f32],
+    levels: &StreamLevels,
+    tee: &mut MonitorTee,
+    output: &mut Producer<f32>,
+    faulted: &AtomicBool,
+) {
+    if engine.process_block(input_block, output_block).is_err() {
+        output_block.fill(0.0);
+        faulted.store(true, Ordering::Release);
+    }
+    levels.update(input_block, output_block);
+    // Preview branch: the tee only copies into its preallocated monitor
+    // ring (skipped entirely while disarmed) and disarms itself on
+    // sustained feedback; it never delays the main path below.
+    let _teed = tee.feed(output_block);
+    for sample in output_block.iter().copied() {
+        let _ignored = output.push(sample);
+    }
+}
+
 fn processing_loop(
     links: WorkerLinks,
     shutdown: &Arc<AtomicBool>,
@@ -724,10 +919,8 @@ fn processing_loop(
         levels,
     } = links;
     levels.reset();
-    let workgroup = workgroup as *mut c_void;
-    let mut token = WorkgroupJoinToken::default();
-    let joined = unsafe { os_workgroup_join(workgroup, &raw mut token) } == 0;
-    if !joined {
+    let membership = WorkgroupGuard::join(workgroup);
+    if !membership.joined() {
         faulted.store(true, Ordering::Release);
     }
     let mut input_block = [0.0_f32; WORKER_BLOCK_SAMPLES];
@@ -739,22 +932,15 @@ fn processing_loop(
                 input_block[position] = sample;
                 position += 1;
                 if position == WORKER_BLOCK_SAMPLES {
-                    if engine
-                        .process_block(&input_block, &mut output_block)
-                        .is_err()
-                    {
-                        output_block.fill(0.0);
-                        faulted.store(true, Ordering::Release);
-                    }
-                    levels.update(&input_block, &output_block);
-                    // Preview branch: the tee only copies into its
-                    // preallocated monitor ring (skipped entirely while
-                    // disarmed) and disarms itself on sustained feedback;
-                    // it never delays the main path below.
-                    let _teed = tee.feed(&output_block);
-                    for sample in output_block {
-                        let _ignored = output.push(sample);
-                    }
+                    run_block(
+                        &mut engine,
+                        &input_block,
+                        &mut output_block,
+                        &levels,
+                        &mut tee,
+                        &mut output,
+                        faulted,
+                    );
                     position = 0;
                 }
             }
@@ -765,11 +951,7 @@ fn processing_loop(
             Err(_empty) => samples_ready.wait_ns(WORKER_WAIT_NS),
         }
     }
-    if joined {
-        unsafe {
-            os_workgroup_leave(workgroup, &raw mut token);
-        }
-    }
+    drop(membership);
     // Meters read 0 whenever no worker is running (engine stopped).
     levels.reset();
 }
