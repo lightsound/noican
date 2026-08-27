@@ -295,6 +295,16 @@ at 48 kHz throughout, so recordings from the virtual device remain
    never a permanently dead session. Unplugging/re-pairing mid-session
    may still surface as "Audio stalled"/"Microphone disconnected" like
    any device loss; selecting the device again must recover.
+10. **Virtual-output loss on the split path**: while running on the
+    Bluetooth microphone, uninstall (or otherwise remove) the virtual
+    output device — the engine must stop with "Virtual output device
+    removed" like on the aggregate path (device-list listener). The
+    split transport additionally watches for a *wedged* output side —
+    the device still listed but its IO no longer draining — via the
+    output ring: capture alone keeps the frame heartbeat advancing on
+    this path, so a ring pinned at capacity for ~3 s raises an engine
+    fault ("Audio fault — turn noise cancellation off and on") instead
+    of rendering perpetual silence under a green pill.
 
 ## Preview (self-monitor)
 

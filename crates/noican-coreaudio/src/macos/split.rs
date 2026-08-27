@@ -75,6 +75,16 @@ const NATIVE_CHUNK_SAMPLES: usize = 480;
 /// the split path only; the aggregate path is untouched.
 const OUTPUT_PRIME_SAMPLES: usize = 2_400;
 
+/// Consecutive engine blocks the output ring may sit effectively full
+/// before the worker flags a fault (3 s at 10 ms blocks, matching the
+/// control plane's stall horizon). On the aggregate path a dead output
+/// device kills the single shared callback and trips the frame
+/// heartbeat; on the split path the capture callback keeps the
+/// heartbeat advancing, so a virtual-output side that stopped draining
+/// — the ring pinned at capacity while capture stays alive — is itself
+/// the stall signal and must surface as a fault.
+const OUTPUT_STALL_BLOCKS: usize = 300;
+
 /// Render context of the input-only capture AUHAL.
 pub(super) struct CaptureContext {
     unit: AudioUnit,
@@ -382,6 +392,7 @@ fn split_processing_loop(
         std::collections::VecDeque::with_capacity(NATIVE_CHUNK_SAMPLES * 6 + WORKER_BLOCK_SAMPLES);
     let mut input_block = [0.0_f32; WORKER_BLOCK_SAMPLES];
     let mut output_block = [0.0_f32; WORKER_BLOCK_SAMPLES];
+    let mut output_full_blocks = 0_usize;
     while !shutdown.load(Ordering::Acquire) {
         let mut popped = 0;
         while popped < NATIVE_CHUNK_SAMPLES {
@@ -418,10 +429,22 @@ fn split_processing_loop(
             // Drift servo: total samples buffered between the capture
             // clock (producer) and the output clock (consumer), in
             // engine-rate samples. A trend here *is* clock drift.
-            let buffered = (output_capacity - output.slots())
-                + pending.len()
-                + input.slots().saturating_mul(factor);
+            let output_occupancy = output_capacity - output.slots();
+            let buffered = output_occupancy + pending.len() + input.slots().saturating_mul(factor);
             resampler.set_drift_ppm(servo.update(buffered));
+            // Output-side heartbeat (see OUTPUT_STALL_BLOCKS): the servo
+            // holds healthy occupancy near its 50 ms target, so a ring
+            // pinned at capacity — the block above could not fit — for
+            // seconds means the output callback stopped draining while
+            // capture is still alive.
+            if output_occupancy + WORKER_BLOCK_SAMPLES > output_capacity {
+                output_full_blocks = output_full_blocks.saturating_add(1);
+                if output_full_blocks >= OUTPUT_STALL_BLOCKS {
+                    faulted.store(true, Ordering::Release);
+                }
+            } else {
+                output_full_blocks = 0;
+            }
         }
     }
     drop(membership);
