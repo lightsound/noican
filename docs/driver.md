@@ -86,6 +86,23 @@ xcodebuild settings (not preprocessor): `PRODUCT_NAME=Noican`,
 `ARCHS="arm64 x86_64"` (universal — the driver loads into `coreaudiod`,
 whose architecture is the machine's, independent of the arm64-only app).
 
+### CFPlugIn factory UUID
+
+CFPlugIn factory UUIDs must be unique per plug-in, but upstream hardcodes
+`e395c745-4eea-4d94-bb92-46224221047c` in `BlackHole.plist`, so every
+unpatched BlackHole fork (stock BlackHole, JoyCast, ...) ships the same
+one; when several coexist under `/Library/Audio/Plug-Ins/HAL`,
+`coreaudiod`'s bundle scan logs duplicate-UUID warnings (harmless — each
+driver runs in its own remote process — but noisy and confusing, observed
+during hardware acceptance with JoyCast installed). The build rewrites the
+built bundle's `Info.plist` with PlistBuddy to the Noican-unique factory
+UUID `16ccdad9-e4f7-4cd4-8e81-520694b78514` (generated once for this
+project; the HAL plug-in *type* UUID `443ABAB8-…` is Apple's and must not
+change, and the factory function name stays `BlackHole_Create`). This is
+bundle-metadata editing at build time, consistent with the no-source-patch
+rule. The rewrite deletes the upstream key first, so an upstream bump that
+changes the plist fails the build loudly instead of shipping a stale edit.
+
 The primary device is the visible 2-in/2-out loopback and the mirror
 device stays hidden — the same shape as stock BlackHole 2ch, which the
 Phase 0 transport already passed hardware acceptance against.
