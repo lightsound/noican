@@ -572,6 +572,32 @@ procedures above; the build passes when:
 8. **Strength × switching**: model switches at partial strength produce
    only the bounded fade, with no click from the latency change.
 
+### Acceptance record (Phase 2 controls, 2026-08-27, owner-run)
+
+Run against the PR #14 build (`ad7defd`) on Apple hardware:
+
+- **Settings persistence (A1–A5): pass** — all five checks, including the
+  unplugged-microphone preference survival and the failed-switch revert.
+- **Launch at login (B1–B4): functional pass** — registration, re-login
+  round-trip, and failure surfacing all behaved. Design follow-up: the
+  switch-style toggle was visually overweight for a footer setting and
+  was restyled to a checkbox afterwards.
+- **Strength control: pass except C5** — smooth blending, preview
+  parity, persistence, and switching all passed. **C5 failed on DPDFNet2
+  and DPDFNet8** (doubled voice at 50%); every other model passed. Root
+  cause per the procedure's own diagnosis: both DPDFNet profiles carry
+  4 hops (1920 samples, 40 ms) of architectural lookahead their ONNX
+  metadata does not report, so `output_delay()` under-reported and the
+  dry path ran 40 ms early. Fixed by a measurement-backed lookahead
+  constant (cross-correlation of real speech against the aligned CLI
+  output now measures 0 residual lag on both profiles). **C5 must be
+  re-verified on hardware for DPDFNet2/8 after that fix.**
+- Observation, not a defect: transient noises (trackpad/keyboard clicks)
+  pass through some models at 100% strength — click suppression is a
+  property of each model (DPDFNet8, DeepFilterNet3, and Hush removed
+  clicks; the lighter models let them through). Lowering the strength
+  mixes raw-microphone clicks back in on every model, by design.
+
 ## Result record
 
 For each run, retain:
