@@ -553,10 +553,12 @@ pub unsafe extern "C" fn noican_engine_output_level(handle: *const c_void) -> f3
     handle.levels.output()
 }
 
-/// Sets the dry/wet intensity ("strength"): 1.0 is fully processed
-/// output, 0.0 is the raw microphone, values between blend the two with
-/// the dry path delay-compensated by the active model's reported latency
-/// (so a partial mix does not comb-filter).
+/// Sets the dry/wet intensity ("strength").
+///
+/// 1.0 is fully processed output, 0.0 is the raw microphone, and values
+/// between blend the two with the dry path delay-compensated by the
+/// active model's reported latency (so a partial mix does not
+/// comb-filter).
 ///
 /// One atomic store — never blocks, never rebuilds the engine, safe at
 /// UI slider rates and while stopped (the value carries into the next
@@ -950,7 +952,10 @@ mod tests {
         // Out-of-range values clamp; non-finite values are ignored.
         assert_eq!(unsafe { noican_engine_set_intensity(handle, 5.0) }, SUCCESS);
         assert!((unsafe { noican_engine_intensity(handle) } - 1.0).abs() < f32::EPSILON);
-        assert_eq!(unsafe { noican_engine_set_intensity(handle, -1.0) }, SUCCESS);
+        assert_eq!(
+            unsafe { noican_engine_set_intensity(handle, -1.0) },
+            SUCCESS
+        );
         assert!(unsafe { noican_engine_intensity(handle) }.abs() < f32::EPSILON);
         assert_eq!(
             unsafe { noican_engine_set_intensity(handle, f32::NAN) },
