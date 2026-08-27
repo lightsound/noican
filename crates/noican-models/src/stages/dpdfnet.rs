@@ -21,6 +21,21 @@ use ort::value::Tensor;
 use crate::dsp::{FftPair, sqrt_hann_window, vorbis_window};
 use crate::onnx::{inference_error, load_streaming_session, required_metadata};
 
+/// Model lookahead in STFT hops, on top of the overlap-add window delay.
+///
+/// The DPDFNet architecture (`DeepFilterNet2` + dual-path RNN) keeps
+/// DFN2's two hops of convolutional lookahead plus two hops of
+/// deep-filtering lookahead. The streaming ONNX exports carry no
+/// latency/lookahead metadata key, so this is a constant of the
+/// architecture, confirmed empirically: cross-correlating real speech
+/// against the latency-aligned CLI output measured **exactly 4 hops
+/// (1920 samples, 40 ms) of unreported delay on both the
+/// `dpdfnet2_48khz_hr` and `dpdfnet8_48khz_hr` profiles** (2026-08-27,
+/// `x86_64` ONNX Runtime). Without it, the intensity control's
+/// delay-compensated dry path is 40 ms early and a partial mix doubles
+/// the voice (hardware test C5).
+const LOOKAHEAD_HOPS: usize = 4;
+
 fn parse_meta_usize(session: &Session, key: &str) -> Result<usize, StageError> {
     required_metadata(session, key)?
         .trim()
@@ -136,8 +151,9 @@ impl FrameProcessor for DpdfnetStage {
     }
 
     fn output_delay(&self) -> usize {
-        // One analysis window of overlap-add delay.
-        self.n_fft - self.hop
+        // One analysis window of overlap-add delay plus the model's own
+        // lookahead (see [`LOOKAHEAD_HOPS`]).
+        (self.n_fft - self.hop) + LOOKAHEAD_HOPS * self.hop
     }
 
     fn process_frame(&mut self, input: &[f32], output: &mut [f32]) -> Result<(), StageError> {
