@@ -22,8 +22,8 @@ final class AggregateDevice: @unchecked Sendable {
         // setting the rate on the aggregate alone is rejected ('nope') by
         // some configurations while the mic idles at another rate (16 kHz
         // Bluetooth profiles, 44.1 kHz defaults, ...).
-        try ensure48k(input, role: "microphone \"\(input.name)\"")
-        try ensure48k(virtualOutput, role: "virtual output \"\(virtualOutput.name)\"")
+        try Self.ensure48k(input, role: "microphone \"\(input.name)\"")
+        try Self.ensure48k(virtualOutput, role: "virtual output \"\(virtualOutput.name)\"")
         let subdevices: [[String: Any]] = [
             [
                 kAudioSubDeviceUIDKey: input.uid,
@@ -68,7 +68,11 @@ final class AggregateDevice: @unchecked Sendable {
         identifier = AudioObjectID(kAudioObjectUnknown)
     }
 
-    private func ensure48k(_ device: AudioDeviceInfo, role: String) throws {
+    /// Switches `device` to 48 kHz (polling the asynchronous change),
+    /// or throws when it cannot run there. Shared with the split
+    /// native-capture path, which has no aggregate but must still hold
+    /// the virtual output at the 48 kHz engine rate for consumers.
+    static func ensure48k(_ device: AudioDeviceInfo, role: String) throws {
         let target = 48_000.0
         if let rate = AudioDeviceCatalog.nominalSampleRate(device.id),
             abs(rate - target) < 0.5 {

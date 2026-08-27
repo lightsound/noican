@@ -270,15 +270,27 @@ extension AppModel {
     /// while off, torn down, or rebuilding (`starting` claims a fresh
     /// transport whose watch begins on success).
     public var hasLiveTransport: Bool {
+        transportSession != nil
+    }
+
+    /// The session whose engine transport is currently up, *including*
+    /// through busy monitor/model transitions (which keep the transport
+    /// running) and through a fault that left it up. This is what
+    /// per-device observers must key on — the input-rate listener keyed
+    /// on `liveSession` would detach for the length of every Preview
+    /// toggle or model switch and miss a profile flip in that window.
+    /// Nil while off, torn down, or rebuilding (`starting` claims a
+    /// fresh transport).
+    public var transportSession: EngineSession? {
         switch machine {
-        case .settled(.running), .busy(.settingMonitor, _):
-            true
+        case let .settled(.running(session)), let .busy(.settingMonitor(_, session), _):
+            return session
         case let .settled(.failed(_, session)):
-            session != nil
+            return session
         case let .busy(.switchingModel(_, session), _):
-            session != nil
+            return session
         case .settled(.off), .busy(.starting, _):
-            false
+            return nil
         }
     }
 }

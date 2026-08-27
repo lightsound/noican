@@ -281,9 +281,10 @@ fn configure_capture_auhal(
 }
 
 /// Output-only AUHAL on the virtual output: input disabled, mono 48 kHz
-/// engine samples rendered as interleaved stereo (the device is the
-/// 48 kHz Noican/`BlackHole` loopback, so no device-side conversion is
-/// involved).
+/// engine samples rendered as interleaved stereo. The control plane
+/// switches the virtual output device itself to 48 kHz before starting
+/// this transport (it feeds consumers and must stay at the engine
+/// rate), so no device-side rate conversion is involved.
 fn configure_output_auhal(unit: AudioUnit, device: AudioDeviceId) -> Result<(), CoreAudioError> {
     let enabled = 1_u32;
     let disabled = 0_u32;

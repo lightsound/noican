@@ -140,6 +140,26 @@ struct InputRateChangeTests {
         #expect(attempt.monitor, "the rebuild re-arms the preview monitor")
     }
 
+    @Test("The transport session survives busy monitor/model transitions")
+    func transportSessionSurvivesBusyTransitions() {
+        // The input-rate listener keys on this: dropping it during a
+        // Preview toggle or model switch would blind the observer while
+        // the transport keeps running.
+        let togglingMonitor = drive(runningModel(), [tap(.preview, isEngineRunning: true)])
+        #expect(togglingMonitor.isBusy)
+        #expect(togglingMonitor.liveSession == nil, "busy transitions own their session")
+        #expect(togglingMonitor.transportSession?.inputUID == builtInMic.uid)
+
+        let switchingModel = drive(runningModel(), [.modelSelected("dfn3")])
+        #expect(switchingModel.isBusy)
+        #expect(switchingModel.transportSession?.inputUID == builtInMic.uid)
+
+        // A start claims a *fresh* transport: nothing to watch yet.
+        let starting = drive(readyModel(), [tap(.on)])
+        #expect(starting.transportSession == nil)
+        #expect(readyModel().transportSession == nil)
+    }
+
     @Test("Rate changes are ignored while off, busy, or without a live session")
     func rateChangeIgnoredOutsideLiveSessions() {
         // Off: nothing to rebuild.
