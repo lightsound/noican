@@ -162,10 +162,15 @@ upstream `MACOSX_DEPLOYMENT_TARGET = 10.10` deprecation warning. The
 repo's warnings-as-errors gates cover the Rust and Swift app code, not
 this GPL build of upstream C.
 
-There is no icon asset yet: `kPlugIn_Icon` is set to `Noican.icns`, and
-the build copies `macos/Resources/Noican.icns` into the bundle if that
-file ever appears; until then macOS shows a generic device icon (the
-`kAudioDevicePropertyIcon` query fails gracefully).
+The device icon ships at `macos/Resources/Noican.icns` and is copied into
+the bundle by the build (`kPlugIn_Icon`, served via
+`kAudioDevicePropertyIcon`). The artwork is the Noican mascot — a singing
+Japanese bush warbler (uguisu, a bird famed for its beautiful voice) at a
+vintage microphone — generated for this project (AI-assisted, no
+third-party rights). The icns carries all standard macOS icon types
+(16–512 px plus @2x retina variants, 1024 px master embedded as
+`ic10`); regenerate by re-masking a 1024 px square master with a
+~236 px-radius rounded rectangle and composing with `icnsutil`.
 
 ## Licensing and trademarks
 
