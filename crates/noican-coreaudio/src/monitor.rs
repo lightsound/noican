@@ -160,6 +160,8 @@ pub fn classify_monitor_target(
     Ok(())
 }
 
+// The prefix is the Noican driver's UID base: scripts/build-driver.sh
+// derives the shipped device UID "com.lightsound.noican.2ch_UID" from it.
 fn is_noican_loopback_uid(uid: &str) -> bool {
     uid.contains("BlackHole") || uid.to_lowercase().starts_with("com.lightsound.noican.")
 }
@@ -438,6 +440,17 @@ mod tests {
         // The Noican fork prefix matches case-insensitively.
         assert!(matches!(
             classify_monitor_target(0, "COM.LIGHTSOUND.NOICAN.2ch", None),
+            Err(CoreAudioError::MonitorLoopbackOutput { .. })
+        ));
+        // The exact UID the Noican driver ships (scripts/build-driver.sh
+        // derives it from kDriver_Name="com.lightsound.noican.2ch").
+        assert!(matches!(
+            classify_monitor_target(0, "com.lightsound.noican.2ch_UID", None),
+            Err(CoreAudioError::MonitorLoopbackOutput { .. })
+        ));
+        // The driver's hidden mirror device shares the prefix.
+        assert!(matches!(
+            classify_monitor_target(0, "com.lightsound.noican.2ch_2_UID", None),
             Err(CoreAudioError::MonitorLoopbackOutput { .. })
         ));
     }
