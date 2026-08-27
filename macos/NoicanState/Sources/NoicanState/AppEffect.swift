@@ -18,4 +18,15 @@ public enum AppEffect: Hashable, Sendable {
     /// weight download and model construction). Completes with
     /// `AppEvent.modelSwitchCompleted`.
     case switchModel(to: String)
+    /// Publish the dry/wet strength to the engine handle's shared atomic.
+    /// Synchronous and lock-free (one atomic store, applied mid-stream
+    /// without rebuilding anything; a value set while stopped seeds the
+    /// next start); has no completion event.
+    case setIntensity(Double)
+    /// Register or unregister the app as an `SMAppService` login item
+    /// (asynchronous: the attempt can fail depending on the app's
+    /// location and signature). Completes with
+    /// `AppEvent.launchAtLoginChangeCompleted`, which carries the
+    /// re-read real status.
+    case setLaunchAtLogin(enabled: Bool)
 }

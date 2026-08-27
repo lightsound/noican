@@ -27,6 +27,16 @@ public enum AppReducer {
             return modelSelected(state, id)
         case let .microphoneSelected(uid):
             return microphoneSelected(state, uid)
+        case let .intensityChanged(value):
+            return intensityChanged(state, value)
+        case let .launchAtLoginToggled(enabled):
+            return launchAtLoginToggled(state, enabled)
+        case let .launchAtLoginChangeCompleted(isEnabled, error):
+            return launchAtLoginChangeCompleted(state, isEnabled, error)
+        case let .preferencesRestored(modelID, inputUID, intensity):
+            return preferencesRestored(state, modelID, inputUID, intensity)
+        case let .launchAtLoginStatusRead(isEnabled):
+            return launchAtLoginStatusRead(state, isEnabled)
         case let .startCompleted(error):
             return startCompleted(state, error)
         case let .monitorChangeCompleted(error):
@@ -140,6 +150,44 @@ extension AppReducer {
             rendering: state.phase
         )
         return (state, [.switchModel(to: id)])
+    }
+
+    /// The strength slider is picker-like state with an atomic-write
+    /// effect: it claims no engine transition (the engine applies it
+    /// lock-free mid-stream), so it is accepted even while busy and
+    /// regardless of the engine phase — the value persists across engine
+    /// lifecycles and seeds the next start.
+    private static func intensityChanged(
+        _ state: AppModel,
+        _ value: Double
+    ) -> (state: AppModel, effects: [AppEffect]) {
+        guard value.isFinite else {
+            return (state, [])
+        }
+        let clamped = min(1, max(0, value))
+        guard clamped != state.intensity else {
+            return (state, [])
+        }
+        var state = state
+        state.intensity = clamped
+        return (state, [.setIntensity(clamped)])
+    }
+
+    /// The login-item toggle moves optimistically (the registration
+    /// attempt follows as an effect); `launchAtLoginChangeCompleted`
+    /// snaps it back to the re-read real status when the attempt fails,
+    /// so the toggle never lies for longer than the attempt takes.
+    private static func launchAtLoginToggled(
+        _ state: AppModel,
+        _ enabled: Bool
+    ) -> (state: AppModel, effects: [AppEffect]) {
+        guard enabled != state.isLaunchAtLoginEnabled else {
+            return (state, [])
+        }
+        var state = state
+        state.isLaunchAtLoginEnabled = enabled
+        state.messages.launchAtLoginError = nil
+        return (state, [.setLaunchAtLogin(enabled: enabled)])
     }
 
     /// A microphone pick pre-flights the device, then rebuilds the
@@ -305,11 +353,73 @@ extension AppReducer {
         state.machine = .settled(rendering)
         return (state, [])
     }
+
+    /// The registration attempt settled: show the *re-read* real status
+    /// (an optimistic toggle that failed snaps back here) and surface
+    /// the failure reason under the toggle. Registration is inherently
+    /// environment-dependent (app location, signature), so the outcome
+    /// is authoritative and the request is not.
+    private static func launchAtLoginChangeCompleted(
+        _ state: AppModel,
+        _ isEnabled: Bool,
+        _ error: String?
+    ) -> (state: AppModel, effects: [AppEffect]) {
+        var state = state
+        state.isLaunchAtLoginEnabled = isEnabled
+        state.messages.launchAtLoginError = error
+        return (state, [])
+    }
 }
 
 // MARK: - Environment observations
 
 extension AppReducer {
+    /// Applies persisted preferences at launch. Accepted only while the
+    /// user's intent is Off with no transition in flight — the state the
+    /// app launches in — so a late or replayed restore can never disturb
+    /// a session the user has since started. Selections flow through the
+    /// same fields the pickers use; the mode is never restored (the app
+    /// always starts Off, so launch never captures the microphone).
+    private static func preferencesRestored(
+        _ state: AppModel,
+        _ modelID: String?,
+        _ inputUID: String?,
+        _ intensity: Double?
+    ) -> (state: AppModel, effects: [AppEffect]) {
+        guard state.mode == .off, !state.isBusy else {
+            return (state, [])
+        }
+        var state = state
+        if let modelID {
+            state.selectedModelID = modelID
+        }
+        // A stored microphone that is not currently connected is skipped
+        // (not remembered as a dangling selection): the reducer's other
+        // transitions assume the selection exists in the list.
+        if let inputUID, state.inputDevices.contains(where: { $0.uid == inputUID }) {
+            state.selectedInputUID = inputUID
+        }
+        var effects: [AppEffect] = []
+        if let intensity, intensity.isFinite {
+            let clamped = min(1, max(0, intensity))
+            state.intensity = clamped
+            effects.append(.setIntensity(clamped))
+        }
+        return (state, effects)
+    }
+
+    /// Seeds the login-item toggle from the `SMAppService` status read
+    /// at launch (the service is the source of truth; the app persists
+    /// nothing about it).
+    private static func launchAtLoginStatusRead(
+        _ state: AppModel,
+        _ isEnabled: Bool
+    ) -> (state: AppModel, effects: [AppEffect]) {
+        var state = state
+        state.isLaunchAtLoginEnabled = isEnabled
+        return (state, [])
+    }
+
     /// Follows device hot-plug: refreshes the list, reassigns a vanished
     /// selection, and stops the engine with a clear message when the
     /// microphone in use (or the virtual output) disappears.
