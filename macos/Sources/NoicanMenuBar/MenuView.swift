@@ -275,11 +275,14 @@ struct MenuView: View {
                 // a failed registration snaps it back with the reason
                 // shown below (registration depends on the app's location
                 // and signature — see docs/macos-hardware-test.md).
+                // A checkbox, not a switch: this is a secondary setting
+                // in a utility footer, and macOS reserves the prominent
+                // switch style for primary states.
                 Toggle("Start at login", isOn: Binding(
                     get: { model.isLaunchAtLoginEnabled },
                     set: { state.setLaunchAtLogin($0) }
                 ))
-                .toggleStyle(.switch)
+                .toggleStyle(.checkbox)
                 .font(.callout)
                 // One registration attempt at a time: the reducer ignores
                 // flips while one is in flight, so reflect that here
