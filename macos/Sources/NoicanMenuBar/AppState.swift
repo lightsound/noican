@@ -237,7 +237,7 @@ final class AppState: ObservableObject {
                 if enabled {
                     try SMAppService.mainApp.register()
                 } else {
-                    try SMAppService.mainApp.unregister()
+                    try await SMAppService.mainApp.unregister()
                 }
             } catch {
                 failure = error.localizedDescription
