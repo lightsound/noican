@@ -28,6 +28,8 @@ pub struct CatalogEntry {
     pub display_name: &'static str,
     /// True when the entry needs a speaker-enrollment embedding.
     pub needs_enrollment: bool,
+    /// Picker-facing characteristics (ratings, tagline, details).
+    pub traits: crate::traits::ModelTraits,
 }
 
 /// The selectable catalog: the bypass followed by every registry stage
@@ -37,11 +39,13 @@ pub fn catalog() -> impl Iterator<Item = CatalogEntry> {
         id: PASSTHROUGH_ID,
         display_name: "Passthrough (no processing)",
         needs_enrollment: false,
+        traits: crate::traits::ModelTraits::for_id(PASSTHROUGH_ID),
     })
     .chain(ModelSpec::stages().map(|spec| CatalogEntry {
         id: spec.id,
         display_name: spec.display_name,
         needs_enrollment: spec.needs_enrollment,
+        traits: crate::traits::ModelTraits::for_id(spec.id),
     }))
 }
 
