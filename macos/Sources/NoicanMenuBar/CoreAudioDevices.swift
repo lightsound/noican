@@ -52,18 +52,28 @@ enum AudioDeviceCatalog {
         return identifiers.compactMap(deviceInfo)
     }
 
-    /// True for the loopback device Noican routes into (stock BlackHole 2ch
-    /// in Phase 0, or the Noican-branded fork later). It registers input
-    /// channels too, but selecting it as the microphone would only feed the
-    /// loopback back into itself, so pickers must exclude it.
+    /// Device-UID prefix of the Noican-branded driver. The driver build
+    /// (scripts/build-driver.sh) derives its device UID
+    /// "com.lightsound.noican.2ch_UID" from this prefix; matching is
+    /// case-insensitive by lowercasing first.
+    private static let noicanDriverUIDPrefix = "com.lightsound.noican."
+
+    /// True for a loopback device Noican can route into: stock BlackHole
+    /// 2ch (the Phase 0 device) or the Noican-branded driver. It registers
+    /// input channels too, but selecting it as the microphone would only
+    /// feed the loopback back into itself, so pickers must exclude it.
     ///
     /// Keep in sync with the Rust preview-monitor policy
     /// (`classify_monitor_target` in crates/noican-coreaudio/src/monitor.rs),
     /// which matches the same UIDs and additionally rejects any
     /// virtual/aggregate transport.
     static func isNoicanVirtualDevice(_ device: AudioDeviceInfo) -> Bool {
-        device.uid == "BlackHole2ch_UID"
-            || device.uid.lowercased().hasPrefix("com.lightsound.noican.")
+        device.uid == "BlackHole2ch_UID" || isNoicanDriverDevice(device)
+    }
+
+    /// True only for the Noican-branded driver, not for stock BlackHole.
+    private static func isNoicanDriverDevice(_ device: AudioDeviceInfo) -> Bool {
+        device.uid.lowercased().hasPrefix(noicanDriverUIDPrefix)
     }
 
     /// True for devices that make sense as the physical microphone. Virtual
@@ -78,10 +88,17 @@ enum AudioDeviceCatalog {
             && !isNoicanVirtualDevice(device)
     }
 
+    /// The loopback output the engine feeds. When the Noican driver and
+    /// stock BlackHole 2ch are both installed, the Noican driver wins:
+    /// it is the device this project brands, signs, and tests against,
+    /// while stock BlackHole may be shared with (and reconfigured by)
+    /// other software. Previously the pick fell to device-enumeration
+    /// order, which is undefined (docs/driver.md, "Coexistence").
     static func virtualOutput(in devices: [AudioDeviceInfo]) -> AudioDeviceInfo? {
-        devices.first { device in
+        let loopbacks = devices.filter { device in
             device.outputChannels > 0 && isNoicanVirtualDevice(device)
         }
+        return loopbacks.first(where: isNoicanDriverDevice) ?? loopbacks.first
     }
 
     private static func deviceInfo(_ identifier: AudioObjectID) -> AudioDeviceInfo? {
