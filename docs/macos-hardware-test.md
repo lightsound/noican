@@ -5,8 +5,10 @@
 The Linux CI covers the common engine, real ONNX inference, multi-format CLI
 input (WAV/AIFF/AIFC/CAF/M4A), lock-free model switching, and the C ABI. The
 macOS CI job additionally covers clippy/tests for `aarch64-apple-darwin`
-(including the AUHAL transport), SwiftLint in strict mode, and the release
-app build with `swift -warnings-as-errors`.
+(including the AUHAL transport), SwiftLint in strict mode, the release
+app build with `swift -warnings-as-errors`, and an ad-hoc build of the
+Noican driver (compile check only — coreaudiod will not load an ad-hoc
+signature; see docs/driver.md).
 
 Physical microphone capture, TCC prompts, aggregate clock behavior,
 BlackHole routing, audible switching, 16 kHz-model audio quality, and
@@ -22,8 +24,9 @@ incarnation; the hybrid build (C engine + B transport) must be re-accepted.
 - Rust 1.98.0 with the `aarch64-apple-darwin` target.
 - Swift 6.1 or newer and SwiftLint.
 - A Developer ID Application identity for a distributable app build.
-- Stock BlackHole 2ch for Phase 0, or the separately built and
-  Developer-ID-signed Noican BlackHole fork (Phase 1).
+- A loopback driver: the Noican driver built from this repository
+  (`scripts/build-driver.sh`, Developer-ID-signed; see docs/driver.md), or
+  stock BlackHole 2ch as the Phase 0 fallback.
 - Headphones. Phase 0 has no AEC and must not be evaluated through speakers.
 - A 48 kHz-capable microphone. Bluetooth headset microphones run on
   telephony profiles (8/16/24 kHz) and are rejected with a clear error in
@@ -80,24 +83,50 @@ NOICAN_MODELS_DIR="$HOME/Library/Application Support/noican/models" \
 
 ## Driver check
 
-1. Install the virtual device (stock BlackHole 2ch for Phase 0).
-2. Restart the audio daemon. On macOS 26, SIP rejects
-   `sudo launchctl kickstart -k system/com.apple.audio.coreaudiod`; use:
+The subject is the Noican driver (docs/driver.md). Stock BlackHole 2ch
+remains acceptable as the Phase 0 fallback, but the acceptance record for
+Phase 1 must cover the Noican driver.
+
+1. Build the driver with a Developer ID identity and record the exact
+   command and output:
 
    ```bash
-   sudo killall coreaudiod
+   NOICAN_CODESIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
+     bash scripts/build-driver.sh
    ```
 
-3. Open Audio MIDI Setup and confirm a two-channel 48 kHz virtual device
-   appears.
+2. Install it (copies to `/Library/Audio/Plug-Ins/HAL/Noican.driver` and
+   restarts the audio daemon):
+
+   ```bash
+   bash scripts/install-driver.sh
+   ```
+
+   If restarting manually: on macOS 26, SIP rejects
+   `sudo launchctl kickstart -k system/com.apple.audio.coreaudiod`; use
+   `sudo killall coreaudiod` instead.
+3. Open Audio MIDI Setup and confirm **Noican Microphone** appears as a
+   two-channel 48 kHz device (manufacturer `lightsound`).
 4. Confirm the device has both output and input streams and can loop a test
    signal before involving Noican.
-5. For a self-built driver (Phase 1 and later), record the bundle signature:
+5. Record the installed bundle signature:
 
    ```bash
    codesign --verify --deep --strict --verbose=2 \
-     "/Library/Audio/Plug-Ins/HAL/<driver-name>.driver"
+     "/Library/Audio/Plug-Ins/HAL/Noican.driver"
    ```
+
+6. Coexistence: with stock BlackHole 2ch also installed, start the engine
+   and confirm the private aggregate is composed around the **Noican**
+   device (`com.lightsound.noican.2ch_UID`), not `BlackHole2ch_UID` —
+   the app prefers the Noican driver when both are present
+   (docs/driver.md, "Coexistence"). Then uninstall stock BlackHole (or
+   test the Noican-only state first) and confirm the app still selects
+   the Noican device.
+7. Uninstall check (after the functional tests): `bash
+   scripts/uninstall-driver.sh`, then confirm no Noican device remains in
+   Audio MIDI Setup and `/Library/Audio/Plug-Ins/HAL/Noican.driver` is
+   gone.
 
 Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
 

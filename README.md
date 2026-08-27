@@ -8,9 +8,13 @@ The physical microphone signal is captured, cleaned in real time (noise suppress
 
 Phase 0 code-complete: switchable audio engine (Rust) with a CLI
 batch-comparison mode, plus the real-time macOS pipeline (AUHAL on a private
-Aggregate Device, routed into BlackHole 2ch) and a SwiftUI menu-bar app.
-Hardware acceptance (audio output, TCC, model switching on a real Mac) is
-tracked in [docs/macos-hardware-test.md](docs/macos-hardware-test.md).
+Aggregate Device, routed into a loopback device) and a SwiftUI menu-bar app.
+Phase 1 driver work has started: the Noican-branded virtual device
+([docs/driver.md](docs/driver.md)) builds from this repository and takes
+priority over stock BlackHole 2ch when both are installed. Hardware
+acceptance (audio output, TCC, model switching, driver loading on a real
+Mac) is tracked in
+[docs/macos-hardware-test.md](docs/macos-hardware-test.md).
 
 - [docs/tech-research.md](docs/tech-research.md) — consolidated technology research: candidate evaluation for every layer, final recommended stack, roadmap, and open questions.
 - [docs/models.md](docs/models.md) — supported models, weight download, and verification status.
@@ -45,12 +49,33 @@ afconvert -f WAVE -d LEI16@48000 input.aifc output.wav
 
 ```sh
 # Requires: Apple Silicon, Rust target aarch64-apple-darwin, Swift 6.1+,
-# and the stock BlackHole 2ch virtual device (Phase 0).
+# and a loopback driver: the Noican driver (below) or stock BlackHole 2ch.
 bash scripts/build-macos-app.sh   # produces dist/Noican.app
 ```
 
 See [docs/macos-hardware-test.md](docs/macos-hardware-test.md) for the
 build details and the on-hardware acceptance checklist.
+
+### Noican virtual driver (BlackHole fork)
+
+The Noican-branded loopback device ("Noican Microphone", 2 ch / 48 kHz) is
+built from the `external/blackhole` submodule without patching upstream —
+all customization is injected at build time ([docs/driver.md](docs/driver.md)):
+
+```sh
+git submodule update --init                       # once, after cloning
+
+bash scripts/build-driver.sh                      # ad-hoc (compile check)
+NOICAN_CODESIGN_IDENTITY="Developer ID Application: ... (TEAMID)" \
+  bash scripts/build-driver.sh                    # installable build
+
+bash scripts/install-driver.sh                    # sudo; restarts coreaudiod
+bash scripts/uninstall-driver.sh                  # sudo; complete removal
+```
+
+macOS 15+ `coreaudiod` only loads Developer-ID-signed drivers. The driver
+is GPL-3.0 (see `LICENSE.driver`) and stays a separate program — its
+sources are never linked into the app.
 
 ### Quality gates
 
@@ -75,6 +100,9 @@ SwiftLint in strict mode and `swift build -Xswiftc -warnings-as-errors`.
 - `crates/noican-ffi` — C ABI consumed by the Swift control plane
   (engine lifecycle + registry-driven model catalog).
 - `macos/` — SwiftPM package for the `MenuBarExtra` control-plane app.
+- `external/blackhole` — upstream BlackHole submodule (GPL-3.0, pinned to
+  a release tag); built into the separate `Noican.driver` by
+  `scripts/build-driver.sh` (docs/driver.md).
 
 ## Scope
 
