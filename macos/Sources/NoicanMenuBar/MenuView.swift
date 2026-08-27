@@ -5,13 +5,20 @@ import SwiftUI
 /// The menu bar popover, top to bottom: a status header, the single
 /// Off / Preview / On mode control, a monitoring section that exists only
 /// while the engine runs (level bars, and the headphone caption while
-/// previewing), then the settings pickers — Microphone first, Model last,
-/// since the model is rarely changed once chosen — and a utility footer.
-/// Spacing and typography follow macOS menu bar app conventions (14 pt
-/// content margins, caption-weight section labels, secondary text for
-/// status detail).
+/// previewing), the Microphone list, a collapsed-by-default Settings
+/// section holding the model selector and strength slider (progressive
+/// disclosure: first-time users only touch the mode control and the
+/// microphone), and a utility footer. Spacing and typography follow
+/// macOS menu bar app conventions (14 pt content margins, caption-weight
+/// section labels, secondary text for status detail).
 struct MenuView: View {
     @ObservedObject var state: AppState
+
+    /// Whether the Settings section (model + strength) is expanded.
+    /// Pure view chrome, so it lives in AppStorage rather than the
+    /// reducer; remembered across launches so power users keep it open
+    /// while first-time users start with the short menu.
+    @AppStorage("isSettingsExpanded") private var isSettingsExpanded = false
 
     private let contentPadding: CGFloat = 14
 
@@ -171,55 +178,88 @@ struct MenuView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Model")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.secondary)
-                // User picks route through selectModel; programmatic
-                // reverts write the reducer state directly and must not
-                // re-enter the apply path (they would wipe the failure
-                // message they accompany). Hover any row for the model's
-                // profile card.
-                ModelSelector(
-                    models: state.models,
-                    selectedID: model.selectedModelID,
-                    isBusy: model.isBusy,
-                    select: { state.selectModel($0) }
-                )
-                if let message = model.messages.modelError {
-                    Text(message)
-                        .font(.caption2)
-                        .foregroundStyle(.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Strength")
+            // Progressive disclosure: first-time users only touch the
+            // mode control and the microphone, so the model and strength
+            // controls live behind this header. The expansion state is
+            // remembered across launches (power users keep it open; new
+            // users start with the short menu).
+            Button {
+                isSettingsExpanded.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Settings")
                         .font(.caption)
                         .fontWeight(.semibold)
                         .foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                    Text(intensityLabel)
-                        .font(.caption)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
-                        .monospacedDigit()
+                        .rotationEffect(.degrees(isSettingsExpanded ? 90 : 0))
+                    Spacer(minLength: 0)
                 }
-                // Dry/wet mix applied inside the inference worker as one
-                // atomic value: dragging never rebuilds the engine and
-                // stays live during busy transitions, so the slider is
-                // deliberately not disabled with the pickers. Preview
-                // plays the same mix the virtual microphone receives.
-                Slider(value: Binding(
-                    get: { model.intensity },
-                    set: { state.setIntensity($0) }
-                ), in: 0...1)
-                .controlSize(.small)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if isSettingsExpanded {
+                modelSection
+                strengthSection
             }
         }
         .padding(.horizontal, contentPadding)
         .padding(.vertical, 10)
+        .animation(.easeOut(duration: 0.15), value: isSettingsExpanded)
+    }
+
+    private var modelSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Model")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+            // User picks route through selectModel; programmatic
+            // reverts write the reducer state directly and must not
+            // re-enter the apply path (they would wipe the failure
+            // message they accompany). Hover any row for the model's
+            // profile card.
+            ModelSelector(
+                models: state.models,
+                selectedID: model.selectedModelID,
+                isBusy: model.isBusy,
+                select: { state.selectModel($0) }
+            )
+            if let message = model.messages.modelError {
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var strengthSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Strength")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Text(intensityLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            // Dry/wet mix applied inside the inference worker as one
+            // atomic value: dragging never rebuilds the engine and
+            // stays live during busy transitions, so the slider is
+            // deliberately not disabled with the pickers. Preview
+            // plays the same mix the virtual microphone receives.
+            Slider(value: Binding(
+                get: { model.intensity },
+                set: { state.setIntensity($0) }
+            ), in: 0...1)
+            .controlSize(.small)
+        }
     }
 
     /// All selectable inputs as an always-visible, checkmarked list
