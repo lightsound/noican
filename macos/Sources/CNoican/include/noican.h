@@ -34,6 +34,16 @@ typedef enum {
 int32_t noican_engine_monitor_state(const void *handle);
 float noican_engine_input_level(const void *handle);
 float noican_engine_output_level(const void *handle);
+
+/* Dry/wet intensity ("strength"): 1.0 = fully processed (default),
+ * 0.0 = raw microphone. One atomic — the setter never blocks or rebuilds
+ * the engine (safe at UI slider rates, and while stopped: the value
+ * seeds the next start). Out-of-range values are clamped; non-finite
+ * values are ignored. The dry path is delay-compensated by the active
+ * model's reported latency, and the same mix feeds the virtual
+ * microphone and the preview monitor. */
+int32_t noican_engine_set_intensity(void *handle, float intensity);
+float noican_engine_intensity(const void *handle);
 uint64_t noican_engine_frames_processed(const void *handle);
 size_t noican_engine_last_error(const void *handle, char *buffer, size_t capacity);
 

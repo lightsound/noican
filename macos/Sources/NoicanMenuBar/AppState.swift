@@ -2,6 +2,7 @@ import Combine
 import CoreAudio
 import Foundation
 import NoicanState
+import ServiceManagement
 
 /// The runtime shell around the pure state machine in the `NoicanState`
 /// package: it samples the environment (Core Audio device lists,
@@ -27,6 +28,16 @@ final class AppState: ObservableObject {
     let models = RustEngine.models()
 
     private static let defaultModelID = "fastenhancer-b"
+
+    /// `UserDefaults` keys for the persisted preferences. Only picker
+    /// state is persisted (microphone UID, model id, strength) — never
+    /// the mode: the app always launches Off so it never captures the
+    /// microphone without a user action.
+    private enum PreferenceKey {
+        static let modelID = "selectedModelID"
+        static let inputUID = "selectedInputUID"
+        static let intensity = "intensity"
+    }
 
     /// Full Core Audio device snapshot (the reducer sees the pure
     /// `InputDevice` projection; effects need the identifiers here).
@@ -67,6 +78,12 @@ final class AppState: ObservableObject {
             isEngineAvailable: engine != nil
         )
         refreshDevices()
+        // Restore after the first device read so the reducer can vet the
+        // stored microphone against the live list.
+        restorePreferences()
+        dispatch(.launchAtLoginStatusRead(
+            isEnabled: Self.isLoginItemRegistered(SMAppService.mainApp.status)
+        ))
         registerDeviceListener()
         registerDefaultOutputListener()
     }
@@ -102,13 +119,30 @@ final class AppState: ObservableObject {
         dispatch(.microphoneSelected(uid))
     }
 
+    /// Strength slider binding setter (0 = raw microphone, 1 = fully
+    /// processed). Not busy-gated: applying it is a lock-free atomic
+    /// write, so the slider stays live even during a model download.
+    func setIntensity(_ value: Double) {
+        dispatch(.intensityChanged(value))
+    }
+
+    /// Login-item toggle binding setter. The reducer moves the toggle
+    /// optimistically; the completion event snaps it back to the re-read
+    /// `SMAppService` status when registration fails.
+    func setLaunchAtLogin(_ enabled: Bool) {
+        dispatch(.launchAtLoginToggled(enabled))
+    }
+
     // MARK: - Reducer plumbing
 
-    /// The single writer of `model`: reduce, publish, perform effects,
-    /// then re-derive the pollers from the new state.
+    /// The single writer of `model`: reduce, publish, persist changed
+    /// preferences, perform effects, then re-derive the pollers from the
+    /// new state.
     private func dispatch(_ event: AppEvent) {
+        let previous = model
         let (newModel, effects) = AppReducer.reduce(model, event)
         model = newModel
+        persistPreferences(from: previous, event: event)
         for effect in effects {
             perform(effect)
         }
@@ -127,6 +161,10 @@ final class AppState: ObservableObject {
             setMonitor(enabled)
         case let .switchModel(id):
             switchModel(id)
+        case let .setIntensity(value):
+            engine?.setIntensity(Float(value))
+        case let .setLaunchAtLogin(enabled):
+            applyLaunchAtLogin(enabled)
         }
     }
 
@@ -186,9 +224,95 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Whether the login item counts as on for the toggle. Registered
+    /// but pending the user's consent (`requiresApproval` — common for
+    /// development builds and previously denied items) reads as on: the
+    /// registration itself succeeded and the remaining step lives in
+    /// System Settings, so snapping the toggle off would misreport a
+    /// successful attempt (and invite a pointless re-register loop).
+    private static func isLoginItemRegistered(_ status: SMAppService.Status) -> Bool {
+        status == .enabled || status == .requiresApproval
+    }
+
+    /// Registers or unregisters the login item off the main actor
+    /// (registration can touch the service database). The completion
+    /// carries the *re-read* status: registration depends on the app's
+    /// location and signature (development builds under dist/ commonly
+    /// fail), so the outcome — not the request — is what the reducer
+    /// must show, together with the reason under the toggle: a failure,
+    /// or the pending-approval notice when macOS wants the user's
+    /// consent in System Settings.
+    private func applyLaunchAtLogin(_ enabled: Bool) {
+        Task.detached {
+            var message: String?
+            do {
+                if enabled {
+                    try SMAppService.mainApp.register()
+                } else {
+                    try await SMAppService.mainApp.unregister()
+                }
+            } catch {
+                message = "Could not update the login item: \(error.localizedDescription)"
+            }
+            let status = SMAppService.mainApp.status
+            if message == nil, enabled, status == .requiresApproval {
+                message = "Registered — allow Noican in System Settings › General › Login Items to finish enabling it."
+            }
+            await self.finish(.launchAtLoginChangeCompleted(
+                isEnabled: Self.isLoginItemRegistered(status),
+                error: message
+            ))
+        }
+    }
+
     /// Completion entry point for detached effect tasks.
     private func finish(_ event: AppEvent) {
         dispatch(event)
+    }
+
+    // MARK: - Preference persistence
+
+    /// Feeds the persisted preferences back through the reducer (the
+    /// restore is an event like everything else, so it stays testable).
+    /// The stored model id is validated against the live registry here —
+    /// the reducer has no model catalog — and enrollment-gated models
+    /// are skipped like the picker skips them.
+    private func restorePreferences() {
+        let defaults = UserDefaults.standard
+        var modelID = defaults.string(forKey: PreferenceKey.modelID)
+        if !models.contains(where: { $0.id == modelID && !$0.needsEnrollment }) {
+            modelID = nil
+        }
+        dispatch(.preferencesRestored(
+            modelID: modelID,
+            inputUID: defaults.string(forKey: PreferenceKey.inputUID),
+            intensity: defaults.object(forKey: PreferenceKey.intensity) as? Double
+        ))
+    }
+
+    /// Persists preference fields the reduce step changed. Skipped for
+    /// `devicesChanged` (hot-plug reassignment of a vanished selection is
+    /// not a user choice — the stored microphone must survive being
+    /// temporarily unplugged across a relaunch) and for the restore
+    /// event itself. Reverts (a failed model switch or microphone
+    /// fallback) do persist: they record what actually runs.
+    private func persistPreferences(from previous: AppModel, event: AppEvent) {
+        switch event {
+        case .devicesChanged, .preferencesRestored:
+            return
+        default:
+            break
+        }
+        let defaults = UserDefaults.standard
+        if model.selectedModelID != previous.selectedModelID {
+            defaults.set(model.selectedModelID, forKey: PreferenceKey.modelID)
+        }
+        if model.selectedInputUID != previous.selectedInputUID {
+            defaults.set(model.selectedInputUID, forKey: PreferenceKey.inputUID)
+        }
+        if model.intensity != previous.intensity {
+            defaults.set(model.intensity, forKey: PreferenceKey.intensity)
+        }
     }
 
     // MARK: - Device catalog

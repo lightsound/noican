@@ -88,8 +88,8 @@ public enum EngineMachine: Hashable, Sendable {
     case busy(EngineTransition, rendering: EnginePhase)
 }
 
-/// The four user-facing message slots, together so the clearing rules
-/// live in one place: the reducer states, per event, which slots clear —
+/// The user-facing message slots, together so the clearing rules live
+/// in one place: the reducer states, per event, which slots clear —
 /// instead of scattering assignments across transition callbacks.
 public struct MessageSlots: Hashable, Sendable {
     /// Last preview failure (start failure, feedback trip, …), shown
@@ -117,17 +117,27 @@ public struct MessageSlots: Hashable, Sendable {
     /// Cleared by the next pick and by any engine teardown (the message
     /// would describe a torn-down engine).
     public var modelError: String?
+    /// Login-item outcome that needs the user's attention, shown under
+    /// the toggle: why the last registration attempt failed (development
+    /// builds outside /Applications commonly cannot register), or the
+    /// pending-approval notice when macOS wants consent in System
+    /// Settings. The completion event that carries it has already moved
+    /// the toggle to the re-read real status. Cleared by the next toggle
+    /// attempt and by a later clean completion.
+    public var launchAtLoginError: String?
 
     public init(
         previewError: String? = nil,
         previewUnavailableReason: String? = nil,
         microphoneError: String? = nil,
-        modelError: String? = nil
+        modelError: String? = nil,
+        launchAtLoginError: String? = nil
     ) {
         self.previewError = previewError
         self.previewUnavailableReason = previewUnavailableReason
         self.microphoneError = microphoneError
         self.modelError = modelError
+        self.launchAtLoginError = launchAtLoginError
     }
 }
 
@@ -155,7 +165,23 @@ public struct AppModel: Hashable, Sendable {
     /// Whether the Noican/BlackHole loopback output exists, snapshotted
     /// by `AppEvent.devicesChanged` (a start pre-flight).
     public var isVirtualOutputPresent: Bool
-    /// The four user-facing message slots.
+    /// Dry/wet strength (0 = raw microphone, 1 = fully processed;
+    /// default 1). Slider state like the pickers — it persists across
+    /// engine lifecycles and applying it is a lock-free atomic write,
+    /// so changes never claim an engine transition.
+    public var intensity: Double
+    /// Whether the app is registered as a login item, mirroring the
+    /// `SMAppService` status: seeded by `AppEvent.launchAtLoginStatusRead`
+    /// at launch, moved optimistically by a toggle, and snapped back to
+    /// the re-read real status when the registration attempt completes.
+    public var isLaunchAtLoginEnabled: Bool
+    /// Whether a login-item registration attempt is in flight. Serializes
+    /// toggles exactly like `EngineMachine.busy` serializes engine
+    /// transitions: a toggle while one is pending is ignored, so two
+    /// concurrent attempts can never race and settle the toggle on
+    /// whichever completion happens to arrive last.
+    public var isLaunchAtLoginBusy: Bool
+    /// The user-facing message slots.
     public var messages: MessageSlots
     /// Whether the Rust engine handle was created. When false, mode and
     /// selection changes still update the pickers but never claim engine
@@ -169,6 +195,9 @@ public struct AppModel: Hashable, Sendable {
         selectedInputUID: String = "",
         inputDevices: [InputDevice] = [],
         isVirtualOutputPresent: Bool = false,
+        intensity: Double = 1.0,
+        isLaunchAtLoginEnabled: Bool = false,
+        isLaunchAtLoginBusy: Bool = false,
         messages: MessageSlots = MessageSlots(),
         isEngineAvailable: Bool = true
     ) {
@@ -178,6 +207,9 @@ public struct AppModel: Hashable, Sendable {
         self.selectedInputUID = selectedInputUID
         self.inputDevices = inputDevices
         self.isVirtualOutputPresent = isVirtualOutputPresent
+        self.intensity = intensity
+        self.isLaunchAtLoginEnabled = isLaunchAtLoginEnabled
+        self.isLaunchAtLoginBusy = isLaunchAtLoginBusy
         self.messages = messages
         self.isEngineAvailable = isEngineAvailable
     }

@@ -15,14 +15,19 @@
 //! - [`resample`]: streaming polyphase FIR decimator/interpolator.
 //! - [`switch::SwitchingEngine`]: lock-free, click-free runtime switching
 //!   between prepared stages (the live-pipeline building block).
+//! - [`mix::IntensityControl`]: the atomic dry/wet ("strength") control
+//!   whose blend runs inside the switching engine, with the dry path
+//!   delay-compensated by the active stage's reported latency.
 
 pub mod error;
 pub mod framed;
+pub mod mix;
 pub mod resample;
 pub mod stage;
 pub mod switch;
 
 pub use error::StageError;
 pub use framed::FramedStage;
+pub use mix::IntensityControl;
 pub use stage::{ENGINE_SAMPLE_RATE, FrameProcessor, Passthrough, Stage};
 pub use switch::{StagePublisher, SwitchingEngine};

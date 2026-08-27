@@ -21,6 +21,18 @@ public enum AppEvent: Hashable, Sendable {
     case modelSelected(String)
     /// A microphone was clicked in the list.
     case microphoneSelected(String)
+    /// The strength slider moved (0 = raw microphone, 1 = fully
+    /// processed). Applying it is a lock-free atomic write on the engine
+    /// side, so this claims no transition and is accepted even while
+    /// busy — gating it would make the slider feel dead during a model
+    /// download.
+    case intensityChanged(Double)
+    /// The login-item toggle was flipped. Optimistic: the toggle moves
+    /// immediately and `launchAtLoginChangeCompleted` snaps it back to
+    /// the real status when registration fails. Serialized: at most one
+    /// registration attempt is in flight, and a flip while one is
+    /// pending is ignored (concurrent attempts would race).
+    case launchAtLoginToggled(Bool)
 
     // MARK: Effect completions
 
@@ -32,9 +44,30 @@ public enum AppEvent: Hashable, Sendable {
     /// `AppEffect.switchModel` finished. The target model is recorded in
     /// the in-flight `EngineTransition.switchingModel`.
     case modelSwitchCompleted(error: String?)
+    /// `AppEffect.setLaunchAtLogin` finished. `isEnabled` is the real
+    /// `SMAppService` status re-read after the attempt (registration
+    /// depends on the app's location and signature, so the outcome —
+    /// not the request — is what the toggle must show; registered but
+    /// pending the user's approval counts as on), and `error` renders
+    /// under the toggle when something needs the user's attention — a
+    /// failure reason or the pending-approval notice.
+    case launchAtLoginChangeCompleted(isEnabled: Bool, error: String?)
 
     // MARK: Environment observations
 
+    /// Persisted preferences read back at launch. The shell validates
+    /// each value before dispatching (a stored model id must exist in
+    /// the registry and be startable), nil skips a field, and the
+    /// reducer additionally requires a stored microphone to be present
+    /// in the current device list. The mode is deliberately *not*
+    /// restored: the app always starts Off, so launching it never
+    /// captures the microphone (TCC prompts and live capture must
+    /// follow a user action, not app startup).
+    case preferencesRestored(modelID: String?, inputUID: String?, intensity: Double?)
+    /// The `SMAppService` login-item status read at launch (the service
+    /// itself is the source of truth; nothing about it is persisted by
+    /// the app).
+    case launchAtLoginStatusRead(isEnabled: Bool)
     /// The device list changed (hot-plug) or was first read. `inputs` is
     /// the selectable-microphone snapshot; `allInputUIDs` additionally
     /// contains every device with input channels (the transport-loss
