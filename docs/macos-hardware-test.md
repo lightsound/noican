@@ -153,8 +153,9 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
      (Noise removal / Voice quality / Responsiveness / Efficiency, all
      "more is better"), and the raw facts (native rate, measured delay,
      size). Once up, the card must **stay up while the pointer moves
-     between rows, swapping only its content** (no per-row blink), hide
-     shortly after the pointer leaves the rows, and — critically —
+     between rows, following the hovered row's position and swapping
+     its content in place** (no per-row blink or re-present animation),
+     hide shortly after the pointer leaves the rows, and — critically —
      hovering must never close the menu popover itself.
    The monitoring section (level bars) must be absent while the mode is
    Off and appear while the engine runs.
