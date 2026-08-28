@@ -85,22 +85,21 @@ pub enum CoreAudioError {
     /// Enabling preview was refused because the system default output is a
     /// virtual loopback device, which would feed the processed voice into
     /// the meeting a second time.
-    #[error(
-        "the system default output ({uid}) is a virtual loopback device; \
-         select real headphones as the system output before enabling preview"
-    )]
+    ///
+    /// The message is one short cause (no UID, no remedy): the UI composes
+    /// it into its own sentences ("Preview needs headphones — …",
+    /// "Preview stopped: …"), and the rejected device's UID is kept in
+    /// the variant for programmatic callers.
+    #[error("the system output is a virtual loopback device")]
     MonitorLoopbackOutput {
         /// UID of the rejected default output device.
         uid: String,
     },
     /// Enabling preview was refused because the system default output is
     /// an aggregate or Multi-Output device, which can contain the meeting
-    /// loopback as a subdevice this check cannot cheaply inspect.
-    #[error(
-        "the system default output ({uid}) is an aggregate/multi-output \
-         device that may include the meeting loopback; select the \
-         headphones device directly before enabling preview"
-    )]
+    /// loopback as a subdevice this check cannot cheaply inspect. Message
+    /// shape: see [`CoreAudioError::MonitorLoopbackOutput`].
+    #[error("the system output is a multi-output device")]
     MonitorAggregateOutput {
         /// UID of the rejected default output device.
         uid: String,
@@ -108,10 +107,8 @@ pub enum CoreAudioError {
     /// Enabling preview was refused because the system default output is
     /// the built-in speakers, which would feed the processed microphone
     /// straight back into itself (Phase 0/1 has no echo cancellation).
-    #[error(
-        "the system default output is the built-in speakers, which would \
-         feed back; connect headphones and try again"
-    )]
+    /// Message shape: see [`CoreAudioError::MonitorLoopbackOutput`].
+    #[error("the built-in speakers would feed back")]
     MonitorSpeakerOutput,
     /// This build does not target macOS.
     #[error("AUHAL is available only on macOS")]

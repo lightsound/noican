@@ -132,7 +132,9 @@ struct MenuView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let reason = model.messages.previewUnavailableReason {
-                Text("Preview is unavailable: \(reason)")
+                // One short sentence: the engine reports the cause (no
+                // UID, no remedy); the remedy is always the same.
+                Text("Preview needs headphones — \(reason).")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -213,10 +215,9 @@ struct MenuView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(StaticButtonStyle())
-            // Deliberately no expand/collapse animation: animating the
-            // content height fights the MenuBarExtra window resize
-            // (AppKit windows anchor at their bottom-left corner, so
-            // mid-animation frames shifted the whole menu downward).
+            // Deliberately no expand/collapse animation: every animation
+            // frame would change the content's ideal height and make the
+            // menu popover chase it (see the note on MenuView.body).
             if isSettingsExpanded {
                 modelSection
                 strengthSection

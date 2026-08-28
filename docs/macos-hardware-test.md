@@ -285,10 +285,11 @@ between them only arms or disarms the monitor.
      microphone).
    The press must be refused in place: the mode and the engine (whether
    Off or On) stay exactly as they were — Off never starts the engine —
-   and "Preview is unavailable: …" explains the reason under the
-   control. With the message showing, switch the default output back to
-   headphones: the message must clear within about a second, and
-   pressing Preview must then work.
+   and one short line ("Preview needs headphones — <cause>.") explains
+   the reason under the control, without device UIDs. With the message
+   showing, switch the default output back to headphones: the message
+   must clear within about a second, and pressing Preview must then
+   work.
 9. A monitor failure at runtime (one that passed the pre-flight check),
    including a feedback-guard trip: the pill stays on Preview with a red
    warning tint, the engine keeps running (status returns to
@@ -354,10 +355,10 @@ a shared −60…0 dB scale and are shown only while the engine runs.
 6. Select Off: the monitoring section disappears (and reappears at zero
    on the next start).
 7. Close the popover and watch the app in Activity Monitor for a minute:
-   CPU use and wake-ups must drop back to idle. The 20 Hz level poll is
-   bound to the popover view's lifetime, but `MenuBarExtra(.window)` has
-   kept hidden content views alive on some macOS releases — this check
-   catches that regression on the tested OS version.
+   CPU use and wake-ups must drop back to idle. The menu content (and
+   with it the 20 Hz level poll) is built when the status-item popover
+   opens and torn down when it closes — this check catches a lifecycle
+   regression on the tested OS version.
 
 ## Settings persistence
 
