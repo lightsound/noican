@@ -43,11 +43,6 @@ struct MenuView: View {
             footer
         }
         .frame(width: 320)
-        // Keep the menu anchored under the status item while sections
-        // expand and collapse: MenuBarExtra resizes its window around
-        // the bottom-left corner, which visibly dropped the whole menu
-        // on every height reduction (see MenuWindowPinner).
-        .background(MenuWindowPinner())
         // Ease the layout when status text or sections change height, so
         // the mode control glides instead of jumping (its sliding pill is
         // additionally isolated via geometryGroup in ModePicker).

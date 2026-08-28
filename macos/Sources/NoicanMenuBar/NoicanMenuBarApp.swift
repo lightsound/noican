@@ -2,37 +2,52 @@ import AppKit
 import NoicanState
 import SwiftUI
 
+/// The app is an AppKit status-item shell around the SwiftUI menu.
+///
+/// It deliberately does *not* use `MenuBarExtra(.window)`: that scene
+/// resizes its popover window around the AppKit bottom-left origin with
+/// its own repositioning heuristics, so any content-height change (the
+/// "Model & strength" section collapsing, the monitoring section
+/// appearing) could visibly drop or shift the whole menu, and nothing
+/// outside the framework can deterministically prevent it. Owning the
+/// status item and the panel (see `StatusBarController`) makes the
+/// geometry a pure function of the status item's position: the top edge
+/// never moves, and height changes only ever grow or shrink downward.
 @main
 struct NoicanMenuBarApp: App {
-    @StateObject private var state = AppState()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        MenuBarExtra {
-            MenuView(state: state)
-        } label: {
-            MenuBarIcon(mode: state.model.mode, isUnfulfilled: state.model.isModeUnfulfilled)
-        }
-        .menuBarExtraStyle(.window)
+        // The menu lives in the AppKit panel; SwiftUI still requires a
+        // Scene, and an empty Settings scene contributes no UI.
+        Settings {}
     }
 }
 
-/// Menu bar icon: the glyph is the selected mode (`mic.slash` Off,
-/// `waveform.badge.mic` On, `headphones` Preview), the color is its
+/// Boots the status-item shell once AppKit is ready.
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var statusBar: StatusBarController?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        statusBar = StatusBarController()
+    }
+}
+
+/// Menu bar icon renderer: the glyph is the selected mode (`mic.slash`
+/// Off, `waveform.badge.mic` On, `headphones` Preview), the color is its
 /// health — monochrome Off, green while the mode is actually delivering,
 /// red (matching the status dot and the pill's warning tint) while the
 /// selection is not delivering, so trouble is visible without opening
-/// the popover.
+/// the menu.
 ///
 /// Every state draws into the same fixed-size canvas: the glyphs have
 /// different intrinsic widths, and a status item that changes width
-/// shifts the popover's anchor on every mode change.
-private struct MenuBarIcon: View {
-    let mode: EngineMode
-    let isUnfulfilled: Bool
-
-    var body: some View {
-        Image(nsImage: Self.icons["\(mode.rawValue)-\(isUnfulfilled)"] ?? NSImage())
-            .accessibilityLabel("Noican")
+/// shifts the menu's anchor on every mode change.
+enum MenuBarIcon {
+    /// The prerendered status-item image for a mode × health state.
+    static func image(mode: EngineMode, isUnfulfilled: Bool) -> NSImage {
+        icons["\(mode.rawValue)-\(isUnfulfilled)"] ?? NSImage()
     }
 
     private static func symbolName(for mode: EngineMode) -> String {
