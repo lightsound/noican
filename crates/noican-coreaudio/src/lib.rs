@@ -29,6 +29,7 @@ use std::sync::Arc;
 #[cfg(not(target_os = "macos"))]
 use noican_core::SwitchingEngine;
 
+pub mod aec;
 pub mod monitor;
 pub mod observe;
 
@@ -38,7 +39,7 @@ pub use observe::StreamLevels;
 mod macos;
 
 #[cfg(target_os = "macos")]
-pub use macos::{Runtime, check_monitor_device, check_monitor_target};
+pub use macos::{Runtime, check_monitor_target};
 
 /// Portable stub of the preview-target pre-flight check.
 ///
@@ -47,16 +48,6 @@ pub use macos::{Runtime, check_monitor_device, check_monitor_target};
 /// Always returns [`CoreAudioError::UnsupportedPlatform`].
 #[cfg(not(target_os = "macos"))]
 pub const fn check_monitor_target() -> Result<(), CoreAudioError> {
-    Err(CoreAudioError::UnsupportedPlatform)
-}
-
-/// Portable stub of the per-device preview-target check.
-///
-/// # Errors
-///
-/// Always returns [`CoreAudioError::UnsupportedPlatform`].
-#[cfg(not(target_os = "macos"))]
-pub const fn check_monitor_device(_device: u32) -> Result<(), CoreAudioError> {
     Err(CoreAudioError::UnsupportedPlatform)
 }
 
@@ -93,7 +84,7 @@ pub enum CoreAudioError {
     /// the meeting a second time.
     ///
     /// The message is one short cause (no UID, no remedy): the UI composes
-    /// it into its own sentences ("Preview needs headphones — …",
+    /// it into its own sentences ("Preview can't use this output — …",
     /// "Preview stopped: …"), and the rejected device's UID is kept in
     /// the variant for programmatic callers.
     #[error("the system output is a virtual loopback device")]
@@ -110,12 +101,16 @@ pub enum CoreAudioError {
         /// UID of the rejected default output device.
         uid: String,
     },
-    /// Enabling preview was refused because the system default output is
-    /// the built-in speakers, which would feed the processed microphone
-    /// straight back into itself (Phase 0/1 has no echo cancellation).
-    /// Message shape: see [`CoreAudioError::MonitorLoopbackOutput`].
-    #[error("the built-in speakers would feed back")]
-    MonitorSpeakerOutput,
+    /// The playing monitor's built-in output flipped its data source to
+    /// the internal speakers after enable time (headphone jack
+    /// unplugged). The vetted choice was the headphones, so the preview
+    /// stops rather than follow the flip into the room unasked — even
+    /// though the self-monitor AEC would cancel the echo. Starting
+    /// Preview *on* the speakers deliberately is allowed and does not
+    /// produce this ([`monitor::classify_monitor_flip`]). Message
+    /// shape: see [`CoreAudioError::MonitorLoopbackOutput`].
+    #[error("the output switched to the built-in speakers")]
+    MonitorSpeakerFlip,
     /// This build does not target macOS.
     #[error("AUHAL is available only on macOS")]
     UnsupportedPlatform,
@@ -173,6 +168,12 @@ impl Runtime {
     /// Portable builds never have a monitor device.
     #[must_use]
     pub const fn monitor_device(&self) -> Option<u32> {
+        None
+    }
+
+    /// Portable builds never have a playing monitor to re-vet.
+    #[must_use]
+    pub const fn monitor_unsafe_reason(&self) -> Option<CoreAudioError> {
         None
     }
 

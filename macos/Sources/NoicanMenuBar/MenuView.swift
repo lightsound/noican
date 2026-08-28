@@ -4,8 +4,7 @@ import SwiftUI
 
 /// The menu bar popover, top to bottom: a status header, the single
 /// Off / Preview / On mode control, a monitoring section that exists only
-/// while the engine runs (level bars, and the headphone caption while
-/// previewing), the Microphone list, a collapsed-by-default
+/// while the engine runs (level bars), the Microphone list, a collapsed-by-default
 /// "Model & strength" section holding the model selector and strength
 /// slider (progressive disclosure: the default model is meant to be good
 /// enough that first-time users only touch the mode control and the
@@ -133,8 +132,11 @@ struct MenuView: View {
             }
             if let reason = model.messages.previewUnavailableReason {
                 // One short sentence: the engine reports the cause (no
-                // UID, no remedy); the remedy is always the same.
-                Text("Preview needs headphones — \(reason).")
+                // UID, no remedy); the remedy is always the same — pick
+                // a real output device (speakers are fine: the
+                // self-monitor AEC cancels their echo; only digital
+                // routes into the meeting are refused).
+                Text("Preview can't use this output — \(reason).")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -155,10 +157,10 @@ struct MenuView: View {
     /// both; noise-only passages leave the output bar clearly below the
     /// input bar, showing the suppression at a glance.
     ///
-    /// No persistent headphone warning: its job is done by code — unsafe
-    /// outputs are refused on press with the reason shown, and actual
-    /// feedback through an unclassifiable output trips the killswitch,
-    /// which also explains itself.
+    /// No persistent output warning: its job is done by code — unsafe
+    /// outputs are refused on press with the reason shown, speaker echo
+    /// is cancelled by the self-monitor AEC, and actual feedback trips
+    /// the killswitch, which also explains itself.
     private var monitoring: some View {
         VStack(alignment: .leading, spacing: 6) {
             LevelBar(label: "Before", level: state.inputLevel, tint: .secondary)

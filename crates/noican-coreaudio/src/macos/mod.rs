@@ -23,6 +23,7 @@ use std::{
 use noican_core::SwitchingEngine;
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use crate::aec::SelfMonitorAec;
 use crate::monitor::{MonitorTee, fourcc};
 use crate::observe::StreamLevels;
 use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
@@ -31,7 +32,7 @@ mod monitor;
 mod split;
 
 use monitor::MonitorControl;
-pub use monitor::{check_monitor_device, check_monitor_target};
+pub use monitor::check_monitor_target;
 
 type OSStatus = i32;
 type AudioUnit = *mut c_void;
@@ -320,13 +321,23 @@ struct CallbackContext {
     frames: Arc<AtomicU64>,
 }
 
+/// The preview branch as the inference worker owns it: the self-monitor
+/// echo canceller upstream of the engine and the monitor tee downstream
+/// of it. Bundled because they gate on the same [`crate::monitor::MonitorState`]
+/// cell and the canceller's far-end reference is exactly what the tee
+/// feeds the monitor ring.
+struct PreviewLink {
+    aec: SelfMonitorAec,
+    tee: MonitorTee,
+}
+
 /// Everything the inference worker owns or shares. Bundled so the worker
 /// spawn passes one value instead of a long argument list.
 struct WorkerLinks {
     engine: SwitchingEngine,
     input: Consumer<f32>,
     output: Producer<f32>,
-    tee: MonitorTee,
+    preview: PreviewLink,
     levels: Arc<StreamLevels>,
 }
 
@@ -472,7 +483,9 @@ impl Runtime {
         unit.initialize()?;
 
         let workgroup = audio_workgroup(unit.raw())?;
-        let (monitor_control, tee) = monitor::monitor_pair(monitor_state);
+        let (monitor_control, tee, monitor_generation) =
+            monitor::monitor_pair(Arc::clone(&monitor_state));
+        let aec = SelfMonitorAec::new(monitor_state, monitor_generation);
         let shutdown = Arc::new(AtomicBool::new(false));
         let worker_shutdown = Arc::clone(&shutdown);
         let worker_fault = Arc::clone(&faulted);
@@ -481,7 +494,7 @@ impl Runtime {
             engine,
             input: input_consumer,
             output: output_producer,
-            tee,
+            preview: PreviewLink { aec, tee },
             levels,
         };
         let worker = thread::Builder::new()
@@ -620,9 +633,10 @@ impl Runtime {
     ///
     /// Returns [`CoreAudioError::NotRunning`] after [`Runtime::stop`], a
     /// refusal from [`crate::monitor::classify_monitor_target`] when the
-    /// default output must not receive the preview (loopback, aggregate,
-    /// or built-in speakers), and other [`CoreAudioError`] values when the
-    /// monitor AUHAL cannot start.
+    /// default output must not receive the preview (a virtual loopback
+    /// or an aggregate / multi-output device — the built-in speakers are
+    /// allowed since the self-monitor AEC), and other [`CoreAudioError`]
+    /// values when the monitor AUHAL cannot start.
     pub fn set_monitor(&mut self, enabled: bool) -> Result<(), CoreAudioError> {
         if enabled {
             if !self.running {
@@ -637,14 +651,31 @@ impl Runtime {
 
     /// Device the running preview monitor plays on (resolved and vetted
     /// at enable time), or `None` while the monitor is down. The control
-    /// plane re-vets this device with [`check_monitor_device`] while the
-    /// preview plays: the safety decision made at enable time can be
-    /// invalidated later (headphone jack unplugged → the same built-in
-    /// device flips to the internal speakers) without the monitor
-    /// noticing.
+    /// plane watches this device for disappearing from the device list;
+    /// its remaining safety is re-vetted by
+    /// [`Runtime::monitor_unsafe_reason`].
     #[must_use]
     pub fn monitor_device(&self) -> Option<u32> {
         self.monitor.active_device()
+    }
+
+    /// Why the device the running preview monitor plays on must no
+    /// longer receive it, or `None` while it stays safe (or no monitor
+    /// is up).
+    ///
+    /// The safety decision made at enable time can be invalidated later
+    /// without any device-list or default-output notification: on most
+    /// Macs, unplugging the headphone jack flips the *same* built-in
+    /// device's data source to the internal speakers. The vetted intent
+    /// was the headphones, so that flip stops the preview
+    /// ([`crate::monitor::classify_monitor_flip`] against the data
+    /// source recorded at enable time) — while a preview deliberately
+    /// started on the speakers keeps playing. The control plane polls
+    /// this while the preview is armed (data-source listener plus the
+    /// 1 Hz health poll).
+    #[must_use]
+    pub fn monitor_unsafe_reason(&self) -> Option<CoreAudioError> {
+        self.monitor.unsafe_reason()
     }
 }
 
@@ -883,13 +914,18 @@ impl Drop for WorkgroupGuard {
 /// blocking.
 fn run_block(
     engine: &mut SwitchingEngine,
-    input_block: &[f32],
+    input_block: &mut [f32],
     output_block: &mut [f32],
     levels: &StreamLevels,
-    tee: &mut MonitorTee,
+    preview: &mut PreviewLink,
     output: &mut Producer<f32>,
     faulted: &AtomicBool,
 ) {
+    // Self-monitor echo cancellation runs upstream of everything — the
+    // model, the dry/wet mixer's dry tap, the meters, and the tee — so
+    // every consumer hears the same echo-cancelled input. A complete
+    // bypass (one atomic load) unless the preview monitor is playing.
+    preview.aec.process_capture(input_block);
     if engine.process_block(input_block, output_block).is_err() {
         output_block.fill(0.0);
         faulted.store(true, Ordering::Release);
@@ -897,8 +933,21 @@ fn run_block(
     levels.update(input_block, output_block);
     // Preview branch: the tee only copies into its preallocated monitor
     // ring (skipped entirely while disarmed) and disarms itself on
-    // sustained feedback; it never delays the main path below.
-    let _teed = tee.feed(output_block);
+    // sustained feedback; it never delays the main path below. The
+    // canceller references exactly what the tee sent — the signal the
+    // monitor plays — and nothing when the tee is disarmed (the monitor
+    // then renders silence).
+    //
+    // Ordering note: WebRTC's documented per-frame order is render →
+    // capture, while this loop necessarily captures first (block k's
+    // render output does not exist until the engine has run on it).
+    // That skew is one frame of extra apparent echo delay, absorbed by
+    // AEC3's delay estimator exactly like the ~40 ms ring priming; the
+    // unit tests and probes run this same ordering. Do not "correct"
+    // the order — referencing block k before cancelling capture k would
+    // reference audio the monitor has not received yet.
+    let teed = preview.tee.feed(output_block);
+    preview.aec.feed_render(output_block, teed);
     for sample in output_block.iter().copied() {
         let _ignored = output.push(sample);
     }
@@ -915,7 +964,7 @@ fn processing_loop(
         mut engine,
         mut input,
         mut output,
-        mut tee,
+        mut preview,
         levels,
     } = links;
     levels.reset();
@@ -934,10 +983,10 @@ fn processing_loop(
                 if position == WORKER_BLOCK_SAMPLES {
                     run_block(
                         &mut engine,
-                        &input_block,
+                        &mut input_block,
                         &mut output_block,
                         &levels,
-                        &mut tee,
+                        &mut preview,
                         &mut output,
                         faulted,
                     );

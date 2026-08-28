@@ -5,7 +5,10 @@
 The Linux CI covers the common engine, real ONNX inference, multi-format CLI
 input (WAV/AIFF/AIFC/CAF/M4A), lock-free model switching, the native-rate
 input resampler and clock-drift servo (per-ratio delay reporting, drift
-cancellation, strength alignment through the resampler), and the C ABI. The
+cancellation, strength alignment through the resampler), the self-monitor
+AEC (synthetic-echo ERLE, double-talk and self-reference voice
+preservation, bit-exact bypass, session-reset behavior, and strength
+alignment through the canceller), and the C ABI. The
 macOS CI job additionally covers clippy/tests for `aarch64-apple-darwin`
 (including the AUHAL transport), SwiftLint in strict mode, the release
 app build with `swift -warnings-as-errors`, and an ad-hoc build of the
@@ -33,7 +36,14 @@ hybrid build (C engine + B transport) must be re-accepted.
 - A loopback driver: the Noican driver built from this repository
   (`scripts/build-driver.sh`, Developer-ID-signed; see docs/driver.md), or
   stock BlackHole 2ch as the Phase 0 fallback.
-- Headphones. Phase 0 has no AEC and must not be evaluated through speakers.
+- Headphones — still the reference listening condition, and required for
+  the regression half of the Preview checks. Since AEC Stage 1 (the
+  self-monitor echo canceller), headphones are **no longer mandatory for
+  Preview**: the built-in speakers are an accepted target (the engine
+  cancels its own monitor echo out of the microphone), and the
+  speaker-case checks below additionally require using them. Virtual
+  loopbacks and aggregate/multi-output targets are still refused —
+  those are digital routes AEC cannot address.
 - A 48 kHz-capable microphone (the built-in microphone works) for the
   aggregate-path checks, and a Bluetooth headset for the native-capture
   checks: Bluetooth headset microphones run on telephony profiles
@@ -329,20 +339,24 @@ Preview mode runs the engine and additionally plays the processed
 microphone signal on the system default output device through a second,
 output-only AUHAL fed by a dedicated monitor ring. It shares no state
 with the meeting-facing path except the lock-free tee in the inference
-worker. Preview and On both feed the virtual microphone; switching
-between them only arms or disarms the monitor.
+worker (and, since AEC Stage 1, the echo canceller upstream of the
+model, which references the teed signal). Preview and On both feed the
+virtual microphone; switching between them only arms or disarms the
+monitor.
 
 1. Connect wired headphones and make them the system default output.
 2. Select Preview in the menu (directly from Off, or from On).
 3. Speak: the processed voice must be audible with a modest constant
-   delay (engine latency plus ~40 ms of monitor ring priming). The delay
-   is by design, not a defect. The status line reads
+   delay (engine latency plus ~40 ms of monitor ring priming, plus
+   ~9 ms of AEC in the microphone path while the preview plays). The
+   delay is by design, not a defect. The status line reads
    `Previewing`.
-4. Headphones are mandatory: through speakers the processed microphone
-   feeds back into itself (Phase 0/1 has no AEC). There is deliberately
-   no persistent warning text — unsafe outputs are refused on press with
-   the reason shown, and the feedback guard explains itself when it
-   trips.
+4. Speakers are allowed since AEC Stage 1: the self-monitor echo
+   canceller subtracts the played monitor signal from the microphone
+   (see the dedicated speaker procedure below), with the feedback guard
+   kept as insurance. There is deliberately no persistent warning
+   text — unsafe outputs (digital routes) are refused on press with the
+   reason shown, and the feedback guard explains itself when it trips.
 5. Switch models while previewing: the voice must keep playing across
    the switch with only the bounded fade — no click, no full-scale
    burst, no dropout beyond the fade.
@@ -356,16 +370,16 @@ between them only arms or disarms the monitor.
      twice),
    - a Multi-Output Device (Audio MIDI Setup) containing BlackHole (the
      aggregate can hide the meeting loopback, and the feedback guard
-     cannot catch that route),
-   - the built-in speakers (the voice would feed straight back into the
-     microphone).
-   The press must be refused in place: the mode and the engine (whether
-   Off or On) stay exactly as they were — Off never starts the engine —
-   and one short line ("Preview needs headphones — <cause>.") explains
-   the reason under the control, without device UIDs. With the message
-   showing, switch the default output back to headphones: the message
-   must clear within about a second, and pressing Preview must then
-   work.
+     cannot catch that route).
+   Both are digital routes the microphone-side AEC cannot address by
+   principle. The press must be refused in place: the mode and the
+   engine (whether Off or On) stay exactly as they were — Off never
+   starts the engine — and one short line ("Preview can't use this
+   output — <cause>.") explains the reason under the control, without
+   device UIDs. With the message showing, switch the default output
+   back to headphones (or the built-in speakers — allowed since AEC
+   Stage 1): the message must clear within about a second, and pressing
+   Preview must then work.
 9. A monitor failure at runtime (one that passed the pre-flight check),
    including a feedback-guard trip: the pill stays on Preview with a red
    warning tint, the engine keeps running (status returns to
@@ -378,20 +392,25 @@ between them only arms or disarms the monitor.
 12. The monitor clock is not drift-corrected: over long previews an
     occasional short gap (underrun re-prime) or discarded block
     (overrun) is acceptable; persistent crackle is not.
-13. *(Optional, external speakers required)* With USB/Bluetooth speakers
-    as the default output — which the device-type check cannot classify —
-    select Preview and raise the volume until feedback starts: within
-    about half a second of sustained near-clipping output the feedback
-    guard must silence the preview on its own; the pill stays on Preview
-    with the red warning tint, the engine keeps running, and the menu
-    explains why. Re-tapping Preview re-arms the guard and the monitor.
+13. *(Optional, external speakers helpful)* With USB/Bluetooth speakers
+    as the default output, select Preview and raise the volume to the
+    extreme until the echo loop overwhelms the canceller and feedback
+    starts: within about half a second of sustained near-clipping output
+    the feedback guard must silence the preview on its own; the pill
+    stays on Preview with the red warning tint, the engine keeps
+    running, and the menu explains why. Re-tapping Preview re-arms the
+    guard and the monitor (and resets the canceller).
 14. **Headphone jack unplug** *(wired headphones in the built-in jack)*:
     with the jack as the default output, select Preview, then unplug the
     headphones while it plays. The preview must stop itself within about
     a second — before anything audible comes out of the internal
     speakers beyond a moment of bleed — with the pill staying on Preview
     in the red warning tint, the engine still running (status returns to
-    `Running`), and "Preview stopped: …" under the control. Two
+    `Running`), and "Preview stopped: the output switched to the
+    built-in speakers." under the control. This auto-stop is an *intent*
+    check, kept deliberately even though the AEC could cope with the
+    speakers: the user's vetted choice was the headphones, and the room
+    suddenly hearing the preview is not what they chose. Two
     machine-dependent paths must both land here: on most Macs the same
     built-in device flips its data source from `'hdpn'` to `'ispk'`
     (caught by a data-source listener on the monitor's own device, plus
@@ -399,18 +418,102 @@ between them only arms or disarms the monitor.
     separate device, the device disappears (caught by the device-list
     path, with a "device was disconnected" reason instead). Plug the
     headphones back in and re-tap Preview: the monitor must come back on
-    the vetted output.
+    the vetted output. A preview started *on* the built-in speakers
+    deliberately must **not** be stopped by this watcher (the flip check
+    compares against the enable-time choice).
 
 Changing the default output while previewing does not retarget the
 monitor in this version; switch to On and back to Preview to pick up the
 new device. The *safety* of the device the monitor actually plays on is,
 however, watched continuously while the preview plays (step 14): the
 enable-time-only vetting was a known hole where unplugging the jack let
-the refused internal speakers keep playing with only the feedback guard
-as insurance. Note the watcher re-vets the monitor's own device via
-`noican_monitor_device_error`, not `noican_monitor_target_error` — the
-latter judges the *current default output*, which may already have moved
-elsewhere while the monitor stays on the old device.
+the internal speakers keep playing with only the feedback guard as
+insurance. Note the watcher asks the engine via
+`noican_engine_monitor_unsafe_reason`, not
+`noican_monitor_target_error` — the latter judges the *current default
+output*, which may already have moved elsewhere while the monitor stays
+on the old device, and only the engine knows the enable-time data
+source the flip check compares against.
+
+## Preview on the built-in speakers (self-monitor AEC, AEC Stage 1)
+
+Preview's speaker echo is the one AEC case that needs no process tap:
+the sound leaving the speaker is the monitor signal the engine generated
+one branch earlier, so the far-end reference already exists in process.
+The canceller (WebRTC AEC3 via the pure-Rust `sonora` port) runs on the
+inference worker upstream of the model, engages only while the monitor
+actually plays, resets on every monitor toggle or output-device change,
+and relies on AEC3's built-in delay estimation to absorb the echo path
+(~40 ms ring priming + output/input device latency + the acoustic
+path). While it is engaged the microphone path carries ~9 ms of extra
+fixed delay; the dry/wet strength alignment is unaffected (the dry tap
+sits after the canceller — both paths shift together).
+
+Synthetic-echo behavior (ERLE, double-talk, bypass, reset) is covered by
+unit tests on every CI target; everything below is acoustic reality only
+hardware can show. **None of it is claimed as working until recorded
+here.**
+
+1. **Speakers reach Playing**: set the system default output to the
+   MacBook's built-in speakers at a moderate volume (~50%), select
+   Preview from Off. It must reach `Previewing` — no refusal message —
+   and must not howl. Expect to hear your own processed voice from the
+   speakers with the usual delay.
+2. **Convergence**: immediately after Playing starts, a faint echo/reverb
+   of the room loop may be audible for a moment while the canceller
+   learns the echo path. Record roughly how long it takes to disappear
+   (the synthetic tests converge within ~1–2 s; the acoustic path is
+   expected in that class). It must converge, not drift or build up.
+3. **Double-talk**: with the speakers playing your voice, keep talking
+   continuously. Your live voice in a simultaneous QuickTime recording
+   from the virtual device must stay intact — not gated, chopped, or
+   robotic (the canceller must subtract only the played echo, and the
+   near speech within ~1 dB in the synthetic double-talk test).
+4. **Sustained vowels**: hold long vowels at constant pitch (the
+   worst case for a canceller whose far end is your own delayed voice).
+   The tail of the vowel must not be eaten.
+5. **Killswitch at extreme volume**: raise the speaker volume to maximum
+   and provoke the loop (cup the microphone toward the speakers if
+   needed). The feedback guard must still trip within ~0.5 s of
+   sustained near-clipping and silence the preview with its message; the
+   engine keeps running. Also confirm the guard does **not** trip at
+   moderate volume during normal convergence (step 2).
+6. **Meeting path while previewing on speakers**: record from the
+   virtual device while the speaker preview plays and speak. The
+   recording must contain the echo-cancelled microphone (no doubled
+   voice from the speaker echo), because the canceller sits upstream of
+   the model for every consumer.
+7. **No regression on headphones / On mode**: re-run the headphone
+   Preview procedure above and an On-mode session; behavior, latency,
+   and quality must be unchanged (the canceller is a complete bypass
+   while the monitor is off, and headphones produce no echo for it to
+   act on).
+8. **Jack-unplug auto-stop retained**: re-run step 14 of the Preview
+   procedure; the unintended flip onto the speakers must still stop the
+   preview, while a preview deliberately started on the speakers keeps
+   playing through data-source notifications (e.g. volume changes).
+9. **CPU cost**: compare % CPU between Preview-on-headphones and
+   Preview-on-speakers; the AEC's addition must be small (single-digit
+   percent of a core; the synthetic real-time factor is ~0.007 on
+   x86-64).
+
+### Acceptance checklist (self-monitor AEC / speaker preview)
+
+1. **Playing on speakers**: Preview reaches `Previewing` on the built-in
+   speakers at moderate volume with no refusal and no howl; convergence
+   time recorded.
+2. **Double-talk survives**: simultaneous speech is not gated or eaten,
+   in the monitor and in a virtual-device recording.
+3. **Killswitch intact**: extreme volume still trips the guard within
+   ~0.5 s; moderate-volume convergence never false-trips it.
+4. **Headphone and On-mode regression**: zero change in the
+   headphone Preview and meeting-path behavior.
+5. **Unintended-flip auto-stop**: jack unplug still stops the preview
+   with the flip message; an explicit speaker preview is not stopped.
+6. **Latency delta recorded**: the virtual microphone's added delay
+   while the preview plays matches the ~9 ms class (cross-correlation
+   or listening check), and strength at 50% stays a single voice on
+   speakers.
 
 ## Level meters
 
@@ -595,12 +698,13 @@ Run the Preview and Level meters procedures above; the build passes when:
 4. **Main path isolation**: a QuickTime recording from the virtual
    device is unaffected by Preview ↔ On switches.
 5. **Unsafe output refusal**: pressing Preview while the default output
-   is the BlackHole/Noican loopback, a Multi-Output/aggregate device, or
-   the built-in speakers is refused in place — mode and engine
-   unchanged, the reason shown under the control — and the message
-   clears within about a second of a safe output returning.
-6. **Feedback guard** *(optional; needs external speakers)*: sustained
-   feedback through an unclassifiable output stops the preview by itself
+   is the BlackHole/Noican loopback or a Multi-Output/aggregate device
+   is refused in place — mode and engine unchanged, the reason shown
+   under the control — and the message clears within about a second of
+   a safe output returning. The built-in speakers are *not* refused
+   (self-monitor AEC; see the dedicated speaker checklist).
+6. **Feedback guard** *(optional; speakers at extreme volume)*: sustained
+   feedback that overwhelms the canceller stops the preview by itself
    within ~1 s; the pill stays on Preview with the red warning tint and
    the menu explains why.
 6b. **Jack-unplug auto-stop**: unplugging wired headphones from the

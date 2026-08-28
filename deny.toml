@@ -17,6 +17,12 @@ ignore = [
     # `paste` is unmaintained (archived) but is a build-time-only proc macro
     # pulled in transitively by tract 0.19; no runtime exposure.
     { id = "RUSTSEC-2024-0436", reason = "unmaintained build-time proc macro via tract; removed when deep_filter/tract is bumped" },
+    # memmap2 0.5 (pinned by tract 0.19 via deep_filter) passes caller-provided
+    # ranges to madvise/msync without bounds validation in `advise_range` /
+    # `flush[_async]_range`. tract only memory-maps trusted, SHA-256-pinned
+    # model files and never calls the range functions with external offsets.
+    # Revisit when the deep_filter dependency (and its tract pin) is bumped.
+    { id = "RUSTSEC-2026-0186", reason = "unsound range functions are unreachable; tract maps only trusted pinned model files" },
 ]
 
 [licenses]

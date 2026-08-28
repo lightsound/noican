@@ -24,6 +24,10 @@ noican-coreaudio = { path = "crates/noican-coreaudio" }
 thiserror = "2.0"
 crossbeam-queue = "0.3"
 rtrb = "0.4"
+# WebRTC AEC3 (pure Rust port) for the Preview self-monitor echo canceller
+# (docs/tech-research.md §7). BSD-3-Clause; engine selection rationale in
+# crates/noican-coreaudio/src/aec.rs.
+sonora = "0.2"
 # `tls-native` (an `ort` default) pulls in `openssl-sys`, which needs a
 # system OpenSSL; rustls keeps the build self-contained on every runner.
 # The remaining features mirror the crate's defaults.
