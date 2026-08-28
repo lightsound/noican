@@ -177,6 +177,14 @@ impl SelfMonitorAec {
     ///
     /// Called after the tee, once per block while engaged. No-op while
     /// bypassed.
+    ///
+    /// This runs *after* [`SelfMonitorAec::process_capture`] for the
+    /// same block — the reverse of WebRTC's documented render → capture
+    /// order — because block `k`'s render signal does not exist until
+    /// the engine has processed capture `k`. The one-frame skew only
+    /// adds to the apparent echo delay, which AEC3's delay estimator
+    /// absorbs like the rest of the echo path (see the worker's
+    /// `run_block`).
     pub fn feed_render(&mut self, block: &[f32], teed: bool) {
         if !teed || self.engaged.is_none() || block.len() != self.scratch.len() {
             return;
@@ -311,27 +319,42 @@ mod tests {
     }
 
     /// Builds the near/far pair of a speaker session: the far end is the
-    /// signal the monitor plays, whose echo returns `delay` samples
-    /// later at `gain`, on top of `voice` (empty slice for echo-only).
-    fn speaker_session(
-        far: &[f32],
-        voice: &[f32],
-        delay: usize,
-        gain: f32,
-    ) -> (Vec<f32>, Vec<f32>) {
+    /// signal the monitor plays, whose echo returns through `taps`
+    /// (`(delay_samples, gain)` per acoustic path), on top of `voice`
+    /// (empty slice for echo-only, empty taps for an echo-free route
+    /// such as headphones).
+    fn speaker_session(far: &[f32], voice: &[f32], taps: &[(usize, f32)]) -> (Vec<f32>, Vec<f32>) {
         let len = far.len();
         let mut near = vec![0.0_f32; len];
         let mut echo = vec![0.0_f32; len];
         for n in 0..len {
-            let echoed = if n >= delay {
-                far[n - delay] * gain
-            } else {
-                0.0
-            };
+            let echoed: f32 = taps
+                .iter()
+                .map(|&(delay, gain)| {
+                    if n >= delay {
+                        far[n - delay] * gain
+                    } else {
+                        0.0
+                    }
+                })
+                .sum();
             echo[n] = echoed;
             near[n] = echoed + voice.get(n).copied().unwrap_or(0.0);
         }
         (near, echo)
+    }
+
+    /// Power ratio of two equally long tails, in dB.
+    fn power_ratio_db(numerator: &[f32], denominator: &[f32]) -> f64 {
+        let num: f64 = numerator
+            .iter()
+            .map(|s| f64::from(*s) * f64::from(*s))
+            .sum();
+        let den: f64 = denominator
+            .iter()
+            .map(|s| f64::from(*s) * f64::from(*s))
+            .sum();
+        10.0 * (num / den.max(1e-12)).log10()
     }
 
     #[test]
@@ -358,7 +381,7 @@ mod tests {
         let far = pseudo_speech(total, 40.0);
         // 60 ms echo path: monitor ring priming (~40 ms) plus device and
         // acoustic latency — the deployment's expected shape.
-        let (near, echo) = speaker_session(&far, &[], 2_880, 0.5);
+        let (near, echo) = speaker_session(&far, &[], &[(2_880, 0.5)]);
         let (mut canceller, _state, _generation) = aec(MonitorState::Playing);
         let out = run_echo_session(&mut canceller, &near, &far, true);
         let tail = total - RATE * 2..total;
@@ -366,27 +389,46 @@ mod tests {
         assert!(erle > 20.0, "converged ERLE too low: {erle:.1} dB");
     }
 
+    /// Real rooms are not block-aligned single reflections: the delay
+    /// estimator must cope with an echo whose first tap falls inside a
+    /// 10 ms block (3,043 samples ≈ 6.34 blocks) and whose tail spreads
+    /// over several later reflections.
+    #[test]
+    fn erle_holds_on_a_non_block_aligned_multipath_echo() {
+        let total = RATE * 10;
+        let far = pseudo_speech(total, 40.0);
+        let (near, echo) =
+            speaker_session(&far, &[], &[(3_043, 0.5), (3_523, 0.25), (4_003, 0.125)]);
+        let (mut canceller, _state, _generation) = aec(MonitorState::Playing);
+        let out = run_echo_session(&mut canceller, &near, &far, true);
+        let tail = total - RATE * 2..total;
+        let erle = erle_db(&echo[tail.clone()], &out[tail]);
+        assert!(erle > 20.0, "multipath ERLE too low: {erle:.1} dB");
+    }
+
+    /// Double talk with an echo as loud as the voice: the near speech
+    /// must survive *and* the echo must demonstrably be removed — the
+    /// output must sit clearly below the uncancelled near mix (an inert
+    /// passthrough reads 0 dB against `near` and fails the second
+    /// bound).
     #[test]
     fn double_talk_preserves_the_near_speech() {
         let total = RATE * 10;
         let far = pseudo_speech(total, 40.0);
         let voice = pseudo_speech(total, 0.0);
-        let (near, _echo) = speaker_session(&far, &voice, 2_880, 0.5);
+        let (near, _echo) = speaker_session(&far, &voice, &[(2_880, 1.0)]);
         let (mut canceller, _state, _generation) = aec(MonitorState::Playing);
         let out = run_echo_session(&mut canceller, &near, &far, true);
         let tail = total - RATE * 2..total;
-        let voice_power: f64 = voice[tail.clone()]
-            .iter()
-            .map(|s| f64::from(*s) * f64::from(*s))
-            .sum();
-        let out_power: f64 = out[tail]
-            .iter()
-            .map(|s| f64::from(*s) * f64::from(*s))
-            .sum();
-        let ratio_db = 10.0 * (out_power / voice_power).log10();
+        let voice_ratio_db = power_ratio_db(&out[tail.clone()], &voice[tail.clone()]);
         assert!(
-            ratio_db.abs() < 6.0,
-            "double-talk output {ratio_db:.1} dB off the near speech level"
+            voice_ratio_db.abs() < 6.0,
+            "double-talk output {voice_ratio_db:.1} dB off the near speech level"
+        );
+        let near_ratio_db = power_ratio_db(&out[tail.clone()], &near[tail]);
+        assert!(
+            near_ratio_db < -1.5,
+            "equal-level echo not removed during double talk: {near_ratio_db:.1} dB vs the mix"
         );
     }
 
@@ -402,22 +444,36 @@ mod tests {
         // the engine latency (~20 ms).
         let mut far = vec![0.0_f32; total];
         far[960..total].copy_from_slice(&voice[..total - 960]);
-        let (near, _echo) = speaker_session(&far, &voice, 2_880, 0.5);
+        let (near, _echo) = speaker_session(&far, &voice, &[(2_880, 0.5)]);
         let (mut canceller, _state, _generation) = aec(MonitorState::Playing);
         let out = run_echo_session(&mut canceller, &near, &far, true);
         let tail = total - RATE * 2..total;
-        let voice_power: f64 = voice[tail.clone()]
-            .iter()
-            .map(|s| f64::from(*s) * f64::from(*s))
-            .sum();
-        let out_power: f64 = out[tail]
-            .iter()
-            .map(|s| f64::from(*s) * f64::from(*s))
-            .sum();
-        let ratio_db = 10.0 * (out_power / voice_power).log10();
+        let ratio_db = power_ratio_db(&out[tail.clone()], &voice[tail]);
         assert!(
             ratio_db.abs() < 6.0,
             "live voice {ratio_db:.1} dB off through the self-monitor reference"
+        );
+    }
+
+    /// The headphone regime: the monitor plays (so the canceller is
+    /// engaged and referencing the user's own delayed voice) but no
+    /// echo ever reaches the microphone. This is the previously shipped
+    /// Preview path now running through AEC3 — the filter must not
+    /// wander on a zero-gain echo path and eat the voice.
+    #[test]
+    fn engaged_canceller_stays_transparent_on_an_echo_free_route() {
+        let total = RATE * 10;
+        let voice = pseudo_speech(total, 0.0);
+        let mut far = vec![0.0_f32; total];
+        far[960..total].copy_from_slice(&voice[..total - 960]);
+        let (near, _echo) = speaker_session(&far, &voice, &[]);
+        let (mut canceller, _state, _generation) = aec(MonitorState::Playing);
+        let out = run_echo_session(&mut canceller, &near, &far, true);
+        let tail = total - RATE * 2..total;
+        let ratio_db = power_ratio_db(&out[tail.clone()], &voice[tail]);
+        assert!(
+            ratio_db.abs() < 3.0,
+            "echo-free route not transparent: {ratio_db:.1} dB"
         );
     }
 
@@ -432,12 +488,12 @@ mod tests {
         let (mut canceller, _state, generation) = aec(MonitorState::Playing);
 
         // Converge fully on a 60 ms path.
-        let (near_old, _echo) = speaker_session(&far, &[], 2_880, 0.5);
+        let (near_old, _echo) = speaker_session(&far, &[], &[(2_880, 0.5)]);
         let _converged = run_echo_session(&mut canceller, &near_old, &far, true);
 
         // The output device changes: new echo path (100 ms), new session.
         generation.fetch_add(1, Ordering::Release);
-        let (near_new, echo_new) = speaker_session(&far, &[], 4_800, 0.5);
+        let (near_new, echo_new) = speaker_session(&far, &[], &[(4_800, 0.5)]);
         let out = run_echo_session(&mut canceller, &near_new, &far, true);
         let tail = total - RATE * 2..total;
         let erle = erle_db(&echo_new[tail.clone()], &out[tail]);

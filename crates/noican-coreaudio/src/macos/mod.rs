@@ -937,6 +937,15 @@ fn run_block(
     // canceller references exactly what the tee sent — the signal the
     // monitor plays — and nothing when the tee is disarmed (the monitor
     // then renders silence).
+    //
+    // Ordering note: WebRTC's documented per-frame order is render →
+    // capture, while this loop necessarily captures first (block k's
+    // render output does not exist until the engine has run on it).
+    // That skew is one frame of extra apparent echo delay, absorbed by
+    // AEC3's delay estimator exactly like the ~40 ms ring priming; the
+    // unit tests and probes run this same ordering. Do not "correct"
+    // the order — referencing block k before cancelling capture k would
+    // reference audio the monitor has not received yet.
     let teed = preview.tee.feed(output_block);
     preview.aec.feed_render(output_block, teed);
     for sample in output_block.iter().copied() {

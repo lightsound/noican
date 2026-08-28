@@ -530,6 +530,11 @@ pub unsafe extern "C" fn noican_monitor_target_error(
 /// meant for event-driven and low-rate callers — not the 20 Hz poll
 /// path.
 ///
+/// This check exists to *stop* a preview whose safety is gone, so it
+/// fails closed: a poisoned control mutex (a panic elsewhere) reports a
+/// reason instead of silently reading as safe — unlike the fail-open
+/// getters, whose failure mode is merely a stale reading.
+///
 /// # Safety
 ///
 /// `handle` must be null or a live engine handle. A non-null `buffer`
@@ -543,12 +548,14 @@ pub unsafe extern "C" fn noican_engine_monitor_unsafe_reason(
     let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
         return 0;
     };
-    let reason = handle.state.lock().ok().and_then(|state| {
-        state
-            .runtime
-            .as_ref()
-            .and_then(Runtime::monitor_unsafe_reason)
-    });
+    let Ok(state) = handle.state.lock() else {
+        return unsafe { copy_string("the engine control state is unavailable", buffer, capacity) };
+    };
+    let reason = state
+        .runtime
+        .as_ref()
+        .and_then(Runtime::monitor_unsafe_reason);
+    drop(state);
     reason.map_or(0, |error| unsafe {
         copy_string(&error.to_string(), buffer, capacity)
     })
