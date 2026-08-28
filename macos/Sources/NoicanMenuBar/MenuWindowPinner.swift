@@ -86,11 +86,10 @@ struct MenuWindowPinner: NSViewRepresentable {
             })
         }
 
-        deinit {
-            for observer in observers {
-                NotificationCenter.default.removeObserver(observer)
-            }
-        }
+        // No deinit cleanup: Swift 6 forbids touching the non-Sendable
+        // observer tokens from a nonisolated deinit, and the normal
+        // teardown path (`dismantleNSView` → `attach(to: nil)`) already
+        // removes them; the blocks only capture weak references.
 
         private func detach() {
             for observer in observers {
