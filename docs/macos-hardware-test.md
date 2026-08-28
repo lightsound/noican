@@ -682,8 +682,9 @@ Run against the PR #14 build (`ad7defd`) on Apple hardware:
   metadata does not report, so `output_delay()` under-reported and the
   dry path ran 40 ms early. Fixed by a measurement-backed lookahead
   constant (cross-correlation of real speech against the aligned CLI
-  output now measures 0 residual lag on both profiles). **C5 must be
-  re-verified on hardware for DPDFNet2/8 after that fix.**
+  output now measures 0 residual lag on both profiles). **C5 re-verified
+  on hardware 2026-08-28 (owner-run, PR #15 build): the doubled voice at
+  50% strength is resolved on both DPDFNet2 and DPDFNet8.**
 - Observation, not a defect: transient noises (trackpad/keyboard clicks)
   pass through some models at 100% strength — click suppression is a
   property of each model (DPDFNet8, DeepFilterNet3, and Hush removed
