@@ -32,7 +32,7 @@ mod monitor;
 mod split;
 
 use monitor::MonitorControl;
-pub use monitor::{check_monitor_device, check_monitor_target};
+pub use monitor::check_monitor_target;
 
 type OSStatus = i32;
 type AudioUnit = *mut c_void;
@@ -633,9 +633,10 @@ impl Runtime {
     ///
     /// Returns [`CoreAudioError::NotRunning`] after [`Runtime::stop`], a
     /// refusal from [`crate::monitor::classify_monitor_target`] when the
-    /// default output must not receive the preview (loopback, aggregate,
-    /// or built-in speakers), and other [`CoreAudioError`] values when the
-    /// monitor AUHAL cannot start.
+    /// default output must not receive the preview (a virtual loopback
+    /// or an aggregate / multi-output device — the built-in speakers are
+    /// allowed since the self-monitor AEC), and other [`CoreAudioError`]
+    /// values when the monitor AUHAL cannot start.
     pub fn set_monitor(&mut self, enabled: bool) -> Result<(), CoreAudioError> {
         if enabled {
             if !self.running {
@@ -650,14 +651,31 @@ impl Runtime {
 
     /// Device the running preview monitor plays on (resolved and vetted
     /// at enable time), or `None` while the monitor is down. The control
-    /// plane re-vets this device with [`check_monitor_device`] while the
-    /// preview plays: the safety decision made at enable time can be
-    /// invalidated later (headphone jack unplugged → the same built-in
-    /// device flips to the internal speakers) without the monitor
-    /// noticing.
+    /// plane watches this device for disappearing from the device list;
+    /// its remaining safety is re-vetted by
+    /// [`Runtime::monitor_unsafe_reason`].
     #[must_use]
     pub fn monitor_device(&self) -> Option<u32> {
         self.monitor.active_device()
+    }
+
+    /// Why the device the running preview monitor plays on must no
+    /// longer receive it, or `None` while it stays safe (or no monitor
+    /// is up).
+    ///
+    /// The safety decision made at enable time can be invalidated later
+    /// without any device-list or default-output notification: on most
+    /// Macs, unplugging the headphone jack flips the *same* built-in
+    /// device's data source to the internal speakers. The vetted intent
+    /// was the headphones, so that flip stops the preview
+    /// ([`crate::monitor::classify_monitor_flip`] against the data
+    /// source recorded at enable time) — while a preview deliberately
+    /// started on the speakers keeps playing. The control plane polls
+    /// this while the preview is armed (data-source listener plus the
+    /// 1 Hz health poll).
+    #[must_use]
+    pub fn monitor_unsafe_reason(&self) -> Option<CoreAudioError> {
+        self.monitor.unsafe_reason()
     }
 }
 
