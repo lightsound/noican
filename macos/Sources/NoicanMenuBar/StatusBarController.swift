@@ -82,7 +82,13 @@ final class StatusBarController: NSObject {
         popover.delegate = self
         popover.contentViewController = hosting
         self.popover = popover
+        // The app must be active while the menu shows (MenuBarExtra did
+        // this internally): an inactive app renders the popover with the
+        // dimmed inactive-window materials, and transient dismissal on
+        // outside clicks only works reliably for the active app.
+        NSApp.activate()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
     }
 
     private func closeMenu() {
