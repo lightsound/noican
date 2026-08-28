@@ -43,11 +43,13 @@ struct MenuView: View {
             footer
         }
         .frame(width: 320)
-        // Ease the layout when status text or sections change height, so
-        // the mode control glides instead of jumping (its sliding pill is
-        // additionally isolated via geometryGroup in ModePicker).
-        .animation(.easeOut(duration: 0.15), value: model.phase)
-        .animation(.easeOut(duration: 0.15), value: model.mode)
+        // Deliberately no layout animation on height-changing state:
+        // every intermediate height would update the hosting
+        // controller's preferredContentSize and make the popover chase
+        // the animation frame by frame, which visibly warped the layout
+        // (including the mode control's sliding pill — its own spring in
+        // ModePicker is unaffected and still animates). System menus
+        // change height instantly too.
         // Poll the engine's peak meters (and the feedback-trip flag) only
         // while the popover is open; the task is cancelled when the view
         // disappears.

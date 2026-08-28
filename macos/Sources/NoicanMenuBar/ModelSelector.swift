@@ -250,7 +250,9 @@ private struct HoverCardPresenter: NSViewRepresentable {
         func hide() {
             desired = nil
             if popover?.isShown == true {
-                popover?.performClose(nil)
+                // close() is synchronous; performClose would defer, and
+                // a card outliving its rows is what this must prevent.
+                popover?.close()
             }
         }
 
@@ -276,7 +278,11 @@ private struct HoverCardPresenter: NSViewRepresentable {
             hosting.sizingOptions = .preferredContentSize
             let popover = NSPopover()
             popover.behavior = .applicationDefined
-            popover.animates = true
+            // No show/hide animation: an animated close is asynchronous
+            // and can overlap the menu's own resize when the list
+            // collapses while a card is up (the card must be gone before
+            // the rows are).
+            popover.animates = false
             popover.contentViewController = hosting
             self.hosting = hosting
             self.popover = popover
