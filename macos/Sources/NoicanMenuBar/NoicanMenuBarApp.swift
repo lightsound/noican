@@ -44,6 +44,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// Every state draws into the same fixed-size canvas: the glyphs have
 /// different intrinsic widths, and a status item that changes width
 /// shifts the menu's anchor on every mode change.
+///
+/// Main-actor bound: the image cache is UI state and every caller is
+/// the status-item controller.
+@MainActor
 enum MenuBarIcon {
     /// The prerendered status-item image for a mode × health state.
     static func image(mode: EngineMode, isUnfulfilled: Bool) -> NSImage {
