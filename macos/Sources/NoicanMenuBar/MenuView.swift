@@ -210,7 +210,11 @@ struct MenuView: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(StaticButtonStyle())
+            // Deliberately no expand/collapse animation: animating the
+            // content height fights the MenuBarExtra window resize
+            // (AppKit windows anchor at their bottom-left corner, so
+            // mid-animation frames shifted the whole menu downward).
             if isSettingsExpanded {
                 modelSection
                 strengthSection
@@ -218,7 +222,6 @@ struct MenuView: View {
         }
         .padding(.horizontal, contentPadding)
         .padding(.vertical, 10)
-        .animation(.easeOut(duration: 0.15), value: isSettingsExpanded)
     }
 
     /// What the collapsed row advertises: the active model and
@@ -387,7 +390,7 @@ private struct MicrophoneRow: View {
                 }
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(StaticButtonStyle())
         .foregroundStyle(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
         .disabled(isBusy)
         .onHover { hovering in

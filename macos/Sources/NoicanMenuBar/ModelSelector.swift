@@ -176,7 +176,7 @@ private struct ModelRow: View {
                 }
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(StaticButtonStyle())
         .foregroundStyle(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
         .disabled(isBusy || model.needsEnrollment)
         .onHover { hovering in
