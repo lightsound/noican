@@ -86,11 +86,6 @@ struct ModePicker: View {
     }
 }
 
-/// A button style with no pressed-state visual at all: the sliding pill
-/// is the selection feedback, and the plain style's momentary dimming
-/// read as flicker on the segments.
-private struct StaticButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-    }
-}
+// The segments use the shared StaticButtonStyle (StaticButtonStyle.swift):
+// the sliding pill is the selection feedback, and the plain style's
+// momentary dimming read as flicker on the segments.

@@ -5,13 +5,21 @@ import SwiftUI
 /// The menu bar popover, top to bottom: a status header, the single
 /// Off / Preview / On mode control, a monitoring section that exists only
 /// while the engine runs (level bars, and the headphone caption while
-/// previewing), then the settings pickers — Microphone first, Model last,
-/// since the model is rarely changed once chosen — and a utility footer.
-/// Spacing and typography follow macOS menu bar app conventions (14 pt
-/// content margins, caption-weight section labels, secondary text for
-/// status detail).
+/// previewing), the Microphone list, a collapsed-by-default
+/// "Model & strength" section holding the model selector and strength
+/// slider (progressive disclosure: the default model is meant to be good
+/// enough that first-time users only touch the mode control and the
+/// microphone), and a utility footer. Spacing and typography follow
+/// macOS menu bar app conventions (14 pt content margins, caption-weight
+/// section labels, secondary text for status detail).
 struct MenuView: View {
     @ObservedObject var state: AppState
+
+    /// Whether the "Model & strength" section is expanded. Pure view
+    /// chrome, so it lives in AppStorage rather than the reducer;
+    /// remembered across launches so power users keep it open while
+    /// first-time users start with the short menu.
+    @AppStorage("isSettingsExpanded") private var isSettingsExpanded = false
 
     private let contentPadding: CGFloat = 14
 
@@ -35,11 +43,13 @@ struct MenuView: View {
             footer
         }
         .frame(width: 320)
-        // Ease the layout when status text or sections change height, so
-        // the mode control glides instead of jumping (its sliding pill is
-        // additionally isolated via geometryGroup in ModePicker).
-        .animation(.easeOut(duration: 0.15), value: model.phase)
-        .animation(.easeOut(duration: 0.15), value: model.mode)
+        // Deliberately no layout animation on height-changing state:
+        // every intermediate height would update the hosting
+        // controller's preferredContentSize and make the popover chase
+        // the animation frame by frame, which visibly warped the layout
+        // (including the mode control's sliding pill — its own spring in
+        // ModePicker is unaffected and still animates). System menus
+        // change height instantly too.
         // Poll the engine's peak meters (and the feedback-trip flag) only
         // while the popover is open; the task is cancelled when the view
         // disappears.
@@ -122,7 +132,9 @@ struct MenuView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let reason = model.messages.previewUnavailableReason {
-                Text("Preview is unavailable: \(reason)")
+                // One short sentence: the engine reports the cause (no
+                // UID, no remedy); the remedy is always the same.
+                Text("Preview needs headphones — \(reason).")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -181,63 +193,109 @@ struct MenuView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Model")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.secondary)
-                // User picks route through selectModel; programmatic
-                // reverts write the property directly and must not
-                // re-enter the apply path (they would wipe the failure
-                // message they accompany).
-                Picker("Model", selection: Binding(
-                    get: { model.selectedModelID },
-                    set: { state.selectModel($0) }
-                )) {
-                    ForEach(state.models) { entry in
-                        Text(modelLabel(entry))
-                            .tag(entry.id)
-                            // Enrollment-gated models (tse-48k) stay visible
-                            // but unselectable until the app grows an
-                            // enrollment flow.
-                            .selectionDisabled(entry.needsEnrollment)
-                    }
-                }
-                .labelsHidden()
-                .disabled(model.isBusy)
-                if let message = model.messages.modelError {
-                    Text(message)
-                        .font(.caption2)
-                        .foregroundStyle(.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Strength")
+            // Progressive disclosure: the default model is meant to be
+            // good enough that first-time users only touch the mode
+            // control and the microphone, so the model list and the
+            // strength slider live behind this header. The expansion
+            // state is remembered across launches (power users keep it
+            // open; new users start with the short menu). The collapsed
+            // row advertises what is inside — the active model and
+            // strength — so the fold never hides state.
+            Button {
+                isSettingsExpanded.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Model & strength")
                         .font(.caption)
                         .fontWeight(.semibold)
                         .foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                    Text(intensityLabel)
-                        .font(.caption)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
-                        .monospacedDigit()
+                        .rotationEffect(.degrees(isSettingsExpanded ? 90 : 0))
+                    Spacer(minLength: 0)
+                    if !isSettingsExpanded {
+                        Text(settingsSummary)
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                 }
-                // Dry/wet mix applied inside the inference worker as one
-                // atomic value: dragging never rebuilds the engine and
-                // stays live during busy transitions, so the slider is
-                // deliberately not disabled with the pickers. Preview
-                // plays the same mix the virtual microphone receives.
-                Slider(value: Binding(
-                    get: { model.intensity },
-                    set: { state.setIntensity($0) }
-                ), in: 0...1)
-                .controlSize(.small)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(StaticButtonStyle())
+            // Deliberately no expand/collapse animation: every animation
+            // frame would change the content's ideal height and make the
+            // menu popover chase it (see the note on MenuView.body).
+            if isSettingsExpanded {
+                modelSection
+                strengthSection
             }
         }
         .padding(.horizontal, contentPadding)
         .padding(.vertical, 10)
+    }
+
+    /// What the collapsed row advertises: the active model and
+    /// strength, so folding the controls never hides state.
+    private var settingsSummary: String {
+        let modelName = state.models
+            .first { $0.id == model.selectedModelID }?
+            .displayName ?? model.selectedModelID
+        return "\(modelName) · \(intensityLabel)"
+    }
+
+    private var modelSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Model")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+            // User picks route through selectModel; programmatic
+            // reverts write the reducer state directly and must not
+            // re-enter the apply path (they would wipe the failure
+            // message they accompany). Hover any row for the model's
+            // profile card.
+            ModelSelector(
+                models: state.models,
+                selectedID: model.selectedModelID,
+                isBusy: model.isBusy,
+                select: { state.selectModel($0) }
+            )
+            if let message = model.messages.modelError {
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var strengthSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Strength")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Text(intensityLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            // Dry/wet mix applied inside the inference worker as one
+            // atomic value: dragging never rebuilds the engine and
+            // stays live during busy transitions, so the slider is
+            // deliberately not disabled with the pickers. Preview
+            // plays the same mix the virtual microphone receives.
+            Slider(value: Binding(
+                get: { model.intensity },
+                set: { state.setIntensity($0) }
+            ), in: 0...1)
+            .controlSize(.small)
+        }
     }
 
     /// All selectable inputs as an always-visible, checkmarked list
@@ -263,12 +321,6 @@ struct MenuView: View {
                 }
             }
         }
-    }
-
-    private func modelLabel(_ model: ModelInfo) -> String {
-        model.needsEnrollment
-            ? "\(model.displayName) — requires enrollment"
-            : model.displayName
     }
 
     /// Whole-percent strength readout next to the section label.
@@ -358,7 +410,7 @@ private struct MicrophoneRow: View {
                 }
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(StaticButtonStyle())
         .foregroundStyle(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
         .disabled(isBusy)
         .onHover { hovering in

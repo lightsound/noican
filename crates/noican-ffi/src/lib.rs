@@ -771,6 +771,67 @@ pub extern "C" fn noican_model_needs_enrollment(index: usize) -> i32 {
     catalog_entry(index).map_or(0, |entry| i32::from(entry.needs_enrollment))
 }
 
+/// Copies a model's one-line picker tagline by catalog index.
+///
+/// Returns the required byte count including the terminating NUL, or zero
+/// for an invalid index.
+///
+/// # Safety
+///
+/// A non-null `buffer` must be writable for `capacity` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_model_tagline(
+    index: usize,
+    buffer: *mut c_char,
+    capacity: usize,
+) -> usize {
+    catalog_entry(index).map_or(0, |entry| unsafe {
+        copy_string(entry.traits.tagline, buffer, capacity)
+    })
+}
+
+/// Copies the raw facts behind a model's ratings (native rate, measured
+/// delay, size) by catalog index, for tooltips.
+///
+/// Returns the required byte count including the terminating NUL, or zero
+/// for an invalid index.
+///
+/// # Safety
+///
+/// A non-null `buffer` must be writable for `capacity` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_model_details(
+    index: usize,
+    buffer: *mut c_char,
+    capacity: usize,
+) -> usize {
+    catalog_entry(index).map_or(0, |entry| unsafe {
+        copy_string(entry.traits.details, buffer, capacity)
+    })
+}
+
+/// One picker rating for the model at `index`, 0–5 with "more is better".
+///
+/// `trait_id` follows `NoicanModelTrait` in noican.h: 0 = noise removal,
+/// 1 = voice quality, 2 = responsiveness (inverse latency),
+/// 3 = efficiency (inverse compute cost).
+///
+/// Returns -1 for an invalid index or trait selector.
+#[unsafe(no_mangle)]
+pub extern "C" fn noican_model_rating(index: usize, trait_id: i32) -> i32 {
+    let Some(entry) = catalog_entry(index) else {
+        return -1;
+    };
+    let rating = match trait_id {
+        0 => entry.traits.noise_removal,
+        1 => entry.traits.voice_quality,
+        2 => entry.traits.responsiveness,
+        3 => entry.traits.efficiency,
+        _ => return -1,
+    };
+    i32::from(rating)
+}
+
 /// Runs slow, panic-capable work (ONNX session construction, tar
 /// extraction, ...) behind a panic guard: a Rust panic crossing the C ABI
 /// would abort the whole app, so it is converted into an error string
@@ -1037,6 +1098,48 @@ mod tests {
         }
         #[cfg(not(target_os = "macos"))]
         assert!(required > 0, "portable builds always refuse");
+    }
+
+    #[test]
+    fn model_traits_are_exposed_for_every_catalog_entry() {
+        for index in 0..noican_model_count() {
+            let tagline = read_string(|buffer, capacity| unsafe {
+                noican_model_tagline(index, buffer, capacity)
+            })
+            .expect("every entry has a tagline");
+            assert!(!tagline.is_empty(), "entry {index}: empty tagline");
+            let details = read_string(|buffer, capacity| unsafe {
+                noican_model_details(index, buffer, capacity)
+            })
+            .expect("every entry has details");
+            assert!(!details.is_empty(), "entry {index}: empty details");
+            for trait_id in 0..4 {
+                let rating = noican_model_rating(index, trait_id);
+                assert!(
+                    (0..=5).contains(&rating),
+                    "entry {index} trait {trait_id}: rating {rating} out of range"
+                );
+            }
+        }
+        // The bypass profile is fixed: nothing removed, everything else full.
+        assert_eq!(noican_model_rating(0, 0), 0);
+        assert_eq!(noican_model_rating(0, 1), 5);
+    }
+
+    #[test]
+    fn model_trait_getters_reject_invalid_indices_and_selectors() {
+        let out_of_range = noican_model_count();
+        assert_eq!(noican_model_rating(out_of_range, 0), -1);
+        assert_eq!(noican_model_rating(0, 4), -1);
+        assert_eq!(noican_model_rating(0, -1), -1);
+        assert_eq!(
+            unsafe { noican_model_tagline(out_of_range, ptr::null_mut(), 0) },
+            0
+        );
+        assert_eq!(
+            unsafe { noican_model_details(out_of_range, ptr::null_mut(), 0) },
+            0
+        );
     }
 
     #[test]

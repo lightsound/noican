@@ -152,10 +152,25 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
    - the Off / Preview / On mode control (sliding-pill segments),
    - the Microphone list showing every physical input with a checkmark
      on the selection,
-   - the Model picker (below the Microphone list) listing **every
-     registry stage**: Passthrough, FastEnhancer T/B/S/M/L, DPDFNet2,
-     DPDFNet8, DeepFilterNet3, UL-UNAS, Hush, and TSE Conv-TasNet 48k
-     marked "requires enrollment".
+   - a "Model & strength" disclosure row (below the Microphone list),
+     collapsed on first launch; its expansion state is remembered
+     across launches, and while collapsed the row shows the active
+     model and strength (e.g. "FastEnhancer-B 48k · 100%"). Expanding
+     it reveals the Model selector and the Strength slider.
+   - the Model selector (inside "Model & strength"): **every registry
+     stage** as rows with a checkmark on the selection — Passthrough, FastEnhancer
+     T/B/S/M/L, DPDFNet2, DPDFNet8, DeepFilterNet3, UL-UNAS, Hush, and
+     TSE Conv-TasNet 48k disabled as "requires enrollment"; the default
+     model row is annotated "Default". Hovering a row pops the model's
+     profile card out beside that row after a short delay: name, tag,
+     four dot ratings (Noise removal / Voice quality / Responsiveness /
+     Efficiency, all "more is better"), and the raw facts (native rate,
+     measured delay, size). Once up, the card must **stay up while the
+     pointer moves between rows, following the hovered row's position
+     and swapping its content in place** (no per-row blink or
+     re-present animation), hide shortly after the pointer leaves the
+     rows, and — critically — hovering must never close the menu
+     popover itself.
    The monitoring section (level bars) must be absent while the mode is
    Off and appear while the engine runs.
 4. Select a physical microphone and `FastEnhancer-B 48k`.
@@ -346,10 +361,11 @@ between them only arms or disarms the monitor.
      microphone).
    The press must be refused in place: the mode and the engine (whether
    Off or On) stay exactly as they were — Off never starts the engine —
-   and "Preview is unavailable: …" explains the reason under the
-   control. With the message showing, switch the default output back to
-   headphones: the message must clear within about a second, and
-   pressing Preview must then work.
+   and one short line ("Preview needs headphones — <cause>.") explains
+   the reason under the control, without device UIDs. With the message
+   showing, switch the default output back to headphones: the message
+   must clear within about a second, and pressing Preview must then
+   work.
 9. A monitor failure at runtime (one that passed the pre-flight check),
    including a feedback-guard trip: the pill stays on Preview with a red
    warning tint, the engine keeps running (status returns to
@@ -415,10 +431,10 @@ a shared −60…0 dB scale and are shown only while the engine runs.
 6. Select Off: the monitoring section disappears (and reappears at zero
    on the next start).
 7. Close the popover and watch the app in Activity Monitor for a minute:
-   CPU use and wake-ups must drop back to idle. The 20 Hz level poll is
-   bound to the popover view's lifetime, but `MenuBarExtra(.window)` has
-   kept hidden content views alive on some macOS releases — this check
-   catches that regression on the tested OS version.
+   CPU use and wake-ups must drop back to idle. The menu content (and
+   with it the 20 Hz level poll) is built when the status-item popover
+   opens and torn down when it closes — this check catches a lifecycle
+   regression on the tested OS version.
 
 ## Settings persistence
 

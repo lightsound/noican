@@ -2,11 +2,27 @@ import CNoican
 import CoreAudio
 import Foundation
 
+/// Picker ratings of one model, 0–5 with "more is better" on every axis
+/// (the registry inverts latency into responsiveness and compute cost
+/// into efficiency so a longer bar always means better).
+struct ModelRatings: Hashable {
+    let noiseRemoval: Int
+    let voiceQuality: Int
+    let responsiveness: Int
+    let efficiency: Int
+}
+
 /// A model entry exposed by the Rust registry (never hardcoded here).
 struct ModelInfo: Hashable, Identifiable {
     let id: String
     let displayName: String
     let needsEnrollment: Bool
+    /// One-line purpose tag for the picker row.
+    let tagline: String
+    /// Raw facts behind the ratings (native rate, measured delay, size),
+    /// shown as a tooltip.
+    let details: String
+    let ratings: ModelRatings
 }
 
 /// Thin wrapper over the Rust C ABI. The handle is internally synchronized
@@ -165,9 +181,27 @@ final class RustEngine: @unchecked Sendable {
             return ModelInfo(
                 id: id,
                 displayName: displayName,
-                needsEnrollment: noican_model_needs_enrollment(index) != 0
+                needsEnrollment: noican_model_needs_enrollment(index) != 0,
+                tagline: copyString { buffer, capacity in
+                    noican_model_tagline(index, buffer, capacity)
+                } ?? "",
+                details: copyString { buffer, capacity in
+                    noican_model_details(index, buffer, capacity)
+                } ?? "",
+                ratings: ModelRatings(
+                    noiseRemoval: rating(index, NOICAN_TRAIT_NOISE_REMOVAL),
+                    voiceQuality: rating(index, NOICAN_TRAIT_VOICE_QUALITY),
+                    responsiveness: rating(index, NOICAN_TRAIT_RESPONSIVENESS),
+                    efficiency: rating(index, NOICAN_TRAIT_EFFICIENCY)
+                )
             )
         }
+    }
+
+    /// One registry rating, clamped into the displayable 0–5 range (the
+    /// FFI returns -1 only for arguments this caller never passes).
+    private static func rating(_ index: Int, _ trait: NoicanModelTrait) -> Int {
+        max(0, Int(noican_model_rating(index, Int32(trait.rawValue))))
     }
 
     private var lastError: String {

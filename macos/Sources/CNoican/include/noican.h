@@ -63,6 +63,22 @@ size_t noican_model_id(size_t index, char *buffer, size_t capacity);
 size_t noican_model_display_name(size_t index, char *buffer, size_t capacity);
 int32_t noican_model_needs_enrollment(size_t index);
 
+/* Picker-facing model characteristics. Ratings are 0-5 with "more is
+ * better" on every axis (latency is exposed as responsiveness, compute
+ * cost as efficiency); the tagline is a one-line purpose tag for picker
+ * rows and the details string carries the raw facts (native rate,
+ * measured delay, size) for tooltips. Values mirror the Rust
+ * ModelTraits registry and are data, not UI copy baked into the app. */
+typedef enum {
+  NOICAN_TRAIT_NOISE_REMOVAL = 0,
+  NOICAN_TRAIT_VOICE_QUALITY = 1,
+  NOICAN_TRAIT_RESPONSIVENESS = 2,
+  NOICAN_TRAIT_EFFICIENCY = 3,
+} NoicanModelTrait;
+int32_t noican_model_rating(size_t index, int32_t trait_id);
+size_t noican_model_tagline(size_t index, char *buffer, size_t capacity);
+size_t noican_model_details(size_t index, char *buffer, size_t capacity);
+
 #ifdef __cplusplus
 }
 #endif

@@ -27,7 +27,9 @@ final class AppState: ObservableObject {
     /// Selectable models, read from the Rust registry at launch.
     let models = RustEngine.models()
 
-    private static let defaultModelID = "fastenhancer-b"
+    /// Model selected on first launch (also labeled "Default" in the
+    /// model list).
+    nonisolated static let defaultModelID = "fastenhancer-b"
 
     /// `UserDefaults` keys for the persisted preferences. Only picker
     /// state is persisted (microphone UID, model id, strength) — never
