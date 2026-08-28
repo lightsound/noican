@@ -181,14 +181,18 @@ struct PreviewTests {
 
     @Test("An unsafe output refuses Preview in place: mode and engine untouched")
     func unsafeOutputRefusal() {
+        // Since the self-monitor AEC, only digital routes are refused
+        // (loopback, aggregate/multi-output) — the built-in speakers
+        // pre-flight clean. The reducer passes the engine's reason
+        // through either way.
         let (refused, effects) = step(
             readyModel(),
-            tap(.preview, monitorTargetError: "built-in speakers would feed back")
+            tap(.preview, monitorTargetError: "the system output is a virtual loopback device")
         )
         #expect(refused.mode == .off, "the mode never moves on a refusal")
         #expect(refused.machine == .settled(.off), "the engine never starts")
         #expect(effects.isEmpty)
-        #expect(refused.messages.previewUnavailableReason == "built-in speakers would feed back")
+        #expect(refused.messages.previewUnavailableReason == "the system output is a virtual loopback device")
 
         // The message clears live once the output becomes safe…
         let cleared = drive(refused, [.monitorTargetErrorChanged(nil)])
@@ -274,9 +278,11 @@ struct TripTests {
 struct MonitorSafetyTests {
     @Test("An unsafe target stops the playing preview and explains why")
     func unsafeTargetStopsPreview() {
+        // The shape the jack-unplug flip produces: the output moved onto
+        // the internal speakers the user did not choose (a preview
+        // deliberately started on the speakers never dispatches this).
         let previewing = runningModel(mode: .preview)
-        let reason = "the system default output is the built-in speakers, "
-            + "which would feed back; connect headphones and try again"
+        let reason = "the output switched to the built-in speakers"
         let (stopped, effects) = step(previewing, .monitorTargetBecameUnsafe(reason: reason))
         #expect(effects == [.setMonitor(enabled: false)])
         #expect(stopped.mode == .preview, "intent is kept")
