@@ -143,19 +143,13 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
    - the Off / Preview / On mode control (sliding-pill segments),
    - the Microphone list showing every physical input with a checkmark
      on the selection,
-   - a "Quality" row of preset capsules (Light / Balanced / Max /
-     Voices) above the Microphone list: each maps to one representative
-     model (FastEnhancer-T / FastEnhancer-B / DPDFNet8 / Hush) through
-     the ordinary model-selection path, the active capsule follows the
-     selected model, and any other model shows "Custom" next to the
-     header. Hovering a capsule explains its trade-off.
-   - a "Settings" disclosure row (below the Microphone list), collapsed
-     on first launch; its expansion state is remembered across
-     launches, and while collapsed the row shows the active model and
-     strength (e.g. "FastEnhancer-B 48k · 100%"). Expanding it reveals
-     the Model selector and the Strength slider.
-   - the Model selector (inside Settings): **every registry stage** as
-     rows with a checkmark on the selection — Passthrough, FastEnhancer
+   - a "Model & strength" disclosure row (below the Microphone list),
+     collapsed on first launch; its expansion state is remembered
+     across launches, and while collapsed the row shows the active
+     model and strength (e.g. "FastEnhancer-B 48k · 100%"). Expanding
+     it reveals the Model selector and the Strength slider.
+   - the Model selector (inside "Model & strength"): **every registry
+     stage** as rows with a checkmark on the selection — Passthrough, FastEnhancer
      T/B/S/M/L, DPDFNet2, DPDFNet8, DeepFilterNet3, UL-UNAS, Hush, and
      TSE Conv-TasNet 48k disabled as "requires enrollment"; the default
      model row is annotated "Default". Hovering a row pops the model's

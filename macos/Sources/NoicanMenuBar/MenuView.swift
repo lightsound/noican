@@ -5,19 +5,20 @@ import SwiftUI
 /// The menu bar popover, top to bottom: a status header, the single
 /// Off / Preview / On mode control, a monitoring section that exists only
 /// while the engine runs (level bars, and the headphone caption while
-/// previewing), the Microphone list, a collapsed-by-default Settings
-/// section holding the model selector and strength slider (progressive
-/// disclosure: first-time users only touch the mode control and the
+/// previewing), the Microphone list, a collapsed-by-default
+/// "Model & strength" section holding the model selector and strength
+/// slider (progressive disclosure: the default model is meant to be good
+/// enough that first-time users only touch the mode control and the
 /// microphone), and a utility footer. Spacing and typography follow
 /// macOS menu bar app conventions (14 pt content margins, caption-weight
 /// section labels, secondary text for status detail).
 struct MenuView: View {
     @ObservedObject var state: AppState
 
-    /// Whether the Settings section (model + strength) is expanded.
-    /// Pure view chrome, so it lives in AppStorage rather than the
-    /// reducer; remembered across launches so power users keep it open
-    /// while first-time users start with the short menu.
+    /// Whether the "Model & strength" section is expanded. Pure view
+    /// chrome, so it lives in AppStorage rather than the reducer;
+    /// remembered across launches so power users keep it open while
+    /// first-time users start with the short menu.
     @AppStorage("isSettingsExpanded") private var isSettingsExpanded = false
 
     private let contentPadding: CGFloat = 14
@@ -165,7 +166,6 @@ struct MenuView: View {
 
     private var settings: some View {
         VStack(alignment: .leading, spacing: 12) {
-            qualitySection
             VStack(alignment: .leading, spacing: 4) {
                 Text("Mic")
                     .font(.caption)
@@ -179,18 +179,19 @@ struct MenuView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            // Progressive disclosure: first-time users only touch the
-            // mode control, quality preset, and microphone, so the full
-            // model list and the strength slider live behind this
-            // header. The expansion state is remembered across launches
-            // (power users keep it open; new users start with the short
-            // menu). The collapsed row advertises what is inside — the
-            // active model and strength — so the fold never hides state.
+            // Progressive disclosure: the default model is meant to be
+            // good enough that first-time users only touch the mode
+            // control and the microphone, so the model list and the
+            // strength slider live behind this header. The expansion
+            // state is remembered across launches (power users keep it
+            // open; new users start with the short menu). The collapsed
+            // row advertises what is inside — the active model and
+            // strength — so the fold never hides state.
             Button {
                 isSettingsExpanded.toggle()
             } label: {
                 HStack(spacing: 4) {
-                    Text("Settings")
+                    Text("Model & strength")
                         .font(.caption)
                         .fontWeight(.semibold)
                         .foregroundStyle(.secondary)
@@ -220,54 +221,8 @@ struct MenuView: View {
         .animation(.easeOut(duration: 0.15), value: isSettingsExpanded)
     }
 
-    /// Outcome-first shortcuts over the model catalog: one tap routes
-    /// through the same reducer path as picking the mapped model in the
-    /// Settings list. The active preset is *derived* from the selected
-    /// model, so the two controls can never disagree; any other model
-    /// reads as "Custom".
-    private var qualitySection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("Quality")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-                if activePreset == nil {
-                    Text("Custom")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            HStack(spacing: 6) {
-                ForEach(availablePresets) { preset in
-                    PresetButton(
-                        preset: preset,
-                        isActive: preset == activePreset,
-                        isBusy: model.isBusy
-                    ) {
-                        state.selectModel(preset.modelID)
-                    }
-                }
-            }
-        }
-    }
-
-    /// The preset matching the selected model, or nil for "Custom".
-    private var activePreset: QualityPreset? {
-        QualityPreset.matching(model.selectedModelID)
-    }
-
-    /// Presets whose mapped model exists in the live registry — a
-    /// renamed or removed model can never leave a dead button.
-    private var availablePresets: [QualityPreset] {
-        QualityPreset.allCases.filter { preset in
-            state.models.contains { $0.id == preset.modelID }
-        }
-    }
-
-    /// What the collapsed Settings row advertises: the active model and
-    /// strength, so folding the controls never hides the state.
+    /// What the collapsed row advertises: the active model and
+    /// strength, so folding the controls never hides state.
     private var settingsSummary: String {
         let modelName = state.models
             .first { $0.id == model.selectedModelID }?
@@ -395,38 +350,6 @@ struct MenuView: View {
         .controlSize(.small)
         .padding(.horizontal, contentPadding)
         .padding(.vertical, 10)
-    }
-}
-
-/// One quality-preset capsule: accent-filled while its mapped model is
-/// selected, quiet otherwise, with the trade-off explained on hover.
-private struct PresetButton: View {
-    let preset: QualityPreset
-    let isActive: Bool
-    let isBusy: Bool
-    let select: () -> Void
-
-    var body: some View {
-        Button(action: select) {
-            Text(preset.label)
-                .font(.caption)
-                .fontWeight(isActive ? .semibold : .regular)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 4)
-                .contentShape(Capsule())
-                .background {
-                    Capsule().fill(
-                        isActive
-                            ? AnyShapeStyle(Color.accentColor)
-                            : AnyShapeStyle(.quaternary.opacity(0.7))
-                    )
-                }
-                .foregroundStyle(isActive ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-        }
-        .buttonStyle(.plain)
-        .disabled(isBusy)
-        .help(preset.help)
     }
 }
 
