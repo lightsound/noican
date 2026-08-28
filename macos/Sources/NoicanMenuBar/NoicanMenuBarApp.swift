@@ -4,15 +4,15 @@ import SwiftUI
 
 /// The app is an AppKit status-item shell around the SwiftUI menu.
 ///
-/// It deliberately does *not* use `MenuBarExtra(.window)`: that scene
-/// resizes its popover window around the AppKit bottom-left origin with
-/// its own repositioning heuristics, so any content-height change (the
-/// "Model & strength" section collapsing, the monitoring section
-/// appearing) could visibly drop or shift the whole menu, and nothing
-/// outside the framework can deterministically prevent it. Owning the
-/// status item and the panel (see `StatusBarController`) makes the
-/// geometry a pure function of the status item's position: the top edge
-/// never moves, and height changes only ever grow or shrink downward.
+/// It deliberately does *not* use `MenuBarExtra(.window)`: its window is
+/// sized by `NSHostingView`'s automatic window resizing, which anchors
+/// at the AppKit bottom-left origin, so any content-height reduction
+/// (collapsing the "Model & strength" section, the monitoring section
+/// disappearing) visibly dropped the whole menu — and nothing outside
+/// the framework can deterministically prevent it. The status item and
+/// menu live in `StatusBarController`, which shows the menu in a native
+/// `NSPopover`: content-size changes resize anchored to the status item
+/// (downward only), with the system's own menu chrome and dismissal.
 @main
 struct NoicanMenuBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
