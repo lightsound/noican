@@ -11,7 +11,7 @@ use std::mem::size_of;
 use std::ptr;
 use std::sync::{
     Arc,
-    atomic::{AtomicI32, Ordering},
+    atomic::{AtomicI32, AtomicU64, Ordering},
 };
 
 use rtrb::{Consumer, RingBuffer};
@@ -109,25 +109,34 @@ pub(super) struct MonitorControl {
     /// it and moves it to `Tripped`. Also read lock-free by the FFI
     /// layer, which owns the `Arc` (`noican_engine_monitor_state`).
     state: Arc<AtomicI32>,
+    /// Monitor session generation, bumped by every [`MonitorControl::enable`]:
+    /// the worker's echo canceller ([`crate::aec::SelfMonitorAec`])
+    /// resets when it observes a bump, because a toggle or a new output
+    /// device invalidates the echo path it learned.
+    generation: Arc<AtomicU64>,
     consumer: Option<Consumer<f32>>,
     handle: Option<MonitorHandle>,
 }
 
 /// Creates the two halves of the preview monitor around one preallocated
-/// ring: the control half for [`super::Runtime`] and the worker half for
-/// the inference thread. Resets any stale value left in `state` to
-/// [`MonitorState::Off`].
-pub(super) fn monitor_pair(state: Arc<AtomicI32>) -> (MonitorControl, MonitorTee) {
+/// ring — the control half for [`super::Runtime`] and the worker half
+/// for the inference thread — plus the session-generation cell the
+/// worker's echo canceller watches. Resets any stale value left in
+/// `state` to [`MonitorState::Off`].
+pub(super) fn monitor_pair(state: Arc<AtomicI32>) -> (MonitorControl, MonitorTee, Arc<AtomicU64>) {
     state.store(MonitorState::Off.as_raw(), Ordering::Release);
+    let generation = Arc::new(AtomicU64::new(0));
     let (producer, consumer) = RingBuffer::new(MONITOR_RING_CAPACITY);
     let tee = MonitorTee::new(producer, Arc::clone(&state));
     (
         MonitorControl {
             state,
+            generation: Arc::clone(&generation),
             consumer: Some(consumer),
             handle: None,
         },
         tee,
+        generation,
     )
 }
 
@@ -145,7 +154,11 @@ impl MonitorControl {
         if self.handle.is_some() {
             // The monitor AUHAL is still up (a feedback trip only disarms
             // the tee); re-arm it — which also clears the trip, since
-            // `Playing` overwrites `Tripped` in the one shared cell.
+            // `Playing` overwrites `Tripped` in the one shared cell. The
+            // generation bump lands before the state store, so a worker
+            // that observes `Playing` also observes the new session and
+            // resets its echo canceller.
+            self.generation.fetch_add(1, Ordering::Release);
             self.state
                 .store(MonitorState::Playing.as_raw(), Ordering::Release);
             return Ok(());
@@ -164,6 +177,10 @@ impl MonitorControl {
                     context: context as usize,
                     device,
                 });
+                // Generation before state, as in the re-arm branch: a
+                // worker observing `Playing` must observe the new
+                // session and reset its echo canceller.
+                self.generation.fetch_add(1, Ordering::Release);
                 self.state
                     .store(MonitorState::Playing.as_raw(), Ordering::Release);
                 Ok(())

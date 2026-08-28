@@ -23,6 +23,7 @@ use std::{
 use noican_core::SwitchingEngine;
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use crate::aec::SelfMonitorAec;
 use crate::monitor::{MonitorTee, fourcc};
 use crate::observe::StreamLevels;
 use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
@@ -320,13 +321,23 @@ struct CallbackContext {
     frames: Arc<AtomicU64>,
 }
 
+/// The preview branch as the inference worker owns it: the self-monitor
+/// echo canceller upstream of the engine and the monitor tee downstream
+/// of it. Bundled because they gate on the same [`crate::monitor::MonitorState`]
+/// cell and the canceller's far-end reference is exactly what the tee
+/// feeds the monitor ring.
+struct PreviewLink {
+    aec: SelfMonitorAec,
+    tee: MonitorTee,
+}
+
 /// Everything the inference worker owns or shares. Bundled so the worker
 /// spawn passes one value instead of a long argument list.
 struct WorkerLinks {
     engine: SwitchingEngine,
     input: Consumer<f32>,
     output: Producer<f32>,
-    tee: MonitorTee,
+    preview: PreviewLink,
     levels: Arc<StreamLevels>,
 }
 
@@ -472,7 +483,9 @@ impl Runtime {
         unit.initialize()?;
 
         let workgroup = audio_workgroup(unit.raw())?;
-        let (monitor_control, tee) = monitor::monitor_pair(monitor_state);
+        let (monitor_control, tee, monitor_generation) =
+            monitor::monitor_pair(Arc::clone(&monitor_state));
+        let aec = SelfMonitorAec::new(monitor_state, monitor_generation);
         let shutdown = Arc::new(AtomicBool::new(false));
         let worker_shutdown = Arc::clone(&shutdown);
         let worker_fault = Arc::clone(&faulted);
@@ -481,7 +494,7 @@ impl Runtime {
             engine,
             input: input_consumer,
             output: output_producer,
-            tee,
+            preview: PreviewLink { aec, tee },
             levels,
         };
         let worker = thread::Builder::new()
@@ -883,13 +896,18 @@ impl Drop for WorkgroupGuard {
 /// blocking.
 fn run_block(
     engine: &mut SwitchingEngine,
-    input_block: &[f32],
+    input_block: &mut [f32],
     output_block: &mut [f32],
     levels: &StreamLevels,
-    tee: &mut MonitorTee,
+    preview: &mut PreviewLink,
     output: &mut Producer<f32>,
     faulted: &AtomicBool,
 ) {
+    // Self-monitor echo cancellation runs upstream of everything — the
+    // model, the dry/wet mixer's dry tap, the meters, and the tee — so
+    // every consumer hears the same echo-cancelled input. A complete
+    // bypass (one atomic load) unless the preview monitor is playing.
+    preview.aec.process_capture(input_block);
     if engine.process_block(input_block, output_block).is_err() {
         output_block.fill(0.0);
         faulted.store(true, Ordering::Release);
@@ -897,8 +915,12 @@ fn run_block(
     levels.update(input_block, output_block);
     // Preview branch: the tee only copies into its preallocated monitor
     // ring (skipped entirely while disarmed) and disarms itself on
-    // sustained feedback; it never delays the main path below.
-    let _teed = tee.feed(output_block);
+    // sustained feedback; it never delays the main path below. The
+    // canceller references exactly what the tee sent — the signal the
+    // monitor plays — and nothing when the tee is disarmed (the monitor
+    // then renders silence).
+    let teed = preview.tee.feed(output_block);
+    preview.aec.feed_render(output_block, teed);
     for sample in output_block.iter().copied() {
         let _ignored = output.push(sample);
     }
@@ -915,7 +937,7 @@ fn processing_loop(
         mut engine,
         mut input,
         mut output,
-        mut tee,
+        mut preview,
         levels,
     } = links;
     levels.reset();
@@ -934,10 +956,10 @@ fn processing_loop(
                 if position == WORKER_BLOCK_SAMPLES {
                     run_block(
                         &mut engine,
-                        &input_block,
+                        &mut input_block,
                         &mut output_block,
                         &levels,
-                        &mut tee,
+                        &mut preview,
                         &mut output,
                         faulted,
                     );

@@ -29,6 +29,7 @@ use std::sync::Arc;
 #[cfg(not(target_os = "macos"))]
 use noican_core::SwitchingEngine;
 
+pub mod aec;
 pub mod monitor;
 pub mod observe;
 

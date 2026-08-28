@@ -10,6 +10,7 @@ publish.workspace = true
 noican-core = { workspace = true }
 thiserror = { workspace = true }
 rtrb = { workspace = true }
+sonora = { workspace = true }
 
 [lints]
 workspace = true
