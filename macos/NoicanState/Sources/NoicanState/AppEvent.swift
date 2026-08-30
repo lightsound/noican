@@ -90,13 +90,10 @@ public enum AppEvent: Hashable, Sendable {
     /// user told why.
     case monitorTripped
     /// The device the playing monitor targets lost its safety after
-    /// enable time (the headphone jack flipped onto the internal
-    /// speakers the user did not choose, or the device disappeared):
-    /// the preview must stop itself before the unvetted output keeps
-    /// playing. A preview deliberately started on the speakers never
-    /// produces this — the shell's flip check compares against the
-    /// enable-time choice. `reason` explains what happened, in the same
-    /// voice as the enable-time refusals.
+    /// enable time (the headphone jack flipped to the internal speakers,
+    /// or the device disappeared): the preview must stop itself before
+    /// the unvetted output keeps playing. `reason` explains what
+    /// happened, in the same voice as the enable-time refusals.
     case monitorTargetBecameUnsafe(reason: String)
     /// The health poll found the engine faulted (audio callback,
     /// workgroup, or inference fault). The transport stays up; the next

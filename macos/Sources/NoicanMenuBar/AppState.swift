@@ -532,10 +532,8 @@ extension AppState {
     /// auto-stops the preview (via the reducer) when its safety is gone.
     /// Two loss shapes exist, machine-dependent: the same built-in device
     /// flips its data source from the headphone jack to the internal
-    /// speakers (caught by the per-device listener and the health poll —
-    /// the Rust side compares against the enable-time data source, so a
-    /// preview deliberately started on the speakers keeps playing), or
-    /// the jack is a separate device that disappears (caught by the
+    /// speakers (caught by the per-device listener and the health poll),
+    /// or the jack is a separate device that disappears (caught by the
     /// device-list listener). `noican_monitor_target_error` cannot serve
     /// here: it judges the *current default output*, which may have moved
     /// on while the monitor stayed on the old device.
@@ -554,7 +552,7 @@ extension AppState {
         if !allDevices.contains(where: { $0.id == device }) {
             reason = "the monitor output device was disconnected; select Preview again to play on the new output"
         } else {
-            reason = engine.monitorUnsafeReason
+            reason = RustEngine.monitorDeviceError(device)
         }
         if let reason {
             dispatch(.monitorTargetBecameUnsafe(reason: reason))

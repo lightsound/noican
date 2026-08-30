@@ -503,11 +503,9 @@ extension AppReducer {
 
     /// Reacts to the engine-side feedback killswitch: the worker already
     /// silenced the preview, so release the playback device and tell the
-    /// user why. With the self-monitor AEC cancelling speaker echo, a
-    /// trip means the loop overwhelmed the canceller (extreme volume) —
-    /// the killswitch stays as insurance. The mode stays on Preview (it
-    /// is the user's intent); the warning tint and the message say it is
-    /// not playing, and re-tapping Preview retries.
+    /// user why. The mode stays on Preview (it is the user's intent);
+    /// the warning tint and the message say it is not playing, and
+    /// re-tapping Preview retries.
     private static func monitorTripped(
         _ state: AppModel
     ) -> (state: AppModel, effects: [AppEffect]) {
@@ -516,20 +514,16 @@ extension AppReducer {
         }
         var state = state
         state.messages.previewError =
-            "Preview stopped itself: feedback detected. Lower the output volume or use headphones, "
-            + "then select Preview again."
+            "Preview stopped itself: feedback detected. Use headphones, then select Preview again."
         return monitorTransition(state, session: session, enabled: false)
     }
 
     /// The playing monitor's target lost its safety (headphone jack
-    /// unplugged, flipping the output onto the internal speakers the
-    /// user did not choose, or the device vanished): stop the preview
-    /// immediately, exactly like a feedback trip — the engine keeps
-    /// running, the mode keeps the user's intent, the reason renders
-    /// under the control, and re-tapping Preview retries on the (new)
-    /// vetted output. A preview deliberately started on the speakers is
-    /// not stopped (the shell's flip check compares against the
-    /// enable-time choice).
+    /// unplugged into the internal speakers, or the device vanished):
+    /// stop the preview immediately, exactly like a feedback trip — the
+    /// engine keeps running, the mode keeps the user's intent, the
+    /// reason renders under the control, and re-tapping Preview retries
+    /// on the (new) vetted output.
     private static func monitorTargetBecameUnsafe(
         _ state: AppModel,
         _ reason: String

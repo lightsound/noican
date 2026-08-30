@@ -99,10 +99,9 @@ final class RustEngine: @unchecked Sendable {
     }
 
     /// Reason the current system default output must not receive the
-    /// preview (a virtual loopback or an aggregate/multi-output device —
-    /// the built-in speakers are allowed since the self-monitor AEC), or
-    /// nil when preview may start. A pure inspection — a few Core Audio
-    /// property reads, no audio objects — so it is cheap to poll.
+    /// preview (loopback, aggregate, or built-in speakers), or nil when
+    /// preview may start. A pure inspection — a few Core Audio property
+    /// reads, no audio objects — so it is cheap to poll.
     static var monitorTargetError: String? {
         copyString { buffer, capacity in
             noican_monitor_target_error(buffer, capacity)
@@ -117,20 +116,16 @@ final class RustEngine: @unchecked Sendable {
         noican_engine_monitor_device(handle)
     }
 
-    /// Reason the device the running monitor plays on must no longer
-    /// receive the preview, or nil while it stays safe (or no monitor is
-    /// up). The Rust side re-vets the monitor's own device rather than
-    /// the current default output (the two diverge once the default
-    /// output moves after enable time), and compares the current data
-    /// source against the one recorded at enable time — so the headphone
-    /// jack flipping to the internal speakers is caught, while a preview
-    /// deliberately started on the speakers keeps playing. A vanished
-    /// device reads as unclassifiable and is the caller's device-list
-    /// check instead. Reads the control mutex — meant for event-driven
-    /// and 1 Hz callers, not the 20 Hz poll path.
-    var monitorUnsafeReason: String? {
-        Self.copyString { buffer, capacity in
-            noican_engine_monitor_unsafe_reason(handle, buffer, capacity)
+    /// Reason a *specific* device must not receive the preview — the same
+    /// vetting as `monitorTargetError`, applied to the device the monitor
+    /// actually plays on rather than the current default output (the two
+    /// diverge once the default output moves after enable time). Catches
+    /// the same-device data-source flip from the headphone jack to the
+    /// internal speakers; a vanished device reads as unclassifiable and
+    /// is the caller's device-list check instead.
+    static func monitorDeviceError(_ deviceID: UInt32) -> String? {
+        copyString { buffer, capacity in
+            noican_monitor_device_error(deviceID, buffer, capacity)
         }
     }
 

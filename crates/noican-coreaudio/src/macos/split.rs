@@ -42,7 +42,7 @@ use std::thread;
 use noican_core::{DriftServo, InputResampler, SwitchingEngine};
 use rtrb::{Consumer, Producer, RingBuffer};
 
-use crate::aec::SelfMonitorAec;
+use crate::monitor::MonitorTee;
 use crate::observe::StreamLevels;
 use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
 
@@ -53,9 +53,9 @@ use super::{
     AUDIO_UNIT_SCOPE_OUTPUT, AudioBuffer, AudioBufferList, AudioDeviceId, AudioUnit,
     AudioUnitRender, AudioUnitRenderActionFlags, AudioUnitRenderCallback, AudioUnitSetProperty,
     AuhalUnit, ContextGuard, DispatchSemaphore, INPUT_BUS, NO_ERR, OSStatus, OUTPUT_BUS, PARAM_ERR,
-    PreviewLink, RING_CAPACITY, Runtime, Transport, WORKER_WAIT_NS, WorkgroupGuard,
-    attach_render_callback, audio_workgroup, check_status, monitor, pcm_format, pcm_format_at,
-    run_block, set_property, size_u32, start_output_unit, stop_output_unit,
+    RING_CAPACITY, Runtime, Transport, WORKER_WAIT_NS, WorkgroupGuard, attach_render_callback,
+    audio_workgroup, check_status, monitor, pcm_format, pcm_format_at, run_block, set_property,
+    size_u32, start_output_unit, stop_output_unit,
 };
 
 /// Largest callback the capture unit may deliver, in frames. Set as
@@ -117,7 +117,7 @@ struct SplitWorkerLinks {
     engine: SwitchingEngine,
     input: Consumer<f32>,
     output: Producer<f32>,
-    preview: PreviewLink,
+    tee: MonitorTee,
     levels: Arc<StreamLevels>,
     resampler: InputResampler,
     servo: DriftServo,
@@ -182,9 +182,7 @@ pub(super) fn start(
     )?;
     output_unit.initialize()?;
 
-    let (monitor_control, tee, monitor_generation) =
-        monitor::monitor_pair(Arc::clone(&monitor_state));
-    let aec = SelfMonitorAec::new(monitor_state, monitor_generation);
+    let (monitor_control, tee) = monitor::monitor_pair(monitor_state);
     let shutdown = Arc::new(AtomicBool::new(false));
     let worker_shutdown = Arc::clone(&shutdown);
     let worker_fault = Arc::clone(&faulted);
@@ -193,7 +191,7 @@ pub(super) fn start(
         engine,
         input: input_consumer,
         output: output_producer,
-        preview: PreviewLink { aec, tee },
+        tee,
         levels,
         resampler,
         servo: DriftServo::new(OUTPUT_PRIME_SAMPLES),
@@ -386,7 +384,7 @@ fn split_processing_loop(
         mut engine,
         mut input,
         mut output,
-        mut preview,
+        mut tee,
         levels,
         mut resampler,
         mut servo,
@@ -436,10 +434,10 @@ fn split_processing_loop(
             }
             run_block(
                 &mut engine,
-                &mut input_block,
+                &input_block,
                 &mut output_block,
                 &levels,
-                &mut preview,
+                &mut tee,
                 &mut output,
                 faulted,
             );

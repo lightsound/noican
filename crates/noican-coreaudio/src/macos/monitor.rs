@@ -11,14 +11,14 @@ use std::mem::size_of;
 use std::ptr;
 use std::sync::{
     Arc,
-    atomic::{AtomicI32, AtomicU64, Ordering},
+    atomic::{AtomicI32, Ordering},
 };
 
 use rtrb::{Consumer, RingBuffer};
 
 use crate::CoreAudioError;
 use crate::monitor::{
-    MONITOR_PRIME_SAMPLES, MONITOR_RING_CAPACITY, MonitorState, MonitorTee, classify_monitor_flip,
+    MONITOR_PRIME_SAMPLES, MONITOR_RING_CAPACITY, MonitorState, MonitorTee,
     classify_monitor_target, fourcc,
 };
 
@@ -95,12 +95,6 @@ struct MonitorHandle {
     /// device for losing its safety — the default output may move on
     /// while the monitor stays here.
     device: AudioDeviceId,
-    /// The device's output data source at enable time: the user's
-    /// vetted choice, against which later reads are compared by the
-    /// flip policy ([`classify_monitor_flip`] — the headphone jack
-    /// flipping to the internal speakers must stop the preview, while
-    /// deliberately chosen speakers keep playing).
-    data_source: Option<u32>,
 }
 
 /// Control-plane owner of the preview monitor. Invariants held here:
@@ -115,34 +109,25 @@ pub(super) struct MonitorControl {
     /// it and moves it to `Tripped`. Also read lock-free by the FFI
     /// layer, which owns the `Arc` (`noican_engine_monitor_state`).
     state: Arc<AtomicI32>,
-    /// Monitor session generation, bumped by every [`MonitorControl::enable`]:
-    /// the worker's echo canceller ([`crate::aec::SelfMonitorAec`])
-    /// resets when it observes a bump, because a toggle or a new output
-    /// device invalidates the echo path it learned.
-    generation: Arc<AtomicU64>,
     consumer: Option<Consumer<f32>>,
     handle: Option<MonitorHandle>,
 }
 
 /// Creates the two halves of the preview monitor around one preallocated
-/// ring — the control half for [`super::Runtime`] and the worker half
-/// for the inference thread — plus the session-generation cell the
-/// worker's echo canceller watches. Resets any stale value left in
-/// `state` to [`MonitorState::Off`].
-pub(super) fn monitor_pair(state: Arc<AtomicI32>) -> (MonitorControl, MonitorTee, Arc<AtomicU64>) {
+/// ring: the control half for [`super::Runtime`] and the worker half for
+/// the inference thread. Resets any stale value left in `state` to
+/// [`MonitorState::Off`].
+pub(super) fn monitor_pair(state: Arc<AtomicI32>) -> (MonitorControl, MonitorTee) {
     state.store(MonitorState::Off.as_raw(), Ordering::Release);
-    let generation = Arc::new(AtomicU64::new(0));
     let (producer, consumer) = RingBuffer::new(MONITOR_RING_CAPACITY);
     let tee = MonitorTee::new(producer, Arc::clone(&state));
     (
         MonitorControl {
             state,
-            generation: Arc::clone(&generation),
             consumer: Some(consumer),
             handle: None,
         },
         tee,
-        generation,
     )
 }
 
@@ -160,11 +145,7 @@ impl MonitorControl {
         if self.handle.is_some() {
             // The monitor AUHAL is still up (a feedback trip only disarms
             // the tee); re-arm it — which also clears the trip, since
-            // `Playing` overwrites `Tripped` in the one shared cell. The
-            // generation bump lands before the state store, so a worker
-            // that observes `Playing` also observes the new session and
-            // resets its echo canceller.
-            self.generation.fetch_add(1, Ordering::Release);
+            // `Playing` overwrites `Tripped` in the one shared cell.
             self.state
                 .store(MonitorState::Playing.as_raw(), Ordering::Release);
             return Ok(());
@@ -182,12 +163,7 @@ impl MonitorControl {
                     unit: unit as usize,
                     context: context as usize,
                     device,
-                    data_source: device_data_source(device),
                 });
-                // Generation before state, as in the re-arm branch: a
-                // worker observing `Playing` must observe the new
-                // session and reset its echo canceller.
-                self.generation.fetch_add(1, Ordering::Release);
                 self.state
                     .store(MonitorState::Playing.as_raw(), Ordering::Release);
                 Ok(())
@@ -227,26 +203,6 @@ impl MonitorControl {
     pub(super) fn active_device(&self) -> Option<AudioDeviceId> {
         self.handle.as_ref().map(|handle| handle.device)
     }
-
-    /// Re-vets the device the running monitor plays on and returns why
-    /// it must no longer receive the preview, or `None` while it stays
-    /// safe (or no monitor is up).
-    ///
-    /// Two policies apply: the enable-time classification
-    /// ([`classify_monitor_target`] — belt and braces, its inputs are
-    /// static device properties) and the flip policy
-    /// ([`classify_monitor_flip`]) against the data source recorded at
-    /// enable time, which is what catches the headphone jack flipping
-    /// to the internal speakers without any notification. A vanished
-    /// device reads as unclassifiable and stays quiet here; device loss
-    /// is visible in the device list and is the caller's check.
-    pub(super) fn unsafe_reason(&self) -> Option<CoreAudioError> {
-        let handle = self.handle.as_ref()?;
-        if let Err(error) = classify_device(handle.device) {
-            return Some(error);
-        }
-        classify_monitor_flip(handle.data_source, device_data_source(handle.device)).err()
-    }
 }
 
 /// Checks whether the current system default output may receive the
@@ -260,22 +216,50 @@ impl MonitorControl {
 /// # Errors
 ///
 /// Returns exactly the refusals enabling would produce: the
-/// [`classify_monitor_target`] matrix (loopback, aggregate) or
-/// [`CoreAudioError::Monitor`] when no default output is configured.
+/// [`classify_monitor_target`] matrix (loopback, aggregate, built-in
+/// speakers) or [`CoreAudioError::Monitor`] when no default output is
+/// configured.
 pub fn check_monitor_target() -> Result<(), CoreAudioError> {
     monitor_target_device().map(|_device| ())
 }
 
+/// Checks whether a *specific* output device may (still) receive the
+/// preview, without creating or changing any audio object.
+///
+/// The same [`classify_monitor_target`] vetting as
+/// [`check_monitor_target`], but against a caller-chosen device instead
+/// of the current default output. The control plane runs it against the
+/// device the running monitor actually plays on (see
+/// [`super::Runtime::monitor_device`]): after enable time the default
+/// output can move on while the monitor stays put, and — worse — a
+/// built-in device can flip its data source from the headphone jack to
+/// the internal speakers (`'hdpn'` → `'ispk'`) without any device-list
+/// or default-output notification. Re-classifying the monitor's own
+/// device is what catches that.
+///
+/// A vanished device is *not* reported here: its properties read as
+/// unclassifiable, which fails open by policy. Device loss is visible in
+/// the device list and is the caller's check.
+///
+/// # Errors
+///
+/// Returns the [`classify_monitor_target`] refusals (loopback, aggregate,
+/// built-in speakers).
+pub fn check_monitor_device(device: AudioDeviceId) -> Result<(), CoreAudioError> {
+    classify_device(device)
+}
+
 /// Resolves the system default output device and applies
-/// [`classify_monitor_target`] to refuse loopbacks and aggregates.
+/// [`classify_monitor_target`] to refuse loopbacks, aggregates, and the
+/// built-in internal speakers.
 fn monitor_target_device() -> Result<AudioDeviceId, CoreAudioError> {
     let device = default_output_device()?;
     classify_device(device)?;
     Ok(device)
 }
 
-/// Reads `device`'s transport type and UID, and applies the
-/// [`classify_monitor_target`] policy to them.
+/// Reads `device`'s transport type, output data source, and UID, and
+/// applies the [`classify_monitor_target`] policy to them.
 fn classify_device(device: AudioDeviceId) -> Result<(), CoreAudioError> {
     let transport = device_u32_property(
         device,
@@ -283,17 +267,12 @@ fn classify_device(device: AudioDeviceId) -> Result<(), CoreAudioError> {
         AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
     )
     .unwrap_or(0);
-    classify_monitor_target(transport, &device_uid(device))
-}
-
-/// Reads `device`'s output data source (`'ispk'`, `'hdpn'`, ...), or
-/// `None` when unreadable — the flip policy's inputs.
-fn device_data_source(device: AudioDeviceId) -> Option<u32> {
-    device_u32_property(
+    let data_source = device_u32_property(
         device,
         AUDIO_DEVICE_PROPERTY_DATA_SOURCE,
         AUDIO_OBJECT_PROPERTY_SCOPE_OUTPUT,
-    )
+    );
+    classify_monitor_target(transport, &device_uid(device), data_source)
 }
 
 fn default_output_device() -> Result<AudioDeviceId, CoreAudioError> {
