@@ -115,27 +115,21 @@ pub const DATA_SOURCE_INTERNAL_SPEAKER: u32 = fourcc(*b"ispk");
 
 /// Decides whether an output device may receive the preview.
 ///
-/// Refused targets — both are *digital* routes that echo cancellation
-/// on the microphone signal cannot fix by principle (nothing acoustic
-/// ever reaches the microphone):
+/// Refused targets:
 /// - **Virtual loopbacks** (`virt` transport or a `BlackHole`/Noican UID)
 ///   — the processed voice would reach the meeting a second time.
 /// - **Aggregate / Multi-Output devices** (`grup` transport) — they can
 ///   contain the meeting loopback as a subdevice, which this check cannot
 ///   cheaply inspect, and the feedback guard cannot catch that route
 ///   (it is not an acoustic loop).
+/// - **The built-in internal speakers** (`bltn` transport with the
+///   `ispk` data source) — the voice would feed straight back into the
+///   microphone (Phase 0/1 has no echo cancellation).
 ///
-/// The built-in internal speakers are **allowed**: their echo is
-/// acoustic — the microphone picks the monitor signal back up — and the
-/// self-monitor AEC ([`crate::aec::SelfMonitorAec`]) cancels exactly
-/// that, with the [`HowlGuard`] killswitch kept as insurance. An
-/// *unintended* flip onto the speakers after enable time (headphone
-/// jack unplugged) is a separate policy: [`classify_monitor_flip`].
-///
-/// Everything else — Bluetooth, USB, HDMI, the built-in outputs, or an
-/// unreadable transport (`transport == 0`) — fails open: those cannot
-/// be classified reliably, and the worker-side [`HowlGuard`] is the
-/// safety net for acoustic feedback through them.
+/// Everything else — Bluetooth, USB, HDMI, the built-in headphone jack,
+/// or unreadable properties (`transport == 0`, `data_source == None`) —
+/// fails open: those cannot be classified reliably, and the worker-side
+/// [`HowlGuard`] is the safety net for acoustic feedback through them.
 ///
 /// The UID predicate must stay aligned with the Swift picker's
 /// `AudioDeviceCatalog.isNoicanVirtualDevice`
@@ -145,7 +139,11 @@ pub const DATA_SOURCE_INTERNAL_SPEAKER: u32 = fourcc(*b"ispk");
 /// # Errors
 ///
 /// Returns the matching [`CoreAudioError`] refusal for the cases above.
-pub fn classify_monitor_target(transport: u32, uid: &str) -> Result<(), CoreAudioError> {
+pub fn classify_monitor_target(
+    transport: u32,
+    uid: &str,
+    data_source: Option<u32>,
+) -> Result<(), CoreAudioError> {
     if transport == TRANSPORT_TYPE_VIRTUAL || is_noican_loopback_uid(uid) {
         return Err(CoreAudioError::MonitorLoopbackOutput {
             uid: uid.to_owned(),
@@ -156,38 +154,8 @@ pub fn classify_monitor_target(transport: u32, uid: &str) -> Result<(), CoreAudi
             uid: uid.to_owned(),
         });
     }
-    Ok(())
-}
-
-/// Decides whether a playing monitor's output data source is still the
-/// one the user chose at enable time, for the one flip that matters:
-/// onto the built-in internal speakers.
-///
-/// Unplugging headphones from the built-in jack flips the same device's
-/// data source from `'hdpn'` to `'ispk'` without any device-list or
-/// default-output notification. The user's vetted intent was the
-/// headphones, so the preview stops instead of following the flip into
-/// the speakers unasked — even though the AEC would likely cope, the
-/// room suddenly hearing the preview is not what the user chose.
-/// Starting Preview *on* the speakers deliberately is allowed
-/// ([`classify_monitor_target`]), and then `enabled_data_source` is
-/// already the speakers, so this check stays quiet.
-///
-/// Any other flip (speakers → headphones, or between unclassified
-/// sources) is not a safety loss and passes.
-///
-/// # Errors
-///
-/// Returns [`CoreAudioError::MonitorSpeakerFlip`] when the current data
-/// source is the internal speakers and the enable-time source was not.
-pub fn classify_monitor_flip(
-    enabled_data_source: Option<u32>,
-    current_data_source: Option<u32>,
-) -> Result<(), CoreAudioError> {
-    if current_data_source == Some(DATA_SOURCE_INTERNAL_SPEAKER)
-        && enabled_data_source != Some(DATA_SOURCE_INTERNAL_SPEAKER)
-    {
-        return Err(CoreAudioError::MonitorSpeakerFlip);
+    if transport == TRANSPORT_TYPE_BUILT_IN && data_source == Some(DATA_SOURCE_INTERNAL_SPEAKER) {
+        return Err(CoreAudioError::MonitorSpeakerOutput);
     }
     Ok(())
 }
@@ -457,32 +425,32 @@ mod tests {
     #[test]
     fn classify_refuses_virtual_and_loopback_uids() {
         assert!(matches!(
-            classify_monitor_target(TRANSPORT_TYPE_VIRTUAL, "JoyCastDevice_UID"),
+            classify_monitor_target(TRANSPORT_TYPE_VIRTUAL, "JoyCastDevice_UID", None),
             Err(CoreAudioError::MonitorLoopbackOutput { .. })
         ));
         // BlackHole UIDs are refused on any transport (belt and braces).
         assert!(matches!(
-            classify_monitor_target(0, "BlackHole2ch_UID"),
+            classify_monitor_target(0, "BlackHole2ch_UID", None),
             Err(CoreAudioError::MonitorLoopbackOutput { .. })
         ));
         assert!(matches!(
-            classify_monitor_target(0, "BlackHole16ch_UID"),
+            classify_monitor_target(0, "BlackHole16ch_UID", None),
             Err(CoreAudioError::MonitorLoopbackOutput { .. })
         ));
         // The Noican fork prefix matches case-insensitively.
         assert!(matches!(
-            classify_monitor_target(0, "COM.LIGHTSOUND.NOICAN.2ch"),
+            classify_monitor_target(0, "COM.LIGHTSOUND.NOICAN.2ch", None),
             Err(CoreAudioError::MonitorLoopbackOutput { .. })
         ));
         // The exact UID the Noican driver ships (scripts/build-driver.sh
         // derives it from kDriver_Name="com.lightsound.noican.2ch").
         assert!(matches!(
-            classify_monitor_target(0, "com.lightsound.noican.2ch_UID"),
+            classify_monitor_target(0, "com.lightsound.noican.2ch_UID", None),
             Err(CoreAudioError::MonitorLoopbackOutput { .. })
         ));
         // The driver's hidden mirror device shares the prefix.
         assert!(matches!(
-            classify_monitor_target(0, "com.lightsound.noican.2ch_2_UID"),
+            classify_monitor_target(0, "com.lightsound.noican.2ch_2_UID", None),
             Err(CoreAudioError::MonitorLoopbackOutput { .. })
         ));
     }
@@ -492,20 +460,29 @@ mod tests {
         // Multi-Output devices report the aggregate transport and an
         // AMS-generated UID; they can hide the meeting loopback inside.
         assert!(matches!(
-            classify_monitor_target(TRANSPORT_TYPE_AGGREGATE, "~:AMS2_StackedOutput:0"),
+            classify_monitor_target(TRANSPORT_TYPE_AGGREGATE, "~:AMS2_StackedOutput:0", None),
             Err(CoreAudioError::MonitorAggregateOutput { .. })
         ));
     }
 
     #[test]
-    fn classify_allows_every_built_in_output() {
-        // The internal speakers are allowed since the self-monitor AEC
-        // (AEC Stage 1): their echo is acoustic, which the canceller
-        // handles and the HowlGuard insures.
-        assert!(classify_monitor_target(TRANSPORT_TYPE_BUILT_IN, "BuiltInSpeakerDevice").is_ok());
+    fn classify_refuses_internal_speakers_but_allows_the_headphone_jack() {
+        assert!(matches!(
+            classify_monitor_target(
+                TRANSPORT_TYPE_BUILT_IN,
+                "BuiltInSpeakerDevice",
+                Some(DATA_SOURCE_INTERNAL_SPEAKER)
+            ),
+            Err(CoreAudioError::MonitorSpeakerOutput)
+        ));
+        let headphone_jack = fourcc(*b"hdpn");
         assert!(
-            classify_monitor_target(TRANSPORT_TYPE_BUILT_IN, "BuiltInHeadphoneOutputDevice")
-                .is_ok()
+            classify_monitor_target(
+                TRANSPORT_TYPE_BUILT_IN,
+                "BuiltInHeadphoneOutputDevice",
+                Some(headphone_jack)
+            )
+            .is_ok()
         );
     }
 
@@ -515,41 +492,12 @@ mod tests {
         // allowed: the HowlGuard is the documented safety net there.
         let bluetooth = fourcc(*b"blue");
         let usb = fourcc(*b"usb ");
-        assert!(classify_monitor_target(bluetooth, "AB-CD-EF-01-02-03:output").is_ok());
-        assert!(classify_monitor_target(usb, "SomeUSBDAC_UID").is_ok());
-        assert!(classify_monitor_target(0, "").is_ok());
-    }
-
-    #[test]
-    fn flip_refuses_only_the_unintended_move_onto_the_speakers() {
-        let headphone_jack = fourcc(*b"hdpn");
-        // Jack unplugged: the same built-in device flips to the
-        // internal speakers — the user's vetted choice is gone.
-        assert!(matches!(
-            classify_monitor_flip(Some(headphone_jack), Some(DATA_SOURCE_INTERNAL_SPEAKER)),
-            Err(CoreAudioError::MonitorSpeakerFlip)
-        ));
-        // An unreadable enable-time source also refuses the flip (the
-        // user demonstrably did not choose the speakers).
-        assert!(matches!(
-            classify_monitor_flip(None, Some(DATA_SOURCE_INTERNAL_SPEAKER)),
-            Err(CoreAudioError::MonitorSpeakerFlip)
-        ));
-        // Explicitly chosen speakers keep playing.
+        assert!(classify_monitor_target(bluetooth, "AB-CD-EF-01-02-03:output", None).is_ok());
+        assert!(classify_monitor_target(usb, "SomeUSBDAC_UID", Some(0)).is_ok());
+        assert!(classify_monitor_target(0, "", None).is_ok());
         assert!(
-            classify_monitor_flip(
-                Some(DATA_SOURCE_INTERNAL_SPEAKER),
-                Some(DATA_SOURCE_INTERNAL_SPEAKER)
-            )
-            .is_ok()
+            classify_monitor_target(TRANSPORT_TYPE_BUILT_IN, "BuiltInSpeakerDevice", None).is_ok(),
+            "unreadable data source fails open on the built-in device"
         );
-        // Speakers → headphones is an upgrade, not a safety loss.
-        assert!(
-            classify_monitor_flip(Some(DATA_SOURCE_INTERNAL_SPEAKER), Some(headphone_jack)).is_ok()
-        );
-        // Steady state and unclassified sources pass.
-        assert!(classify_monitor_flip(Some(headphone_jack), Some(headphone_jack)).is_ok());
-        assert!(classify_monitor_flip(None, None).is_ok());
-        assert!(classify_monitor_flip(Some(headphone_jack), None).is_ok());
     }
 }

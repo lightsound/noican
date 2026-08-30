@@ -26,17 +26,8 @@ void noican_engine_stop(void *handle);
 int32_t noican_engine_set_model(void *handle, const char *model_id);
 int32_t noican_engine_is_running(const void *handle);
 int32_t noican_engine_is_faulted(const void *handle);
-/* Preview pre-flight: reason the current system default output must not
- * receive the preview (virtual loopback or aggregate/multi-output — the
- * built-in speakers are allowed since the self-monitor AEC), or 0 when
- * preview may start. */
 size_t noican_monitor_target_error(char *buffer, size_t capacity);
-/* Mid-play safety watch: reason the device the running monitor plays on
- * must no longer receive the preview, or 0 while it stays safe (or no
- * monitor is up). Catches the headphone jack flipping to the internal
- * speakers by comparing against the data source recorded at enable time
- * — a preview deliberately started on the speakers keeps playing. */
-size_t noican_engine_monitor_unsafe_reason(const void *handle, char *buffer, size_t capacity);
+size_t noican_monitor_device_error(uint32_t device, char *buffer, size_t capacity);
 int32_t noican_engine_set_monitor(void *handle, int32_t enabled);
 uint32_t noican_engine_monitor_device(const void *handle);
 

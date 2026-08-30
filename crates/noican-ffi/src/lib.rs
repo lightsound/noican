@@ -439,10 +439,9 @@ pub unsafe extern "C" fn noican_engine_is_faulted(handle: *const c_void) -> i32 
 /// stop/start, so callers re-enable it after `noican_engine_start`.
 ///
 /// Enabling fails when the engine is not running, when the default output
-/// must not receive the preview (a virtual loopback or an aggregate /
-/// multi-output device — the built-in speakers are allowed since the
-/// self-monitor AEC cancels their echo), or when the monitor AUHAL
-/// cannot start; the meeting-facing path is never affected.
+/// must not receive the preview (a virtual loopback, an aggregate /
+/// multi-output device, or the built-in speakers), or when the monitor
+/// AUHAL cannot start; the meeting-facing path is never affected.
 /// Disabling is always a success, including while stopped. Toggling holds
 /// the control lock for the monitor start/stop transition — starting an
 /// output device can take a moment, so callers should serialize their own
@@ -487,13 +486,12 @@ pub unsafe extern "C" fn noican_engine_set_monitor(handle: *mut c_void, enabled:
 /// preview, without starting or changing anything.
 ///
 /// Returns 0 when preview can target the device. Otherwise copies the
-/// human-readable refusal reason as UTF-8 (loopback / aggregate — the
-/// same vetting enabling applies; the built-in speakers are allowed
-/// since the self-monitor AEC) and returns the required byte count
-/// including the terminating NUL. Cheap (a few Core Audio property
-/// reads): the UI calls it before enabling and whenever the system
-/// default output changes, so an unsafe target disables the Preview
-/// control up front instead of failing after the fact.
+/// human-readable refusal reason as UTF-8 (loopback / aggregate /
+/// built-in speakers — the same vetting enabling applies) and returns the
+/// required byte count including the terminating NUL. Cheap (a few Core
+/// Audio property reads): the UI calls it before enabling and whenever
+/// the system default output changes, so an unsafe target disables the
+/// Preview control up front instead of failing after the fact.
 ///
 /// # Safety
 ///
@@ -509,56 +507,38 @@ pub unsafe extern "C" fn noican_monitor_target_error(
     }
 }
 
-/// Checks whether the device the running preview monitor plays on may
-/// *still* receive it.
+/// Checks whether a *specific* output device may (still) receive the
+/// preview.
 ///
-/// After enable time the default output can move on while the monitor
-/// stays put, and a built-in device can flip its data source from the
-/// headphone jack to the internal speakers without any device-list or
-/// default-output notification. The Rust side re-vets the monitor's own
-/// device — including comparing the current data source against the one
-/// recorded at enable time, so a preview deliberately started on the
-/// speakers keeps playing while an unintended jack-unplug flip onto
-/// them is reported. A vanished device is *not* reported here
-/// (unreadable properties fail open by policy); device loss is visible
-/// in the device list and is the caller's check.
+/// The same vetting as [`noican_monitor_target_error`], but against a
+/// caller-chosen device instead of the current default output.
+/// The UI runs it against the device the running monitor actually plays
+/// on (see [`noican_engine_monitor_device`]): after enable time the
+/// default output can move on while the monitor stays put, and a
+/// built-in device can flip its data source from the headphone jack to
+/// the internal speakers without any device-list or default-output
+/// notification — re-classifying the monitor's own device is what
+/// catches that. A vanished device is *not* reported here (unreadable
+/// properties fail open by policy); device loss is visible in the device
+/// list and is the caller's check.
 ///
-/// Returns 0 while the monitor's device stays safe, no monitor is up,
-/// or the handle is null. Otherwise copies the human-readable reason as
-/// UTF-8 and returns the required byte count including the terminating
-/// NUL. Reads the control mutex (never held across slow work), so it is
-/// meant for event-driven and low-rate callers — not the 20 Hz poll
-/// path.
-///
-/// This check exists to *stop* a preview whose safety is gone, so it
-/// fails closed: a poisoned control mutex (a panic elsewhere) reports a
-/// reason instead of silently reading as safe — unlike the fail-open
-/// getters, whose failure mode is merely a stale reading.
+/// Returns 0 when the device may receive the preview. Otherwise copies
+/// the human-readable refusal reason as UTF-8 and returns the required
+/// byte count including the terminating NUL.
 ///
 /// # Safety
 ///
-/// `handle` must be null or a live engine handle. A non-null `buffer`
-/// must be writable for `capacity` bytes.
+/// A non-null `buffer` must be writable for `capacity` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn noican_engine_monitor_unsafe_reason(
-    handle: *const c_void,
+pub unsafe extern "C" fn noican_monitor_device_error(
+    device: u32,
     buffer: *mut c_char,
     capacity: usize,
 ) -> usize {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
-        return 0;
-    };
-    let Ok(state) = handle.state.lock() else {
-        return unsafe { copy_string("the engine control state is unavailable", buffer, capacity) };
-    };
-    let reason = state
-        .runtime
-        .as_ref()
-        .and_then(Runtime::monitor_unsafe_reason);
-    drop(state);
-    reason.map_or(0, |error| unsafe {
-        copy_string(&error.to_string(), buffer, capacity)
-    })
+    match noican_coreaudio::check_monitor_device(device) {
+        Ok(()) => 0,
+        Err(error) => unsafe { copy_string(&error.to_string(), buffer, capacity) },
+    }
 }
 
 /// Device ID the running preview monitor plays on, or 0 while no monitor
@@ -567,7 +547,7 @@ pub unsafe extern "C" fn noican_engine_monitor_unsafe_reason(
 /// The target is resolved on the Rust side at enable time and stays
 /// fixed until the next toggle, so this is how the UI learns which
 /// device to watch for losing its safety
-/// (`noican_engine_monitor_unsafe_reason`, device-list changes).
+/// (`noican_monitor_device_error`, device-list changes).
 ///
 /// Reads the control mutex (never held across slow work), so it is meant
 /// for event-driven and low-rate callers — not the 20 Hz poll path.
@@ -1104,21 +1084,20 @@ mod tests {
     }
 
     #[test]
-    fn monitor_unsafe_reason_is_null_safe_and_quiet_without_a_monitor() {
-        // A null handle and a stopped engine (no runtime, no monitor)
-        // both read as "still safe" — the watcher only ever runs while
-        // a preview is armed, so silence is the correct default.
-        assert_eq!(
-            unsafe { noican_engine_monitor_unsafe_reason(ptr::null(), ptr::null_mut(), 0) },
-            0
-        );
-        let handle = unsafe { noican_engine_create(ptr::null()) };
-        assert!(!handle.is_null());
-        assert_eq!(
-            unsafe { noican_engine_monitor_unsafe_reason(handle, ptr::null_mut(), 0) },
-            0
-        );
-        unsafe { noican_engine_destroy(handle) };
+    fn monitor_device_check_is_null_safe_and_consistent() {
+        // Same contract as the default-output check: a null buffer only
+        // measures, and a nonzero result re-reads as a NUL-terminated
+        // reason string. Device 0 (kAudioObjectUnknown) has unreadable
+        // properties, which fail open on macOS by policy.
+        let required = unsafe { noican_monitor_device_error(0, ptr::null_mut(), 0) };
+        if required > 0 {
+            let reason = read_string(|buffer, capacity| unsafe {
+                noican_monitor_device_error(0, buffer, capacity)
+            });
+            assert!(reason.is_some(), "nonzero result must yield a reason");
+        }
+        #[cfg(not(target_os = "macos"))]
+        assert!(required > 0, "portable builds always refuse");
     }
 
     #[test]

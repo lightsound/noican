@@ -222,23 +222,46 @@ These still need the process-tap reference signal (§7.2); they replace only the
 
 v0 operates headphones-only (no AEC). When speaker use becomes a requirement, implement the process-tap reference plus either WebRTC AEC3 (`aec3` crate; 48 kHz-friendly, battle-tested algorithm) or LocalVQE v1.4-AEC (neural, echo-only, 16 kHz) — decided by an echo-path test at that time. VPIO is avoided entirely.
 
-> **Decision record (2026-08-28, AEC Stage 1 implemented)**: the
-> **self-monitor AEC is implemented** — Preview may target the built-in
-> speakers. The key observation is that Preview needs none of the §7.2
-> machinery: the sound leaving the speaker is the monitor signal the
-> engine generated itself, so the far-end reference already exists in
-> process (no process tap, no extra TCC, no macOS 26 tap instability).
-> Engine: **WebRTC AEC3 via the pure-Rust `sonora` port**
-> (BSD-3-Clause), running upstream of the NS model on the inference
-> worker, engaged only while the monitor plays. The `aec3` crate was
-> evaluated first per plan and rejected — its supported graph API is
-> `!Send` (`Rc` packets, per-frame allocation) and converged far slower
-> in a like-for-like 48 kHz probe; its license itself is fine (see
-> §11). Loopback and aggregate/multi-output preview targets remain
-> refused (digital routes AEC cannot address), and the feedback
-> killswitch stays as insurance. **Process-tap AEC for meeting playback
-> (other apps' audio) remains Phase 3** — nothing here changes its
-> plan; §7.2/§7.3 stay the reference for it.
+> **Decision record (2026-08-30): self-monitor AEC attempted and rolled
+> back.** PR #19 implemented "AEC Stage 1" — a self-monitor echo
+> canceller (WebRTC AEC3 via the pure-Rust `sonora` port, BSD-3-Clause)
+> upstream of the NS model, with the far-end reference taken from the
+> engine's own monitor tee (no process tap, no extra TCC), so Preview
+> could target the built-in speakers. The synthetic suite passed
+> (ERLE > 50 dB, double-talk within ~1 dB, transparent echo-free path),
+> but **hardware acceptance failed at a use-breaking level** and the
+> feature was reverted:
+>
+> - Live speech through the engaged canceller came out attenuated,
+>   chopped, and robotic — including a regression on the previously
+>   shipped **headphone** Preview and On modes.
+> - Root cause: the self-monitor case is the *adversarial* regime for
+>   AEC3's nonlinear suppressor. The far-end reference is the user's
+>   own voice, so all speech is permanent same-voice double-talk with
+>   near-total reference/near-end correlation, and the suppressor
+>   gates the live voice. Conversational AEC (a *different* far-end
+>   talker, brief double-talk) is what AEC3 is tuned for; continuous
+>   self-reference is not.
+> - The synthetic tests (linear, open-loop echo paths, deterministic
+>   pseudo-speech) could not reproduce the failing conditions: real
+>   speaker nonlinearity, Apple's time-varying mic beamforming, and
+>   the closed loop through the canceller's own output.
+> - Known untried variant: AEC3's *linear* filter output only
+>   (suppressor bypassed) would not gate near speech, at the cost of
+>   audible residual echo and a thinner howl margin. Not pursued —
+>   even a perfect canceller leaves the speaker-preview experience as
+>   delayed auditory feedback (live voice + ~100 ms replay), so the
+>   product value did not justify the tuning loop.
+>
+> **Implication for Phase 3 (process-tap AEC for meeting playback):
+> unchanged and not discouraged by this outcome.** There the far end is
+> other people's voices — the standard conversational regime AEC3 is
+> designed for. This record exists so the self-monitor variant is not
+> re-attempted with the same suppressor-based approach. The `aec3`
+> crate evaluation from PR #19 remains valid for Phase 3 planning:
+> rejected (`!Send` graph API, per-frame `Rc` allocation, slow
+> convergence in a 48 kHz probe); `sonora` (BSD-3-Clause, cargo-deny
+> clean) is the stronger Rust AEC3 candidate.
 
 ---
 
@@ -310,7 +333,7 @@ As of 2026, **Microsoft Teams ships personalized voice isolation** (30-second vo
 | NS model (quality) | FastEnhancer 48 k **or** DPDFNet 48 k HR — decided by listening test | DeepFilterNet3 (`df` crate); CoreML DFN3 route |
 | NS model (low-latency mode) | UL-UNAS | GTCRN (easier integration via sherpa-onnx) |
 | Background speakers | Hush 16 k vs. tse-conv-tasnet-48k — decided by listening test | DIY VAD + ECAPA gate (mellonella/voce design) |
-| AEC | Self-monitor AEC for Preview speaker use: WebRTC AEC3 via `sonora` (implemented, §7.4) | Process tap + AEC3 for meeting playback (Phase 3) with macOS 26 watchdog |
+| AEC | None in v0 (headphones) | Process tap + `aec3` (WebRTC AEC3) with macOS 26 watchdog |
 | Inference runtime | ONNX Runtime (FastEnhancer, TSE); sherpa-onnx (DPDFNet/GTCRN, VAD, speaker embeddings) | tract via `df` crate |
 | Core language | Rust (audio engine, inference, gating) | — |
 | UI | SwiftUI `MenuBarExtra` from the start (on/off, input device picker, status; strength/meters/mode switch and `SMAppService` login item added incrementally). Rust engine embedded as a static library behind a C ABI, or run as a separate daemon process with a small IPC control plane | CLI + config + launchd (if the UI ever blocks progress) |
@@ -330,7 +353,7 @@ The BlackHole-fork driver (GPL-3.0) is a separate program loaded by `coreaudiod`
 NNA Virtual Audio (free *for personal use*; commercial use requires a vendor license with no public pricing — contact@neutralandnaturalaudio.com. Dropped from consideration for any sold version), Stream.FM (AGPL-3.0 — would force open-sourcing the entire app).
 
 **Verify before shipping** (license not yet confirmed):
-tse-conv-tasnet-48k model weights (HF card lacks an explicit license; trained on VCTK CC-BY-4.0 + DEMAND), LocalVQE weights, tympan-aspl, UL-UNAS, GTCRN. The `aec3` crate's license is confirmed (MIT OR BSD-3-Clause, cargo-deny-clean) — the crate was evaluated and not adopted; the adopted `sonora` (BSD-3-Clause) already passes cargo-deny in CI.
+tse-conv-tasnet-48k model weights (HF card lacks an explicit license; trained on VCTK CC-BY-4.0 + DEMAND), LocalVQE weights, tympan-aspl, UL-UNAS, GTCRN. The `aec3` crate's license was verified during the PR #19 evaluation (MIT OR BSD-3-Clause, cargo-deny-clean), as was `sonora` (BSD-3-Clause) — see the §7.4 decision record.
 
 ---
 
@@ -442,10 +465,7 @@ Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level 
 
 ### Phase 3 — Optional
 
-- AEC via process tap + AEC3 for *other applications'* playback (meeting
-  audio through speakers). The Preview self-monitor AEC shipped earlier
-  (AEC Stage 1, §7.4) — it needs no tap because its reference is the
-  engine's own monitor signal.
+- AEC via process tap + AEC3 (if speaker use emerges).
 - Incoming-audio cleaning ("clean what you hear") via the same process tap — NoNoise-Mac precedent.
 - Light EQ/compressor polish; offline Sidon cleanup for recordings.
 - Re-evaluate generative restoration (Stream.FM-class) for Apple Silicon, and audio-visual enhancement (RAVEN-class) if visual-encoder latency drops.
