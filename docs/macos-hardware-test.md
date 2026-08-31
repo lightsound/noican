@@ -584,7 +584,12 @@ worker block statistics.
    ones whose recordings stutter; the recording of a model with zero
    underruns must be free of dropouts.
 6. Repeat step 2 for one suspect on the split transport (Bluetooth
-   microphone) to confirm the counter works there too.
+   microphone) to confirm the counter works there too. Do not compare
+   split counts against aggregate counts numerically: the split ring
+   is primed with a ~50 ms cushion the drift servo then maintains, so
+   a single split underrun means the worker fell behind by the whole
+   cushion — a far more severe event than one aggregate underrun,
+   which only needs the shallow block-phase reservoir to run dry.
 
 ## Clock drift and endurance
 
