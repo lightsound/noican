@@ -56,6 +56,28 @@ float noican_engine_output_level(const void *handle);
 int32_t noican_engine_set_intensity(void *handle, float intensity);
 float noican_engine_intensity(const void *handle);
 uint64_t noican_engine_frames_processed(const void *handle);
+
+/* Diagnostics for real-time budget violations (all 0 while stopped or
+ * for a null handle). output_underruns counts output callbacks that
+ * zero-filled because the output ring ran dry, after the ring first
+ * carried real audio (start-up ramp excluded) — a growing count means
+ * the inference worker misses its 10 ms block budget for the active
+ * model, audible as dropouts in recordings from the virtual microphone
+ * (the preview monitor masks it behind its re-priming cushion).
+ * worker_blocks / worker_blocks_over_budget / worker_block_max_ns are
+ * the worker's per-block processing-time statistics behind that: total
+ * blocks, blocks that exceeded 10 ms, and the single longest block in
+ * nanoseconds. Counters are cumulative since engine start or the last
+ * noican_engine_reset_debug_stats call; reset after a model switch to
+ * attribute the numbers to one model. Reads take the control mutex
+ * (1 Hz diagnostics, not the 20 Hz meter path); the reset is a no-op
+ * while stopped. */
+uint64_t noican_engine_output_underruns(const void *handle);
+uint64_t noican_engine_worker_blocks(const void *handle);
+uint64_t noican_engine_worker_blocks_over_budget(const void *handle);
+uint64_t noican_engine_worker_block_max_ns(const void *handle);
+void noican_engine_reset_debug_stats(void *handle);
+
 size_t noican_engine_last_error(const void *handle, char *buffer, size_t capacity);
 
 size_t noican_model_count(void);
