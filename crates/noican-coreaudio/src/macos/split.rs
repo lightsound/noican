@@ -182,22 +182,9 @@ pub(super) fn start(
     let workgroup = audio_workgroup(capture_unit.raw())?;
 
     // Output half: output-only AUHAL on the virtual output at 48 kHz.
-    let mut output_unit = AuhalUnit::create()?;
-    configure_output_auhal(output_unit.raw(), output_device)?;
     let output_pulses = Arc::new(AtomicU64::new(0));
-    let output_context = ContextGuard::new(OutputContext {
-        output: output_consumer,
-        pulses: Arc::clone(&output_pulses),
-        underruns: Arc::clone(&underruns),
-        output_primed: false,
-    });
-    attach_render_callback(
-        output_unit.raw(),
-        output_render_callback,
-        output_context.raw().cast(),
-        "AudioUnitSetProperty(split output render callback)",
-    )?;
-    output_unit.initialize()?;
+    let (output_unit, output_context) =
+        build_output_half(output_device, output_consumer, &output_pulses, &underruns)?;
 
     let (monitor_control, tee) = monitor::monitor_pair(monitor_state);
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -264,6 +251,33 @@ pub(super) fn start(
         running: true,
         monitor: monitor_control,
     })
+}
+
+/// Builds the output half of the split transport: an output-only AUHAL
+/// on the virtual output with the render callback attached and the unit
+/// initialized, ready to be started.
+fn build_output_half(
+    output_device: AudioDeviceId,
+    output_consumer: Consumer<f32>,
+    output_pulses: &Arc<AtomicU64>,
+    underruns: &Arc<AtomicU64>,
+) -> Result<(AuhalUnit, ContextGuard<OutputContext>), CoreAudioError> {
+    let mut output_unit = AuhalUnit::create()?;
+    configure_output_auhal(output_unit.raw(), output_device)?;
+    let output_context = ContextGuard::new(OutputContext {
+        output: output_consumer,
+        pulses: Arc::clone(output_pulses),
+        underruns: Arc::clone(underruns),
+        output_primed: false,
+    });
+    attach_render_callback(
+        output_unit.raw(),
+        output_render_callback,
+        output_context.raw().cast(),
+        "AudioUnitSetProperty(split output render callback)",
+    )?;
+    output_unit.initialize()?;
+    Ok((output_unit, output_context))
 }
 
 /// Input-only AUHAL on the microphone: output disabled, capture client
