@@ -318,12 +318,13 @@ struct CallbackContext {
     /// means the device stopped calling back (unplugged microphone,
     /// coreaudiod restart, post-sleep stall).
     frames: Arc<AtomicU64>,
-    /// Diagnostic: render callbacks that had to zero-fill because the
-    /// output ring ran dry (relaxed atomic add, same pattern as
-    /// `frames`). Underrun means the inference worker fell behind the
-    /// device clock — audible as dropouts in recordings from the
-    /// virtual microphone while the monitor path masks it behind its
-    /// re-priming cushion.
+    /// Diagnostic: render callbacks that delivered no real audio at all
+    /// because the output ring was completely dry (relaxed atomic add,
+    /// same pattern as `frames`). Underrun means the inference worker
+    /// fell behind the device clock — audible as dropouts in recordings
+    /// from the virtual microphone while the monitor path masks it
+    /// behind its re-priming cushion. Partial zero-fills are not
+    /// counted (see the render callback for why they are benign).
     underruns: Arc<AtomicU64>,
     /// Whether any output sample has ever been popped. The output ring
     /// starts empty on this transport (the worker needs one full block
@@ -626,10 +627,11 @@ impl Runtime {
         self.frames.load(Ordering::Relaxed)
     }
 
-    /// Diagnostic: output callbacks that had to zero-fill because the
-    /// output ring ran dry, after the ring first produced audio (the
+    /// Diagnostic: output callbacks that were fully starved — zero
+    /// real samples popped — after the ring first produced audio (the
     /// unprimed ramp-up on the aggregate path is start-up latency, not
-    /// underrun). A count that keeps growing means the inference worker
+    /// underrun, and partial shortfalls are benign block-quantization
+    /// jitter). A count that keeps growing means the inference worker
     /// misses its 10 ms block budget — audible as dropouts in
     /// recordings from the virtual microphone. Resettable via
     /// [`Runtime::reset_debug_stats`] for per-model attribution.
@@ -1092,7 +1094,6 @@ unsafe extern "C" fn render_callback(
     context.samples_ready.signal();
     let was_primed = context.output_primed;
     let mut popped_any = false;
-    let mut zero_filled = false;
     for sample in samples {
         match context.output.pop() {
             Ok(value) => {
@@ -1101,18 +1102,20 @@ unsafe extern "C" fn render_callback(
             }
             Err(_empty) => {
                 *sample = 0.0;
-                zero_filled = true;
             }
         }
     }
     if popped_any {
         context.output_primed = true;
-    }
-    // Underrun diagnostic: only counted once real output has flowed, so
-    // the empty-ring ramp-up before the worker's first block cannot flag
-    // models that never miss their budget (relaxed add — real-time safe,
-    // same pattern as the frames heartbeat).
-    if was_primed && zero_filled {
+    } else if was_primed {
+        // Underrun diagnostic: counted only when a callback delivered no
+        // real audio at all after the stream primed. Partial shortfalls
+        // are excluded on purpose — the worker writes 480-sample blocks
+        // into (typically) smaller I/O periods, so a few benign partial
+        // zero-fills occur on every model while the ring's phase cushion
+        // forms; a fully starved callback, by contrast, means the worker
+        // fell a whole I/O period behind. Relaxed add — real-time safe,
+        // same pattern as the frames heartbeat.
         context.underruns.fetch_add(1, Ordering::Relaxed);
     }
     NO_ERR

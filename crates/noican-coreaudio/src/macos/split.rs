@@ -110,11 +110,13 @@ pub(super) struct OutputContext {
     /// virtual-output side that stopped calling back (see
     /// [`OUTPUT_STALL_BLOCKS`]).
     pulses: Arc<AtomicU64>,
-    /// Diagnostic: callbacks that had to zero-fill because the output
-    /// ring ran dry (same relaxed-add pattern as `pulses`). On this
-    /// transport the ring is primed with [`OUTPUT_PRIME_SAMPLES`] of
-    /// silence, so a drained ring means the worker (or the capture
-    /// side) fell behind by more than the whole cushion.
+    /// Diagnostic: callbacks that were fully starved — zero real
+    /// samples popped from the output ring (same relaxed-add pattern
+    /// as `pulses`, same complete-starvation definition as the
+    /// aggregate path). On this transport the ring is primed with
+    /// [`OUTPUT_PRIME_SAMPLES`] of silence, so a fully drained ring
+    /// means the worker (or the capture side) fell behind by more
+    /// than the whole cushion.
     underruns: Arc<AtomicU64>,
     /// Whether any sample has ever been popped (it has, from the first
     /// callback, thanks to the priming) — kept for symmetry with the
@@ -608,17 +610,13 @@ unsafe extern "C" fn output_render_callback(
         unsafe { std::slice::from_raw_parts_mut(buffer.data.cast::<f32>(), frames * channels) };
     let was_primed = context.output_primed;
     let mut popped_any = false;
-    let mut zero_filled = false;
     for frame in samples.chunks_exact_mut(channels) {
         let value = match context.output.pop() {
             Ok(value) => {
                 popped_any = true;
                 value
             }
-            Err(_empty) => {
-                zero_filled = true;
-                0.0
-            }
+            Err(_empty) => 0.0,
         };
         for channel in frame {
             *channel = value;
@@ -626,10 +624,11 @@ unsafe extern "C" fn output_render_callback(
     }
     if popped_any {
         context.output_primed = true;
-    }
-    // Underrun diagnostic (see OutputContext::underruns): relaxed add,
-    // real-time safe, same pattern as the pulse counter below.
-    if was_primed && zero_filled {
+    } else if was_primed {
+        // Underrun diagnostic (see OutputContext::underruns): counted
+        // only when the callback delivered no real audio at all, the
+        // same complete-starvation definition as the aggregate path
+        // (relaxed add, real-time safe, like the pulse counter below).
         context.underruns.fetch_add(1, Ordering::Relaxed);
     }
     // Heartbeat for the worker's output-side stall watch (relaxed
