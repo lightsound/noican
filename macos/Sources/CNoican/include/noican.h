@@ -59,8 +59,10 @@ uint64_t noican_engine_frames_processed(const void *handle);
 
 /* Diagnostics for real-time budget violations (all 0 while stopped or
  * for a null handle). output_underruns counts output callbacks that
- * zero-filled because the output ring ran dry, after the ring first
- * carried real audio (start-up ramp excluded) — a growing count means
+ * delivered no real audio at all — the output ring dry for the entire
+ * I/O period — after the ring first carried real audio (start-up ramp
+ * excluded; partial zero-fills are benign block-quantization jitter
+ * and are not counted) — a growing count means
  * the inference worker misses its 10 ms block budget for the active
  * model, audible as dropouts in recordings from the virtual microphone
  * (the preview monitor masks it behind its re-priming cushion).

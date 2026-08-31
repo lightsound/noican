@@ -631,10 +631,13 @@ unsafe fn read_runtime_counter(handle: *const c_void, read: impl Fn(&Runtime) ->
         .map_or(0, |state| state.runtime.as_ref().map_or(0, read))
 }
 
-/// Diagnostic: output callbacks that zero-filled on a dry output ring.
+/// Diagnostic: output callbacks that delivered no real audio at all —
+/// the output ring was dry for the entire I/O period.
 ///
 /// Counted only after the ring first carried real audio (the start-up
-/// ramp is latency, not underrun). Returns 0 while stopped. A growing
+/// ramp is latency, not underrun), and partial zero-fills are not
+/// counted (benign block-quantization jitter — see the render
+/// callbacks). Returns 0 while stopped. A growing
 /// count means the inference worker misses its 10 ms block budget for
 /// the active model — audible as dropouts in recordings from the
 /// virtual microphone, while the preview monitor masks it behind its

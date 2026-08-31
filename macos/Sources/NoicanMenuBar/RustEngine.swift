@@ -169,8 +169,9 @@ final class RustEngine: @unchecked Sendable {
         noican_engine_frames_processed(handle)
     }
 
-    /// Diagnostic: output callbacks that had to zero-fill because the
-    /// output ring ran dry (the start-up ramp is excluded on the Rust
+    /// Diagnostic: output callbacks that delivered no real audio at all
+    /// — the output ring dry for an entire I/O period (the start-up
+    /// ramp and benign partial zero-fills are excluded on the Rust
     /// side). A growing count means the inference worker misses its
     /// 10 ms block budget for the active model — audible as dropouts in
     /// recordings from the virtual microphone. Cumulative since engine
