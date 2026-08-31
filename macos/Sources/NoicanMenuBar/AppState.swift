@@ -2,7 +2,6 @@ import Combine
 import CoreAudio
 import Foundation
 import NoicanState
-import os
 import ServiceManagement
 
 /// The runtime shell around the pure state machine in the `NoicanState`
@@ -55,18 +54,10 @@ final class AppState: ObservableObject {
     /// Heartbeat state for detecting a device that stopped calling back.
     private var lastFrameCount: UInt64 = 0
     private var stalledTicks = 0
-    /// Real-time budget diagnostics, sampled by the 1 Hz health poll and
-    /// reported to the unified log (Console.app, subsystem
-    /// `com.lightsound.noican`) instead of the popover: underruns are a
-    /// hardware-diagnosis tool, not a user-facing control, so a log line
-    /// per growth keeps the UI quiet while the counter, the active model,
-    /// and the worker block statistics stay retrievable on demand.
-    private static let diagnosticsLog = Logger(
-        subsystem: "com.lightsound.noican", category: "engine-diagnostics"
-    )
-    /// Last underrun count already reported to the log (baseline resets
-    /// with the counters: engine start, and the post-switch stats reset).
-    private var lastUnderrunCount: UInt64 = 0
+    /// Real-time budget diagnostics (output underruns, worker block
+    /// times), sampled by the 1 Hz health poll and reported to the
+    /// unified log instead of the popover (see `EngineDiagnostics`).
+    private let diagnostics = EngineDiagnostics()
     /// Follows the monitor's actual output device while the preview
     /// plays: a data-source flip (headphone jack → internal speakers on
     /// the same built-in device) fires no device-list or default-output
@@ -275,11 +266,6 @@ final class AppState: ObservableObject {
         // on (or inherit) the main actor.
         Task.detached {
             let result = Result { try engine.setModel(id) }
-            if case .success = result {
-                // Zero the underrun/block-time diagnostics so the 1 Hz
-                // health poll attributes what follows to the new model.
-                engine.resetDebugStats()
-            }
             await self.finish(.modelSwitchCompleted(error: result.errorMessage))
         }
     }
@@ -429,9 +415,11 @@ final class AppState: ObservableObject {
             }
         }
     }
+}
 
-    // MARK: - Health polling
+// MARK: - Health polling
 
+extension AppState {
     /// Derives the health-poll task from the reducer state: it runs
     /// exactly while a transport is live (including the failed-but-live
     /// window after an engine fault, matching the teardown-bounded
@@ -443,7 +431,7 @@ final class AppState: ObservableObject {
             }
             lastFrameCount = 0
             stalledTicks = 0
-            lastUnderrunCount = 0
+            diagnostics.reset()
             faultPollTask = Task { [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(1))
@@ -487,33 +475,7 @@ final class AppState: ObservableObject {
             lastFrameCount = frames
             stalledTicks = 0
         }
-        logUnderrunDiagnostics(engine)
-    }
-
-    /// Reports output-ring underrun growth to the unified log with the
-    /// active model and the worker's block-time statistics attached, so
-    /// a hardware run can attribute dropouts to a model from Console.app
-    /// without any UI. One line per 1 Hz tick at most; a counter that
-    /// moved backwards means the stats were reset (model switch), which
-    /// only rebases the baseline.
-    private func logUnderrunDiagnostics(_ engine: RustEngine) {
-        let underruns = engine.outputUnderruns
-        defer { lastUnderrunCount = underruns }
-        guard underruns > lastUnderrunCount else {
-            return
-        }
-        let overBudget = engine.workerBlocksOverBudget
-        let blocks = engine.workerBlocks
-        let maxMs = Double(engine.workerBlockMaxNs) / 1_000_000
-        Self.diagnosticsLog.warning(
-            """
-            Output underruns: \(underruns, privacy: .public) \
-            (model: \(self.model.selectedModelID, privacy: .public)); \
-            worker blocks over 10 ms budget: \(overBudget, privacy: .public)\
-            /\(blocks, privacy: .public), \
-            max \(maxMs, format: .fixed(precision: 1), privacy: .public) ms
-            """
-        )
+        diagnostics.sample(engine, activeModelID: model.selectedModelID)
     }
 }
 

@@ -78,6 +78,10 @@ final class RustEngine: @unchecked Sendable {
             noican_engine_set_model(handle, id)
         }
         try requireSuccess(result)
+        // Zero the underrun/block-time diagnostics on every successful
+        // switch, so the health poll attributes what follows to the
+        // newly published model (see EngineDiagnostics).
+        resetDebugStats()
     }
 
     /// Toggles the preview self-monitor (processed voice on the system
