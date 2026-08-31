@@ -165,6 +165,40 @@ final class RustEngine: @unchecked Sendable {
         noican_engine_frames_processed(handle)
     }
 
+    /// Diagnostic: output callbacks that had to zero-fill because the
+    /// output ring ran dry (the start-up ramp is excluded on the Rust
+    /// side). A growing count means the inference worker misses its
+    /// 10 ms block budget for the active model — audible as dropouts in
+    /// recordings from the virtual microphone. Cumulative since engine
+    /// start or the last `resetDebugStats()`.
+    var outputUnderruns: UInt64 {
+        noican_engine_output_underruns(handle)
+    }
+
+    /// Diagnostic: engine blocks the inference worker has processed
+    /// since start or the last `resetDebugStats()` (the denominator for
+    /// `workerBlocksOverBudget`).
+    var workerBlocks: UInt64 {
+        noican_engine_worker_blocks(handle)
+    }
+
+    /// Diagnostic: worker blocks whose processing exceeded the 10 ms
+    /// block budget — what drains the output ring into underrun.
+    var workerBlocksOverBudget: UInt64 {
+        noican_engine_worker_blocks_over_budget(handle)
+    }
+
+    /// Diagnostic: the longest single worker block, in nanoseconds.
+    var workerBlockMaxNs: UInt64 {
+        noican_engine_worker_block_max_ns(handle)
+    }
+
+    /// Zeroes the diagnostic counters so a freshly selected model can
+    /// be measured in isolation. A no-op while stopped.
+    func resetDebugStats() {
+        noican_engine_reset_debug_stats(handle)
+    }
+
     /// The selectable model catalog, read from the Rust registry.
     static func models() -> [ModelInfo] {
         (0..<noican_model_count()).compactMap { index in
