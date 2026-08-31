@@ -27,10 +27,12 @@ use noican_core::{FrameProcessor, StageError};
 /// `x86_64` CLI builds). UL-UNAS on the same 16 kHz resampling path
 /// measured ±0.4 dB, so the deficit is Hush's own gain characteristic,
 /// not the rate conversion. This constant is the midpoint of the
-/// measured deficit range, which brings every measured material within
-/// the ±1 dB band around passthrough: residuals across the corpus above
-/// are −0.95 dB to +0.95 dB after applying it (re-measured +0.5, −0.1
-/// and +1.0 dB on the three re-runnable materials).
+/// measured deficit range. The authoritative acceptance bound is the
+/// **±1 dB band around passthrough** (what the unit test pins): over
+/// the recorded deficits above the midpoint predicts residuals of
+/// −0.95 dB to +0.95 dB, and end-to-end re-measurement on the three
+/// re-runnable materials landed at +0.5, −0.1 and +0.97 dB — the
+/// prediction and the measurements all inside the band.
 ///
 /// No clipping guard follows the gain, by design. The worst measured
 /// output/input peak ratio after the gain is ≈1.16 (raw Hush peak 0.61

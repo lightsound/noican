@@ -189,9 +189,12 @@ Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
     produce clearly audible, intelligible speech** (the candidate-B engine's
     16 kHz path was near-silent; the hybrid routes these models through the
     verified polyphase resampler).
-10b. **Hush loudness parity**: while recording, speak the same sentence
-    through `Hush 16k` and `FastEnhancer-B 48k` back to back. The
-    perceived speech loudness must match between the two (within about
+10b. **Hush loudness parity**: with the strength slider pinned at
+    **100%** (the unity dry path is identical on both models, so any
+    partial strength narrows the gap and can mask a persisting 100%
+    deficit), speak the same sentence through `Hush 16k` and
+    `FastEnhancer-B 48k` back to back while recording. The perceived
+    speech loudness must match between the two (within about
     1 dB of voiced level in the waveform). Hush's network attenuates
     speech itself — a measured −3.4 dB to −1.5 dB voiced-frame RMS
     deficit depending on material — and the stage now compensates with
@@ -589,10 +592,12 @@ this build:
    nothing stale remains in Audio MIDI Setup; the app quits cleanly.
 6. **16 kHz models are audible** *(new)*: Hush and UL-UNAS produce clearly
    audible, intelligible speech in the live path.
-6b. **Hush loudness parity** *(2026-08-31 fix)*: Hush's perceived speech
-   loudness matches the other models (functional test 10b) — the
-   measured makeup gain closed its −3.4 dB to −1.5 dB voiced-RMS
-   deficit, and no clipping artifacts appear on loud speech.
+6b. **Hush loudness parity** *(2026-08-31 fix)*: at strength **100%**
+   (partial strength dilutes the comparison through the shared dry
+   path), Hush's perceived speech loudness matches the other models
+   (functional test 10b) — the measured makeup gain closed its
+   −3.4 dB to −1.5 dB voiced-RMS deficit, and no clipping artifacts
+   appear on loud speech.
 7. **Full model list** *(new)*: the Model picker shows every `main` registry
    stage (Passthrough, FastEnhancer T/B/S/M/L, DPDFNet2/8, DeepFilterNet3,
    UL-UNAS, Hush, and TSE marked "requires enrollment").
