@@ -43,7 +43,7 @@ use noican_core::{DriftServo, InputResampler, SwitchingEngine};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::monitor::MonitorTee;
-use crate::observe::StreamLevels;
+use crate::observe::{StreamLevels, WorkerBlockStats};
 use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
 
 use super::{
@@ -54,8 +54,8 @@ use super::{
     AudioUnitRender, AudioUnitRenderActionFlags, AudioUnitRenderCallback, AudioUnitSetProperty,
     AuhalUnit, ContextGuard, DispatchSemaphore, INPUT_BUS, NO_ERR, OSStatus, OUTPUT_BUS, PARAM_ERR,
     RING_CAPACITY, Runtime, Transport, WORKER_WAIT_NS, WorkgroupGuard, attach_render_callback,
-    audio_workgroup, check_status, monitor, pcm_format, pcm_format_at, run_block, set_property,
-    size_u32, start_output_unit, stop_output_unit,
+    audio_workgroup, check_status, monitor, pcm_format, pcm_format_at, run_block,
+    saturating_elapsed_ns, set_property, size_u32, start_output_unit, stop_output_unit,
 };
 
 /// Largest callback the capture unit may deliver, in frames. Set as
@@ -110,6 +110,17 @@ pub(super) struct OutputContext {
     /// virtual-output side that stopped calling back (see
     /// [`OUTPUT_STALL_BLOCKS`]).
     pulses: Arc<AtomicU64>,
+    /// Diagnostic: callbacks that had to zero-fill because the output
+    /// ring ran dry (same relaxed-add pattern as `pulses`). On this
+    /// transport the ring is primed with [`OUTPUT_PRIME_SAMPLES`] of
+    /// silence, so a drained ring means the worker (or the capture
+    /// side) fell behind by more than the whole cushion.
+    underruns: Arc<AtomicU64>,
+    /// Whether any sample has ever been popped (it has, from the first
+    /// callback, thanks to the priming) — kept for symmetry with the
+    /// aggregate callback so both counters share one definition of
+    /// underrun. Callback-thread-only state, hence no atomic.
+    output_primed: bool,
 }
 
 /// Everything the split-transport inference worker owns or shares.
@@ -123,6 +134,8 @@ struct SplitWorkerLinks {
     servo: DriftServo,
     /// The output callback's pulse counter (see [`OutputContext`]).
     output_pulses: Arc<AtomicU64>,
+    /// Per-block processing-time statistics (see [`WorkerBlockStats`]).
+    block_stats: Arc<WorkerBlockStats>,
 }
 
 /// Builds and starts the split transport (see the module docs and
@@ -150,6 +163,8 @@ pub(super) fn start(
     }
     let faulted = Arc::new(AtomicBool::new(false));
     let frames = Arc::new(AtomicU64::new(0));
+    let underruns = Arc::new(AtomicU64::new(0));
+    let block_stats = Arc::new(WorkerBlockStats::new());
 
     // Capture half: input-only AUHAL at the microphone's native rate.
     let mut capture_unit = AuhalUnit::create()?;
@@ -173,6 +188,8 @@ pub(super) fn start(
     let output_context = ContextGuard::new(OutputContext {
         output: output_consumer,
         pulses: Arc::clone(&output_pulses),
+        underruns: Arc::clone(&underruns),
+        output_primed: false,
     });
     attach_render_callback(
         output_unit.raw(),
@@ -196,6 +213,7 @@ pub(super) fn start(
         resampler,
         servo: DriftServo::new(OUTPUT_PRIME_SAMPLES),
         output_pulses,
+        block_stats: Arc::clone(&block_stats),
     };
     let worker = thread::Builder::new()
         .name("noican-inference".to_owned())
@@ -240,6 +258,8 @@ pub(super) fn start(
         faulted,
         samples_ready,
         frames,
+        underruns,
+        block_stats,
         worker: Some(worker),
         running: true,
         monitor: monitor_control,
@@ -389,8 +409,10 @@ fn split_processing_loop(
         mut resampler,
         mut servo,
         output_pulses,
+        block_stats,
     } = links;
     levels.reset();
+    block_stats.reset();
     let membership = WorkgroupGuard::join(workgroup);
     if !membership.joined() {
         faulted.store(true, Ordering::Release);
@@ -432,6 +454,10 @@ fn split_processing_loop(
             for slot in &mut input_block {
                 *slot = pending.pop_front().unwrap_or(0.0);
             }
+            // Timing the block on the worker (not a callback):
+            // `Instant::now` is a non-blocking clock read, fine on the
+            // inference thread that runs whole models.
+            let started = std::time::Instant::now();
             run_block(
                 &mut engine,
                 &input_block,
@@ -441,6 +467,7 @@ fn split_processing_loop(
                 &mut output,
                 faulted,
             );
+            block_stats.record(saturating_elapsed_ns(started));
             // Drift servo: total samples buffered between the capture
             // clock (producer) and the output clock (consumer), in
             // engine-rate samples. A trend here *is* clock drift.
@@ -465,8 +492,9 @@ fn split_processing_loop(
         }
     }
     drop(membership);
-    // Meters read 0 whenever no worker is running (engine stopped).
+    // Meters and stats read 0 whenever no worker is running.
     levels.reset();
+    block_stats.reset();
 }
 
 /// Input callback of the capture AUHAL: renders the microphone's frames
@@ -564,11 +592,31 @@ unsafe extern "C" fn output_render_callback(
         .min(available.saturating_div(channels));
     let samples =
         unsafe { std::slice::from_raw_parts_mut(buffer.data.cast::<f32>(), frames * channels) };
+    let was_primed = context.output_primed;
+    let mut popped_any = false;
+    let mut zero_filled = false;
     for frame in samples.chunks_exact_mut(channels) {
-        let value = context.output.pop().unwrap_or(0.0);
+        let value = match context.output.pop() {
+            Ok(value) => {
+                popped_any = true;
+                value
+            }
+            Err(_empty) => {
+                zero_filled = true;
+                0.0
+            }
+        };
         for channel in frame {
             *channel = value;
         }
+    }
+    if popped_any {
+        context.output_primed = true;
+    }
+    // Underrun diagnostic (see OutputContext::underruns): relaxed add,
+    // real-time safe, same pattern as the pulse counter below.
+    if was_primed && zero_filled {
+        context.underruns.fetch_add(1, Ordering::Relaxed);
     }
     // Heartbeat for the worker's output-side stall watch (relaxed
     // atomic add: real-time safe, like the capture frame counter).
