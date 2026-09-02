@@ -218,6 +218,13 @@ impl Runtime {
         0
     }
 
+    /// Portable builds never run the inference worker, so it is never
+    /// promoted to real-time scheduling.
+    #[must_use]
+    pub const fn worker_realtime(&self) -> bool {
+        false
+    }
+
     /// No-op portable reset of the diagnostic counters.
     pub const fn reset_debug_stats(&self) {}
 }

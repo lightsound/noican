@@ -54,8 +54,9 @@ use super::{
     AudioUnitRender, AudioUnitRenderActionFlags, AudioUnitRenderCallback, AudioUnitSetProperty,
     AuhalUnit, ContextGuard, DispatchSemaphore, INPUT_BUS, NO_ERR, OSStatus, OUTPUT_BUS, PARAM_ERR,
     RING_CAPACITY, Runtime, Transport, WORKER_WAIT_NS, WorkgroupGuard, attach_render_callback,
-    audio_workgroup, check_status, monitor, pcm_format, pcm_format_at, run_block,
-    saturating_elapsed_ns, set_property, size_u32, start_output_unit, stop_output_unit,
+    audio_workgroup, check_status, monitor, pcm_format, pcm_format_at,
+    promote_current_thread_to_realtime, run_block, saturating_elapsed_ns, set_property, size_u32,
+    start_output_unit, stop_output_unit,
 };
 
 /// Largest callback the capture unit may deliver, in frames. Set as
@@ -138,6 +139,9 @@ struct SplitWorkerLinks {
     output_pulses: Arc<AtomicU64>,
     /// Per-block processing-time statistics (see [`WorkerBlockStats`]).
     block_stats: Arc<WorkerBlockStats>,
+    /// Set by the worker to whether its real-time promotion succeeded
+    /// (see `promote_current_thread_to_realtime`).
+    realtime: Arc<AtomicBool>,
 }
 
 /// Builds and starts the split transport (see the module docs and
@@ -167,6 +171,7 @@ pub(super) fn start(
     let frames = Arc::new(AtomicU64::new(0));
     let underruns = Arc::new(AtomicU64::new(0));
     let block_stats = Arc::new(WorkerBlockStats::new());
+    let worker_realtime = Arc::new(AtomicBool::new(false));
 
     // Capture half: input-only AUHAL at the microphone's native rate.
     let mut capture_unit = AuhalUnit::create()?;
@@ -203,6 +208,7 @@ pub(super) fn start(
         servo: DriftServo::new(OUTPUT_PRIME_SAMPLES),
         output_pulses,
         block_stats: Arc::clone(&block_stats),
+        realtime: Arc::clone(&worker_realtime),
     };
     let worker = thread::Builder::new()
         .name("noican-inference".to_owned())
@@ -249,6 +255,7 @@ pub(super) fn start(
         frames,
         underruns,
         block_stats,
+        worker_realtime,
         worker: Some(worker),
         running: true,
         monitor: monitor_control,
@@ -426,9 +433,13 @@ fn split_processing_loop(
         mut servo,
         output_pulses,
         block_stats,
+        realtime,
     } = links;
     levels.reset();
     block_stats.reset();
+    // Real-time promotion must precede the workgroup join (see
+    // promote_current_thread_to_realtime); failure degrades, not faults.
+    realtime.store(promote_current_thread_to_realtime(), Ordering::Release);
     let membership = WorkgroupGuard::join(workgroup);
     if !membership.joined() {
         faulted.store(true, Ordering::Release);
