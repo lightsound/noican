@@ -693,6 +693,24 @@ pub unsafe extern "C" fn noican_engine_worker_block_max_ns(handle: *const c_void
     unsafe { read_runtime_counter(handle, Runtime::worker_block_max_ns) }
 }
 
+/// Diagnostic: 1 when the inference worker runs under mach
+/// time-constraint (real-time) scheduling, 0 otherwise (including while
+/// stopped and for a null handle).
+///
+/// 0 while running means the promotion failed and the worker runs at
+/// default priority — budget misses in that state may be scheduling,
+/// not model cost, and hardware underrun numbers should be read with
+/// that in mind.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_engine_worker_realtime(handle: *const c_void) -> i32 {
+    let realtime = unsafe { read_runtime_counter(handle, |rt| u64::from(rt.worker_realtime())) };
+    i32::from(realtime != 0)
+}
+
 /// Zeroes the diagnostic counters of the running engine.
 ///
 /// Resets the output underruns and the worker block statistics so a
@@ -1358,6 +1376,7 @@ mod tests {
             0
         );
         assert_eq!(unsafe { noican_engine_worker_block_max_ns(ptr::null()) }, 0);
+        assert_eq!(unsafe { noican_engine_worker_realtime(ptr::null()) }, 0);
         // A stopped engine (no runtime) also reads zero everywhere.
         let handle = unsafe { noican_engine_create(ptr::null()) };
         assert!(!handle.is_null());
@@ -1368,6 +1387,7 @@ mod tests {
             0
         );
         assert_eq!(unsafe { noican_engine_worker_block_max_ns(handle) }, 0);
+        assert_eq!(unsafe { noican_engine_worker_realtime(handle) }, 0);
         unsafe { noican_engine_destroy(handle) };
     }
 

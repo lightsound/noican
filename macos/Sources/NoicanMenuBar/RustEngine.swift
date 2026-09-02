@@ -198,6 +198,14 @@ final class RustEngine: @unchecked Sendable {
         noican_engine_worker_block_max_ns(handle)
     }
 
+    /// Diagnostic: whether the inference worker runs under mach
+    /// time-constraint (real-time) scheduling. False while running
+    /// means the promotion failed — budget misses in that state may be
+    /// scheduling, not model cost.
+    var workerRealtime: Bool {
+        noican_engine_worker_realtime(handle) != 0
+    }
+
     /// Zeroes the diagnostic counters so a freshly selected model can
     /// be measured in isolation. A no-op while stopped.
     func resetDebugStats() {

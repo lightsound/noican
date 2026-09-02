@@ -71,13 +71,17 @@ uint64_t noican_engine_frames_processed(const void *handle);
  * blocks, blocks that exceeded 10 ms, and the single longest block in
  * nanoseconds. Counters are cumulative since engine start or the last
  * noican_engine_reset_debug_stats call; reset after a model switch to
- * attribute the numbers to one model. Reads take the control mutex
- * (1 Hz diagnostics, not the 20 Hz meter path); the reset is a no-op
- * while stopped. */
+ * attribute the numbers to one model. worker_realtime is 1 when the
+ * inference worker runs under mach time-constraint (real-time)
+ * scheduling; 0 while running means the promotion failed and budget
+ * misses may be scheduling, not model cost. Reads take the control
+ * mutex (1 Hz diagnostics, not the 20 Hz meter path); the reset is a
+ * no-op while stopped. */
 uint64_t noican_engine_output_underruns(const void *handle);
 uint64_t noican_engine_worker_blocks(const void *handle);
 uint64_t noican_engine_worker_blocks_over_budget(const void *handle);
 uint64_t noican_engine_worker_block_max_ns(const void *handle);
+int32_t noican_engine_worker_realtime(const void *handle);
 void noican_engine_reset_debug_stats(void *handle);
 
 size_t noican_engine_last_error(const void *handle, char *buffer, size_t capacity);
