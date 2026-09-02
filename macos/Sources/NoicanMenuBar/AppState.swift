@@ -54,6 +54,10 @@ final class AppState: ObservableObject {
     /// Heartbeat state for detecting a device that stopped calling back.
     private var lastFrameCount: UInt64 = 0
     private var stalledTicks = 0
+    /// Real-time budget diagnostics (output underruns, worker block
+    /// times), sampled by the 1 Hz health poll and reported to the
+    /// unified log instead of the popover (see `EngineDiagnostics`).
+    private let diagnostics = EngineDiagnostics()
     /// Follows the monitor's actual output device while the preview
     /// plays: a data-source flip (headphone jack → internal speakers on
     /// the same built-in device) fires no device-list or default-output
@@ -411,9 +415,11 @@ final class AppState: ObservableObject {
             }
         }
     }
+}
 
-    // MARK: - Health polling
+// MARK: - Health polling
 
+extension AppState {
     /// Derives the health-poll task from the reducer state: it runs
     /// exactly while a transport is live (including the failed-but-live
     /// window after an engine fault, matching the teardown-bounded
@@ -425,6 +431,7 @@ final class AppState: ObservableObject {
             }
             lastFrameCount = 0
             stalledTicks = 0
+            diagnostics.reset()
             faultPollTask = Task { [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(1))
@@ -468,6 +475,7 @@ final class AppState: ObservableObject {
             lastFrameCount = frames
             stalledTicks = 0
         }
+        diagnostics.sample(engine, activeModelID: model.selectedModelID)
     }
 }
 

@@ -32,7 +32,7 @@ use noican_core::SwitchingEngine;
 pub mod monitor;
 pub mod observe;
 
-pub use observe::StreamLevels;
+pub use observe::{StreamLevels, WorkerBlockStats};
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -193,4 +193,31 @@ impl Runtime {
     pub const fn frames_processed(&self) -> u64 {
         0
     }
+
+    /// Portable builds never render, so they never underrun.
+    #[must_use]
+    pub const fn output_underruns(&self) -> u64 {
+        0
+    }
+
+    /// Portable builds never run the inference worker.
+    #[must_use]
+    pub const fn worker_blocks(&self) -> u64 {
+        0
+    }
+
+    /// Portable builds never run the inference worker.
+    #[must_use]
+    pub const fn worker_blocks_over_budget(&self) -> u64 {
+        0
+    }
+
+    /// Portable builds never run the inference worker.
+    #[must_use]
+    pub const fn worker_block_max_ns(&self) -> u64 {
+        0
+    }
+
+    /// No-op portable reset of the diagnostic counters.
+    pub const fn reset_debug_stats(&self) {}
 }

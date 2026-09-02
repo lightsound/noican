@@ -78,6 +78,10 @@ final class RustEngine: @unchecked Sendable {
             noican_engine_set_model(handle, id)
         }
         try requireSuccess(result)
+        // Zero the underrun/block-time diagnostics on every successful
+        // switch, so the health poll attributes what follows to the
+        // newly published model (see EngineDiagnostics).
+        resetDebugStats()
     }
 
     /// Toggles the preview self-monitor (processed voice on the system
@@ -163,6 +167,41 @@ final class RustEngine: @unchecked Sendable {
     /// Stops advancing when the device stops calling back.
     var framesProcessed: UInt64 {
         noican_engine_frames_processed(handle)
+    }
+
+    /// Diagnostic: output callbacks that delivered no real audio at all
+    /// — the output ring dry for an entire I/O period (the start-up
+    /// ramp and benign partial zero-fills are excluded on the Rust
+    /// side). A growing count means the inference worker misses its
+    /// 10 ms block budget for the active model — audible as dropouts in
+    /// recordings from the virtual microphone. Cumulative since engine
+    /// start or the last `resetDebugStats()`.
+    var outputUnderruns: UInt64 {
+        noican_engine_output_underruns(handle)
+    }
+
+    /// Diagnostic: engine blocks the inference worker has processed
+    /// since start or the last `resetDebugStats()` (the denominator for
+    /// `workerBlocksOverBudget`).
+    var workerBlocks: UInt64 {
+        noican_engine_worker_blocks(handle)
+    }
+
+    /// Diagnostic: worker blocks whose processing exceeded the 10 ms
+    /// block budget — what drains the output ring into underrun.
+    var workerBlocksOverBudget: UInt64 {
+        noican_engine_worker_blocks_over_budget(handle)
+    }
+
+    /// Diagnostic: the longest single worker block, in nanoseconds.
+    var workerBlockMaxNs: UInt64 {
+        noican_engine_worker_block_max_ns(handle)
+    }
+
+    /// Zeroes the diagnostic counters so a freshly selected model can
+    /// be measured in isolation. A no-op while stopped.
+    func resetDebugStats() {
+        noican_engine_reset_debug_stats(handle)
     }
 
     /// The selectable model catalog, read from the Rust registry.

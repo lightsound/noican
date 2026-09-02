@@ -24,7 +24,7 @@ use noican_core::SwitchingEngine;
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::monitor::{MonitorTee, fourcc};
-use crate::observe::StreamLevels;
+use crate::observe::{StreamLevels, WorkerBlockStats};
 use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
 
 mod monitor;
@@ -318,6 +318,22 @@ struct CallbackContext {
     /// means the device stopped calling back (unplugged microphone,
     /// coreaudiod restart, post-sleep stall).
     frames: Arc<AtomicU64>,
+    /// Diagnostic: render callbacks that delivered no real audio at all
+    /// because the output ring was completely dry (relaxed atomic add,
+    /// same pattern as `frames`). Underrun means the inference worker
+    /// fell behind the device clock — audible as dropouts in recordings
+    /// from the virtual microphone while the monitor path masks it
+    /// behind its re-priming cushion. Partial zero-fills are not
+    /// counted (see the render callback for why they are benign).
+    underruns: Arc<AtomicU64>,
+    /// Whether any output sample has ever been popped. The output ring
+    /// starts empty on this transport (the worker needs one full block
+    /// of input before it produces anything), so the ramp-up callbacks
+    /// that zero-fill before the first pop succeeds are start-up
+    /// latency, not underrun — counting them would flag every model,
+    /// including ones that never miss the budget. Callback-thread-only
+    /// state, hence no atomic.
+    output_primed: bool,
 }
 
 /// Everything the inference worker owns or shares. Bundled so the worker
@@ -328,6 +344,7 @@ struct WorkerLinks {
     output: Producer<f32>,
     tee: MonitorTee,
     levels: Arc<StreamLevels>,
+    block_stats: Arc<WorkerBlockStats>,
 }
 
 /// The AUHAL instance(s) a running transport owns, with their callback
@@ -413,6 +430,8 @@ pub struct Runtime {
     faulted: Arc<AtomicBool>,
     samples_ready: Arc<DispatchSemaphore>,
     frames: Arc<AtomicU64>,
+    underruns: Arc<AtomicU64>,
+    block_stats: Arc<WorkerBlockStats>,
     worker: Option<JoinHandle<()>>,
     running: bool,
     /// Control-plane half of the preview monitor (the worker half is the
@@ -455,6 +474,8 @@ impl Runtime {
         let (output_producer, output_consumer) = RingBuffer::new(RING_CAPACITY);
         let faulted = Arc::new(AtomicBool::new(false));
         let frames = Arc::new(AtomicU64::new(0));
+        let underruns = Arc::new(AtomicU64::new(0));
+        let block_stats = Arc::new(WorkerBlockStats::new());
         let context = ContextGuard::new(CallbackContext {
             unit: unit.raw(),
             input: input_producer,
@@ -462,6 +483,8 @@ impl Runtime {
             faulted: Arc::clone(&faulted),
             samples_ready: Arc::clone(&samples_ready),
             frames: Arc::clone(&frames),
+            underruns: Arc::clone(&underruns),
+            output_primed: false,
         });
         attach_render_callback(
             unit.raw(),
@@ -483,6 +506,7 @@ impl Runtime {
             output: output_producer,
             tee,
             levels,
+            block_stats: Arc::clone(&block_stats),
         };
         let worker = thread::Builder::new()
             .name("noican-inference".to_owned())
@@ -513,6 +537,8 @@ impl Runtime {
             faulted,
             samples_ready,
             frames,
+            underruns,
+            block_stats,
             worker: Some(worker),
             running: true,
             monitor: monitor_control,
@@ -599,6 +625,50 @@ impl Runtime {
     #[must_use]
     pub fn frames_processed(&self) -> u64 {
         self.frames.load(Ordering::Relaxed)
+    }
+
+    /// Diagnostic: output callbacks that were fully starved — zero
+    /// real samples popped — after the ring first produced audio (the
+    /// unprimed ramp-up on the aggregate path is start-up latency, not
+    /// underrun, and partial shortfalls are benign block-quantization
+    /// jitter). A count that keeps growing means the inference worker
+    /// misses its 10 ms block budget — audible as dropouts in
+    /// recordings from the virtual microphone. Resettable via
+    /// [`Runtime::reset_debug_stats`] for per-model attribution.
+    #[must_use]
+    pub fn output_underruns(&self) -> u64 {
+        self.underruns.load(Ordering::Relaxed)
+    }
+
+    /// Diagnostic: engine blocks the inference worker has processed
+    /// since start (or the last [`Runtime::reset_debug_stats`]).
+    #[must_use]
+    pub fn worker_blocks(&self) -> u64 {
+        self.block_stats.blocks()
+    }
+
+    /// Diagnostic: worker blocks that exceeded the 10 ms budget
+    /// ([`crate::observe::BLOCK_BUDGET_NS`]) since start (or the last
+    /// [`Runtime::reset_debug_stats`]).
+    #[must_use]
+    pub fn worker_blocks_over_budget(&self) -> u64 {
+        self.block_stats.over_budget()
+    }
+
+    /// Diagnostic: the longest single worker block since start (or the
+    /// last [`Runtime::reset_debug_stats`]), in nanoseconds.
+    #[must_use]
+    pub fn worker_block_max_ns(&self) -> u64 {
+        self.block_stats.max_ns()
+    }
+
+    /// Zeroes the diagnostic counters (underruns and worker block
+    /// statistics) so a model switch can be measured in isolation.
+    /// Plain relaxed stores — safe while the callbacks and the worker
+    /// run.
+    pub fn reset_debug_stats(&self) {
+        self.underruns.store(0, Ordering::Relaxed);
+        self.block_stats.reset();
     }
 
     /// Enables or disables the preview self-monitor: the worker tees its
@@ -917,8 +987,10 @@ fn processing_loop(
         mut output,
         mut tee,
         levels,
+        block_stats,
     } = links;
     levels.reset();
+    block_stats.reset();
     let membership = WorkgroupGuard::join(workgroup);
     if !membership.joined() {
         faulted.store(true, Ordering::Release);
@@ -932,6 +1004,10 @@ fn processing_loop(
                 input_block[position] = sample;
                 position += 1;
                 if position == WORKER_BLOCK_SAMPLES {
+                    // Timing the block on the worker (not the callback):
+                    // `Instant::now` is a non-blocking clock read, fine
+                    // on the inference thread that runs whole models.
+                    let started = std::time::Instant::now();
                     run_block(
                         &mut engine,
                         &input_block,
@@ -941,6 +1017,7 @@ fn processing_loop(
                         &mut output,
                         faulted,
                     );
+                    block_stats.record(saturating_elapsed_ns(started));
                     position = 0;
                 }
             }
@@ -952,8 +1029,15 @@ fn processing_loop(
         }
     }
     drop(membership);
-    // Meters read 0 whenever no worker is running (engine stopped).
+    // Meters and stats read 0 whenever no worker is running.
     levels.reset();
+    block_stats.reset();
+}
+
+/// Nanoseconds since `started`, saturated into a `u64` (585 years —
+/// unreachable in practice, but the stats must never panic).
+fn saturating_elapsed_ns(started: std::time::Instant) -> u64 {
+    u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
 }
 
 unsafe extern "C" fn render_callback(
@@ -1008,8 +1092,31 @@ unsafe extern "C" fn render_callback(
         .fetch_add(u64::from(frame_count), Ordering::Relaxed);
     // Wake the inference worker (never blocks; see DispatchSemaphore).
     context.samples_ready.signal();
+    let was_primed = context.output_primed;
+    let mut popped_any = false;
     for sample in samples {
-        *sample = context.output.pop().unwrap_or(0.0);
+        match context.output.pop() {
+            Ok(value) => {
+                *sample = value;
+                popped_any = true;
+            }
+            Err(_empty) => {
+                *sample = 0.0;
+            }
+        }
+    }
+    if popped_any {
+        context.output_primed = true;
+    } else if was_primed {
+        // Underrun diagnostic: counted only when a callback delivered no
+        // real audio at all after the stream primed. Partial shortfalls
+        // are excluded on purpose — the worker writes 480-sample blocks
+        // into (typically) smaller I/O periods, so a few benign partial
+        // zero-fills occur on every model while the ring's phase cushion
+        // forms; a fully starved callback, by contrast, means the worker
+        // fell a whole I/O period behind. Relaxed add — real-time safe,
+        // same pattern as the frames heartbeat.
+        context.underruns.fetch_add(1, Ordering::Relaxed);
     }
     NO_ERR
 }

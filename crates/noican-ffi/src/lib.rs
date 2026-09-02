@@ -616,6 +616,105 @@ pub unsafe extern "C" fn noican_engine_frames_processed(handle: *const c_void) -
     })
 }
 
+/// Reads one diagnostic counter off the running runtime (0 while
+/// stopped or for a null handle) — the shared shape of the underrun and
+/// worker-block-stat getters below. Takes the control mutex like the
+/// frames heartbeat: these are 1 Hz diagnostics, not the 20 Hz meter
+/// path.
+unsafe fn read_runtime_counter(handle: *const c_void, read: impl Fn(&Runtime) -> u64) -> u64 {
+    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+        return 0;
+    };
+    handle
+        .state
+        .lock()
+        .map_or(0, |state| state.runtime.as_ref().map_or(0, read))
+}
+
+/// Diagnostic: output callbacks that delivered no real audio at all —
+/// the output ring was dry for the entire I/O period.
+///
+/// Counted only after the ring first carried real audio (the start-up
+/// ramp is latency, not underrun), and partial zero-fills are not
+/// counted (benign block-quantization jitter — see the render
+/// callbacks). Returns 0 while stopped. A growing
+/// count means the inference worker misses its 10 ms block budget for
+/// the active model — audible as dropouts in recordings from the
+/// virtual microphone, while the preview monitor masks it behind its
+/// re-priming cushion. Counted on both transports (aggregate and
+/// split).
+///
+/// Cumulative since start or the last [`noican_engine_reset_debug_stats`];
+/// reset after a model switch to attribute underruns to one model.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_engine_output_underruns(handle: *const c_void) -> u64 {
+    unsafe { read_runtime_counter(handle, Runtime::output_underruns) }
+}
+
+/// Diagnostic: engine blocks the inference worker has processed since
+/// start or the last [`noican_engine_reset_debug_stats`] (the
+/// denominator for the over-budget count). Returns 0 while stopped.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_engine_worker_blocks(handle: *const c_void) -> u64 {
+    unsafe { read_runtime_counter(handle, Runtime::worker_blocks) }
+}
+
+/// Diagnostic: worker blocks whose processing exceeded the 10 ms budget.
+///
+/// Counted since start or the last [`noican_engine_reset_debug_stats`].
+/// Returns 0 while stopped. Blocks over budget are what drain the
+/// output ring into underrun.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_engine_worker_blocks_over_budget(handle: *const c_void) -> u64 {
+    unsafe { read_runtime_counter(handle, Runtime::worker_blocks_over_budget) }
+}
+
+/// Diagnostic: the longest single worker block since start or the last
+/// [`noican_engine_reset_debug_stats`], in nanoseconds. Returns 0 while
+/// stopped.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_engine_worker_block_max_ns(handle: *const c_void) -> u64 {
+    unsafe { read_runtime_counter(handle, Runtime::worker_block_max_ns) }
+}
+
+/// Zeroes the diagnostic counters of the running engine.
+///
+/// Resets the output underruns and the worker block statistics so a
+/// freshly selected model can be measured in isolation. A no-op while
+/// stopped or for a null handle. Plain atomic stores on the Rust side —
+/// safe while audio runs.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_engine_reset_debug_stats(handle: *mut c_void) {
+    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+        return;
+    };
+    if let Ok(state) = handle.state.lock()
+        && let Some(runtime) = state.runtime.as_ref()
+    {
+        runtime.reset_debug_stats();
+    }
+}
+
 /// Decayed linear peak (0.0–1.0) of the model input (pre-processing),
 /// measured per 10 ms worker block; 0.0 while the engine is stopped.
 ///
@@ -1246,6 +1345,43 @@ mod tests {
             error.contains("only on macOS"),
             "portable builds refuse the transport: {error}"
         );
+        unsafe { noican_engine_destroy(handle) };
+    }
+
+    #[test]
+    fn debug_stats_read_zero_and_null_safe_while_stopped() {
+        // Null handles read as zero for every diagnostic counter.
+        assert_eq!(unsafe { noican_engine_output_underruns(ptr::null()) }, 0);
+        assert_eq!(unsafe { noican_engine_worker_blocks(ptr::null()) }, 0);
+        assert_eq!(
+            unsafe { noican_engine_worker_blocks_over_budget(ptr::null()) },
+            0
+        );
+        assert_eq!(unsafe { noican_engine_worker_block_max_ns(ptr::null()) }, 0);
+        // A stopped engine (no runtime) also reads zero everywhere.
+        let handle = unsafe { noican_engine_create(ptr::null()) };
+        assert!(!handle.is_null());
+        assert_eq!(unsafe { noican_engine_output_underruns(handle) }, 0);
+        assert_eq!(unsafe { noican_engine_worker_blocks(handle) }, 0);
+        assert_eq!(
+            unsafe { noican_engine_worker_blocks_over_budget(handle) },
+            0
+        );
+        assert_eq!(unsafe { noican_engine_worker_block_max_ns(handle) }, 0);
+        unsafe { noican_engine_destroy(handle) };
+    }
+
+    #[test]
+    fn debug_stats_reset_is_null_safe_and_a_no_op_while_stopped() {
+        // Null handle: must not crash.
+        unsafe { noican_engine_reset_debug_stats(ptr::null_mut()) };
+        // Stopped engine: a no-op that leaves the handle fully usable.
+        let handle = unsafe { noican_engine_create(ptr::null()) };
+        assert!(!handle.is_null());
+        unsafe { noican_engine_reset_debug_stats(handle) };
+        assert_eq!(unsafe { noican_engine_output_underruns(handle) }, 0);
+        unsafe { noican_engine_stop(handle) };
+        unsafe { noican_engine_reset_debug_stats(handle) };
         unsafe { noican_engine_destroy(handle) };
     }
 
