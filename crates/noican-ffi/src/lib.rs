@@ -294,22 +294,24 @@ fn start_with(
     SUCCESS
 }
 
-/// Validates a native capture rate: finite, integral (Core Audio
-/// nominal rates are whole hertz; 44100.0 is exact), and within the
-/// range the capture resampler converts
+/// Validates a native capture rate: finite, whole hertz (Core Audio
+/// nominal rates are exact integers in f64 — 44100.0, never 44100.3 —
+/// so anything fractional is a bogus reading, not a rate to round), and
+/// within the range the capture resampler converts
 /// ([`noican_core::capture::MIN_NATIVE_RATE`] to
 /// [`noican_core::capture::MAX_NATIVE_RATE`]). Rejecting here — before
 /// any weight download or audio object — keeps the failure instant and
-/// its message precise. The ratio itself is no longer a constraint: the
-/// resampler reduces any rational ratio exactly.
+/// its message precise. The reduced ratio's size is bounded by the
+/// resampler itself ([`noican_core::capture::MAX_RATIO_TERM`]) when the
+/// transport constructs it, still before any audio object.
 fn validate_capture_rate(rate: f64) -> Result<u32, String> {
     let rounded = rate.round();
     let min = f64::from(MIN_NATIVE_RATE);
     let max = f64::from(MAX_NATIVE_RATE);
-    if !rate.is_finite() || (rate - rounded).abs() > 0.5 || !(min..=max).contains(&rounded) {
+    if !rate.is_finite() || (rate - rounded).abs() > 1e-6 || !(min..=max).contains(&rounded) {
         return Err(format!(
             "invalid capture sample rate {rate} Hz (the split transport captures \
-             {MIN_NATIVE_RATE}–{MAX_NATIVE_RATE} Hz microphones)"
+             {MIN_NATIVE_RATE}–{MAX_NATIVE_RATE} Hz microphones at whole-hertz rates)"
         ));
     }
     #[expect(
@@ -1319,10 +1321,18 @@ mod tests {
             let expected = rate as u32;
             assert_eq!(validate_capture_rate(rate), Ok(expected));
         }
-        // Core Audio nominal rates are whole hertz; a fractional value
-        // rounds rather than failing (the resampler reduces any ratio).
-        assert_eq!(validate_capture_rate(16_000.7), Ok(16_001));
-        for rate in [0.0, -16_000.0, 7_999.0, 192_001.0, f64::NAN, f64::INFINITY] {
+        // Core Audio nominal rates are whole hertz; a fractional value is
+        // a bogus reading and must not be rounded into an accepted rate.
+        for rate in [
+            0.0,
+            -16_000.0,
+            7_999.0,
+            192_001.0,
+            16_000.7,
+            44_100.01,
+            f64::NAN,
+            f64::INFINITY,
+        ] {
             let error = validate_capture_rate(rate).expect_err("must be rejected");
             assert!(
                 error.contains("Hz"),

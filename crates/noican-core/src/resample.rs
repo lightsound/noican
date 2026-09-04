@@ -340,15 +340,18 @@ impl PolyphaseResampler {
     /// preallocating for input chunks of up to `max_input_len` samples
     /// per [`PolyphaseResampler::process`] call.
     ///
+    /// The bank has `up × oversampling` phases of `~40 × max(1, down/up)`
+    /// taps, where `up/down` is the reduced ratio: callers exposing this
+    /// to untrusted rates should bound the terms of
+    /// [`PolyphaseResampler::reduced_ratio`] first (a rate coprime with
+    /// the other reduces to tens of thousands of phases).
+    ///
     /// # Panics
     ///
     /// Panics when either rate is zero.
     #[must_use]
     pub fn new(input_rate: u32, output_rate: u32, max_input_len: usize) -> Self {
-        assert!(input_rate > 0 && output_rate > 0);
-        let divisor = gcd(input_rate as usize, output_rate as usize);
-        let up = output_rate as usize / divisor;
-        let down = input_rate as usize / divisor;
+        let (up, down) = Self::reduced_ratio(input_rate, output_rate);
         let oversampling = MIN_PHASES.div_ceil(up).max(1);
         let num_phases = up * oversampling;
         let step = down * oversampling;
@@ -405,6 +408,22 @@ impl PolyphaseResampler {
     #[must_use]
     pub const fn ratio(&self) -> (usize, usize) {
         (self.up, self.down)
+    }
+
+    /// The reduced `(up, down)` ratio [`PolyphaseResampler::new`] would
+    /// build for `input_rate → output_rate`, without designing anything.
+    ///
+    /// # Panics
+    ///
+    /// Panics when either rate is zero.
+    #[must_use]
+    pub const fn reduced_ratio(input_rate: u32, output_rate: u32) -> (usize, usize) {
+        assert!(input_rate > 0 && output_rate > 0);
+        let divisor = gcd(input_rate as usize, output_rate as usize);
+        (
+            output_rate as usize / divisor,
+            input_rate as usize / divisor,
+        )
     }
 
     /// Group delay in samples at the output rate — an integer by

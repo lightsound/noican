@@ -56,6 +56,18 @@ pub const MIN_NATIVE_RATE: u32 = 8_000;
 /// odd interface that does not.
 pub const MAX_NATIVE_RATE: u32 = 192_000;
 
+/// Largest numerator or denominator of the reduced native/engine ratio
+/// the split transport accepts.
+///
+/// The polyphase bank grows with the reduced ratio (`up` phases × ~40
+/// taps × `max(1, down / up)`): the real rate families stay small —
+/// 640/147 for 11.025 kHz is the largest, 1/4 for 192 kHz the deepest —
+/// but a nominal rate coprime with 48 000 (e.g. 16 001 Hz) would reduce
+/// to 48 000/16 001 and design a ~1.9 M-tap, 10 MB bank synchronously on
+/// the start path. Such rates do not occur on real hardware, so they
+/// are refused with a precise message instead of bounded by memory.
+pub const MAX_RATIO_TERM: usize = 1_024;
+
 /// Streaming converter from a microphone's native rate to the 48 kHz
 /// engine rate, with the drift correction folded in.
 ///
@@ -76,12 +88,23 @@ impl InputResampler {
     /// # Errors
     ///
     /// Returns [`StageError::Unsupported`] when `native_rate` lies
-    /// outside [`MIN_NATIVE_RATE`] to [`MAX_NATIVE_RATE`] (inclusive).
+    /// outside [`MIN_NATIVE_RATE`] to [`MAX_NATIVE_RATE`] (inclusive), or
+    /// when its reduced ratio to the engine rate has a term above
+    /// [`MAX_RATIO_TERM`] (a rate no real device reports, which would
+    /// otherwise design an enormous filter bank).
     pub fn new(native_rate: u32, max_input_len: usize) -> Result<Self, StageError> {
         if !(MIN_NATIVE_RATE..=MAX_NATIVE_RATE).contains(&native_rate) {
             return Err(StageError::Unsupported(format!(
                 "native rate {native_rate} Hz is outside the {MIN_NATIVE_RATE}–{MAX_NATIVE_RATE} Hz \
                  range the capture resampler converts to the {ENGINE_SAMPLE_RATE} Hz engine rate"
+            )));
+        }
+        let (up, down) = PolyphaseResampler::reduced_ratio(native_rate, ENGINE_SAMPLE_RATE);
+        if up > MAX_RATIO_TERM || down > MAX_RATIO_TERM {
+            return Err(StageError::Unsupported(format!(
+                "native rate {native_rate} Hz reduces to {up}/{down} against the \
+                 {ENGINE_SAMPLE_RATE} Hz engine rate; the capture resampler accepts ratio terms \
+                 up to {MAX_RATIO_TERM} (the standard 8–192 kHz rate families)"
             )));
         }
         Ok(Self {
@@ -339,6 +362,17 @@ mod tests {
                 "unhelpful message for {rate} Hz: {error}"
             );
         }
+        // In range but coprime (or nearly) with 48 000: the reduced ratio
+        // would need tens of thousands of phases, so it is refused
+        // before any filter is designed.
+        for rate in [16_001_u32, 44_099, 22_222] {
+            let error = InputResampler::new(rate, 480).expect_err("must be rejected");
+            let message = error.to_string();
+            assert!(
+                message.contains(&rate.to_string()) && message.contains("ratio"),
+                "unhelpful message for {rate} Hz: {error}"
+            );
+        }
         for rate in [MIN_NATIVE_RATE, 44_100, 48_000, MAX_NATIVE_RATE] {
             assert!(
                 InputResampler::new(rate, 480).is_ok(),
@@ -432,28 +466,36 @@ mod tests {
 
     /// The same closed loop through the *real* resampler at the rational
     /// 44.1 kHz ratio, mirroring the split worker: a producer clock
-    /// delivering 441 × (1 + drift) native samples per 10 ms block, the
-    /// resampler feeding an engine-rate FIFO, a consumer taking exactly
-    /// 480 per block, and the servo fed the occupancy the worker
-    /// computes (output ring + FIFO + native ring through
-    /// `to_engine_samples`). The occupancy must stay bounded and settle
-    /// near the target with the correction canceling the drift — the
-    /// integer-factor assumption is gone from every term.
+    /// delivering 441 × (1 + drift) native samples per 10 ms block — in
+    /// Bluetooth-like bursts every third block, so the native ring
+    /// carries a real residue — the worker draining that ring in
+    /// 480-sample passes into the resampler and an engine-rate FIFO, a
+    /// consumer taking exactly 480 per block, and the servo fed the
+    /// occupancy the worker computes (output ring + FIFO + native ring
+    /// through `to_engine_samples`, nonzero on the burst blocks). The
+    /// occupancy must stay bounded and settle near the target with the
+    /// correction canceling the drift — the integer-factor assumption is
+    /// gone from every term.
     #[test]
     fn servo_holds_occupancy_through_the_rational_resampler() {
         let target = 2400_usize;
         let blocks = 2 * 60 * 100; // two minutes of 10 ms blocks (12 servo time constants)
+        let burst_blocks = 3;
         for drift_ppm in [-200.0_f64, 150.0] {
             let mut resampler = InputResampler::new(44_100, 480).expect("supported rate");
             let mut servo = DriftServo::new(target);
             let mut output_ring = target;
+            let mut native_ring: std::collections::VecDeque<f32> =
+                std::collections::VecDeque::new();
             let mut pending: std::collections::VecDeque<f32> = std::collections::VecDeque::new();
             let mut converted = Vec::with_capacity(resampler.max_output_len(480));
+            let mut native_chunk = Vec::with_capacity(480);
             let mut native_due = 0.0_f64;
             let mut phase = 0.0_f32;
             let mut underruns = 0_usize;
             let mut correction = 0.0_f64;
             let mut worst_after_settling = 0_usize;
+            let mut residue_seen = false;
             for block in 0..blocks {
                 // Consumer: the output clock takes one engine block.
                 if output_ring < 480 {
@@ -462,33 +504,42 @@ mod tests {
                 } else {
                     output_ring -= 480;
                 }
-                // Producer: the microphone clock delivers its 10 ms.
+                // Producer: the microphone clock accrues its 10 ms and
+                // delivers the accrued samples in one burst every third
+                // block (the capture callback pushing into the ring).
                 native_due = 441.0_f64.mul_add(drift_ppm.mul_add(1e-6, 1.0), native_due);
-                #[expect(
-                    clippy::cast_possible_truncation,
-                    clippy::cast_sign_loss,
-                    reason = "native_due is a small positive count"
-                )]
-                let native_count = native_due.floor() as usize;
-                #[expect(clippy::cast_precision_loss, reason = "small count")]
-                {
-                    native_due -= native_count as f64;
-                }
-                let chunk: Vec<f32> = (0..native_count)
-                    .map(|_| {
+                if block % burst_blocks == 0 {
+                    #[expect(
+                        clippy::cast_possible_truncation,
+                        clippy::cast_sign_loss,
+                        reason = "native_due is a small positive count"
+                    )]
+                    let native_count = native_due.floor() as usize;
+                    #[expect(clippy::cast_precision_loss, reason = "small count")]
+                    {
+                        native_due -= native_count as f64;
+                    }
+                    native_ring.extend((0..native_count).map(|_| {
                         phase = (phase + 1000.0 / 44_100.0).fract();
                         (2.0 * std::f32::consts::PI * phase).sin() * 0.5
-                    })
-                    .collect();
-                // Worker: convert, block up, push to the output ring.
+                    }));
+                }
+                // Worker: one pass drains at most 480 native samples (the
+                // NATIVE_CHUNK_SAMPLES pop loop), converts, blocks up,
+                // pushes to the output ring, then the servo observes.
+                let take = native_ring.len().min(480);
+                native_chunk.clear();
+                native_chunk.extend(native_ring.drain(..take));
                 converted.clear();
-                resampler.process(&chunk, &mut converted);
+                resampler.process(&native_chunk, &mut converted);
                 pending.extend(converted.iter().copied());
                 while pending.len() >= 480 {
                     pending.drain(..480);
                     output_ring += 480;
                 }
-                let occupancy = output_ring + pending.len() + resampler.to_engine_samples(0);
+                let native_residue = resampler.to_engine_samples(native_ring.len());
+                residue_seen |= native_residue > 0;
+                let occupancy = output_ring + pending.len() + native_residue;
                 assert!(
                     occupancy < 48_000,
                     "{drift_ppm} ppm: ring ran away at block {block}: {occupancy}"
@@ -499,6 +550,10 @@ mod tests {
                     worst_after_settling = worst_after_settling.max(occupancy.abs_diff(target));
                 }
             }
+            assert!(
+                residue_seen,
+                "{drift_ppm} ppm: the native-ring term was never exercised"
+            );
             assert_eq!(underruns, 0, "{drift_ppm} ppm: output ring ran dry");
             assert!(
                 (correction + drift_ppm).abs() < 15.0,
