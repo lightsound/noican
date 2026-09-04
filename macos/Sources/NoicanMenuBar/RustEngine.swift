@@ -52,9 +52,10 @@ final class RustEngine: @unchecked Sendable {
 
     /// Starts the split transport for a microphone that cannot run at
     /// the 48 kHz engine rate (issue #7): the microphone is captured
-    /// natively at `captureRate` (its current nominal rate; must be an
-    /// integer divisor of 48 kHz — Bluetooth telephony profiles) and
-    /// resampled to 48 kHz inside the transport, with clock drift
+    /// natively at `captureRate` (its current nominal rate; any rate
+    /// from 8 to 192 kHz — Bluetooth telephony profiles, the 44.1 kHz
+    /// family, 88.2/96 kHz interfaces) and resampled to 48 kHz inside
+    /// the transport by the exact rational ratio, with clock drift
     /// between the two devices compensated there. No Aggregate Device
     /// is involved.
     func startNative(
