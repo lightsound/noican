@@ -62,8 +62,8 @@ struct StartStopTests {
 
     @Test("Pre-flight failures settle synchronously, without a busy round-trip")
     func preflightFailures() {
-        // Incapable microphone (a rate no integer factor reaches 48 kHz
-        // from — telephony-rate Bluetooth microphones are accepted now).
+        // Incapable microphone (a rate outside the capture resampler's
+        // range — telephony-rate and 44.1 kHz microphones are accepted).
         let incapable = step(readyModel(selectedInputUID: unsupportedMic.uid), tap(.on))
         #expect(!incapable.state.isBusy)
         #expect(incapable.state.engineErrorMessage?.contains("can't resample") == true)

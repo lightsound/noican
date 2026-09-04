@@ -663,10 +663,11 @@ extension AppReducer {
     /// Why `device` cannot serve as the engine's microphone, or nil when
     /// it can. Decided from the snapshot taken at device-refresh time —
     /// no Core Audio call, so it is safe before any transition.
-    /// Telephony-rate devices (Bluetooth headset microphones) are *not*
-    /// refused: the transport captures them natively and resamples
-    /// (issue #7). Only rates that cannot reach 48 kHz by an integer
-    /// factor remain unusable.
+    /// Non-48 kHz devices (Bluetooth headset microphones, 44.1 kHz-family
+    /// devices) are *not* refused: the transport captures them natively
+    /// and resamples by the exact ratio (issue #7). Only rates outside
+    /// the resampler's 8–192 kHz range — or an unreadable rate — remain
+    /// unusable.
     private static func capabilityError(of device: InputDevice) -> String? {
         guard case let .unsupported(hertz) = device.capture else {
             return nil

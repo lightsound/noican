@@ -393,7 +393,8 @@ private struct MicrophoneRow: View {
                     .truncationMode(.middle)
                 Spacer(minLength: 0)
                 // Non-48 kHz devices carry their native rate so the
-                // narrow-band trade-off is visible before selecting.
+                // conversion (and, for telephony profiles, the
+                // narrow-band trade-off) is visible before selecting.
                 if let rate = device.rateLabel {
                     Text(rate)
                         .font(.caption2)

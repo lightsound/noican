@@ -106,8 +106,8 @@ public struct MessageSlots: Hashable, Sendable {
     /// a segment that cannot be pressed.
     public var previewUnavailableReason: String?
     /// Why the last microphone selection was refused in place (the
-    /// device's rate cannot reach the 48 kHz engine rate by an integer
-    /// factor) while the engine kept the previous one. Shown under the
+    /// device's rate lies outside what the capture resampler converts)
+    /// while the engine kept the previous one. Shown under the
     /// microphone list; cleared on the next selection — including a
     /// re-click of the already-selected microphone, which acknowledges
     /// the message without touching the engine.
@@ -352,14 +352,16 @@ extension AppModel {
         engineErrorMessage != nil || (mode == .preview && messages.previewError != nil)
     }
 
-    /// Informational caption for a telephony-profile selection, shown
-    /// under the microphone list (secondary style — a property of the
-    /// device, not an error): Bluetooth headset microphones are captured
-    /// at their narrow-band native rate and resampled (issue #7), which
-    /// cannot restore full-band quality, and using the headset's
-    /// microphone drops the whole headset into the phone profile, so
-    /// its *playback* quality degrades too while the engine runs. A
-    /// pure projection of the selection — no state, no clearing rules.
+    /// Informational caption for a native-rate selection, shown under
+    /// the microphone list (secondary style — a property of the device,
+    /// not an error). Telephony-profile rates: Bluetooth headset
+    /// microphones are captured at their narrow-band native rate and
+    /// resampled (issue #7), which cannot restore full-band quality, and
+    /// using the headset's microphone drops the whole headset into the
+    /// phone profile, so its *playback* quality degrades too while the
+    /// engine runs. Full-band rates (44.1 kHz and up) only note the
+    /// conversion — nothing about the audio is narrow-band. A pure
+    /// projection of the selection — no state, no clearing rules.
     public var microphoneNotice: String? {
         guard
             let device = inputDevices.first(where: { $0.uid == selectedInputUID }),
@@ -368,6 +370,10 @@ extension AppModel {
             return nil
         }
         let rate = device.rateLabel ?? "\(hertz) Hz"
+        guard CaptureSupport.isTelephonyRate(hertz) else {
+            return "\(device.name) captures at \(rate) and is resampled to the 48 kHz "
+                + "engine rate inside Noican (exact ratio, drift-compensated)."
+        }
         return "\(device.name) captures at \(rate) (Bluetooth phone profile): audio is "
             + "narrow-band — resampling can't restore full quality — and headset "
             + "playback quality also drops while the microphone is in use."
