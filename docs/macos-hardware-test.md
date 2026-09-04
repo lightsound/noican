@@ -35,16 +35,18 @@ hybrid build (C engine + B transport) must be re-accepted.
   stock BlackHole 2ch as the Phase 0 fallback.
 - Headphones. Phase 0 has no AEC and must not be evaluated through speakers.
 - A 48 kHz-capable microphone (the built-in microphone works) for the
-  aggregate-path checks, and a Bluetooth headset for the native-capture
-  checks: Bluetooth headset microphones run on telephony profiles
-  (HFP/SCO at 8/16/24 kHz) and are captured natively through the split
-  transport, resampled to 48 kHz inside it (issue #7). Expect
-  narrow-band quality from telephony capture, and expect the headset's
-  *playback* quality to drop while its microphone is in use (the whole
-  headset falls into the phone profile) — both are properties of
-  Bluetooth, noted in the UI, not defects. Only devices whose rate no
-  integer factor reaches 48 kHz from (44.1 kHz-family-only interfaces)
-  are still refused.
+  aggregate-path checks, and a microphone that cannot run at 48 kHz for
+  the native-capture checks — any device from 8 to 192 kHz is captured
+  natively through the split transport and resampled to 48 kHz inside
+  it by the exact ratio (issue #7): a Bluetooth headset on a telephony
+  profile (HFP/SCO at 8/16/24 kHz), or a 44.1 kHz-family device
+  (44.1/22.05/11.025 kHz, e.g. a headset whose microphone only exposes
+  CD-family rates). For telephony profiles expect narrow-band quality,
+  and expect the headset's *playback* quality to drop while its
+  microphone is in use (the whole headset falls into the phone profile)
+  — both are properties of Bluetooth, noted in the UI, not defects. A
+  44.1 kHz device is full-band; only the conversion is noted. Devices
+  whose rate is unreadable or outside 8–192 kHz are refused.
 
 The BlackHole-derived driver is GPL-3.0 and remains a separate program. Do
 not add its source or object files to the application target.
@@ -254,80 +256,112 @@ so changing it while running rebuilds the transport.
    Setup, or a dead stream is a failure.
 2. Newly connected input devices must appear in the list within a
    moment, without reopening anything; disconnected ones must disappear.
-3. Select a Bluetooth headset microphone while Off, then select On: the
-   engine must start through the split native-capture transport and
-   reach Running (see the dedicated Bluetooth section below) — the
-   Phase 0 refusal of telephony-rate devices is gone.
-4. *(Requires a device whose rate no integer factor reaches 48 kHz
-   from, e.g. a 44.1 kHz-only interface; skip when none is available.)*
-   Select such a device while Off, then select On: the refusal must be
-   **instant** (a pre-flight reads the snapshot's capability — no busy
-   spinner, no teardown), with a clear reason under the mode control
-   and the pill **staying on On** with a red warning tint (the control
-   shows the user's intent; the system never moves it). Then select the
-   built-in microphone: the engine must restart automatically into the
-   selected mode and reach Running. Re-tapping the red segment must
-   also retry. While running, clicking the unsupported device in the
-   list must be refused in place — the checkmark returns to the working
-   microphone, the reason appears under the list, and the engine keeps
-   running uninterrupted.
+3. Select a non-48 kHz microphone (a Bluetooth headset, or a 44.1 kHz
+   device) while Off, then select On: the engine must start through the
+   split native-capture transport and reach Running (see the dedicated
+   native-rate section below) — the Phase 0 refusal of telephony-rate
+   devices and the later refusal of 44.1 kHz-family devices are both
+   gone.
+4. *(Requires a device whose rate lies outside the 8–192 kHz range the
+   capture resampler converts, or whose rate is unreadable; real
+   hardware like this is rare — skip when none is available. A
+   44.1 kHz-only interface is **not** such a device any more: it takes
+   the split path, see the next section.)* Select such a device while
+   Off, then select On: the refusal must be **instant** (a pre-flight
+   reads the snapshot's capability — no busy spinner, no teardown),
+   with a clear reason under the mode control and the pill **staying on
+   On** with a red warning tint (the control shows the user's intent;
+   the system never moves it). Then select the built-in microphone: the
+   engine must restart automatically into the selected mode and reach
+   Running. Re-tapping the red segment must also retry. While running,
+   clicking the unsupported device in the list must be refused in place
+   — the checkmark returns to the working microphone, the reason
+   appears under the list, and the engine keeps running uninterrupted.
 5. If a live switch fails at runtime (a failure the pre-flight cannot
    see, e.g. the new device vanishing mid-switch), the app must fall
    back to the previous microphone automatically — one rebuild attempt,
    reason under the list — instead of leaving the session dead.
 
-## Bluetooth microphone (native-rate capture)
+## Non-48 kHz microphone (native-rate capture)
 
-Telephony-profile microphones (Bluetooth HFP/SCO at 8/16/24 kHz) cannot
-run at 48 kHz, so the engine captures them through a **split transport**
-instead of the private Aggregate Device: an input-only AUHAL on the
-microphone at its native rate, an output-only AUHAL on the virtual
-output at 48 kHz, and the inference worker bridging the two clock
-domains through an integer-factor polyphase resampler with a
-micro-ratio drift stage steered by ring occupancy (there is no
-aggregate to absorb the clock split, so drift compensation is our own —
-docs/tech-research.md §4.2). The split path adds a ~50 ms output
-cushion; the 48 kHz aggregate path is untouched. The engine still runs
-at 48 kHz throughout, so recordings from the virtual device remain
-48 kHz regardless of the capture rate.
+Microphones that cannot run at 48 kHz — telephony-profile Bluetooth
+headsets (HFP/SCO at 8/16/24 kHz) and 44.1 kHz-family devices
+(44.1/22.05/11.025 kHz; 88.2/96 kHz-only interfaces too) — are captured
+through a **split transport** instead of the private Aggregate Device:
+an input-only AUHAL on the microphone at its native rate, an output-only
+AUHAL on the virtual output at 48 kHz, and the inference worker bridging
+the two clock domains through one arbitrary-ratio polyphase FIR
+resampler (`PolyphaseResampler` in `noican-core`): the exact reduced
+ratio — 160/147 for 44.1 kHz, 3/1 for 16 kHz — with the clock-drift
+correction folded into its fractional phase step and steered by ring
+occupancy (there is no aggregate to absorb the clock split, so drift
+compensation is our own — docs/tech-research.md §4.2). The split path
+adds a ~50 ms output cushion; the 48 kHz aggregate path is untouched.
+The engine still runs at 48 kHz throughout, so recordings from the
+virtual device remain 48 kHz regardless of the capture rate.
 
-1. Pair a Bluetooth headset (e.g. AirPods). Confirm the microphone list
-   shows its native rate next to the name (e.g. "16 kHz" or "24 kHz").
-2. Select it. A secondary-style notice must appear under the list:
-   capture is narrow-band (phone profile) and headset playback quality
-   drops while the microphone is in use. This is information, not an
-   error — no red text, no refusal.
+Before testing, confirm the device's actual native rate: open Audio
+MIDI Setup, select the device's input side, and read the Format
+pop-up's rate list — or run
+`system_profiler SPAudioDataType | grep -A 12 "<device name>"` and read
+`Current SampleRate`. Record the rate in the result record; the
+microphone list must show the same value.
+
+1. Connect the device (pair the Bluetooth headset). Confirm the
+   microphone list shows its native rate next to the name in audio
+   notation (e.g. "16 kHz", "24 kHz", "44.1 kHz").
+2. Select it. A secondary-style notice must appear under the list. For
+   a telephony profile: capture is narrow-band (phone profile) and
+   headset playback quality drops while the microphone is in use. For a
+   44.1 kHz-family device: the device is resampled to the 48 kHz engine
+   rate inside Noican — the notice must **not** call the audio
+   narrow-band. Either way this is information, not an error — no red
+   text, no refusal.
 3. Select On and grant microphone access if prompted: the engine must
    reach `Running` (green indicator). No Aggregate Device appears in
-   Audio MIDI Setup for this path (two AUHAL instances instead).
+   Audio MIDI Setup for this path (two AUHAL instances instead). The
+   one-time transport diagnostics line in Console must show
+   `worker realtime scheduling true`.
 4. Record 30+ seconds from the virtual device in QuickTime: the
-   recording must be 48 kHz, non-silent, and intelligible. Expect
-   telephony bandwidth (the source is 8–16 kHz capture); expect the
-   headset's own playback to sound worse while recording — both by
-   design.
+   recording must be 48 kHz, non-silent, and intelligible. On a
+   telephony profile expect telephony bandwidth (the source is 8–16 kHz
+   capture) and expect the headset's own playback to sound worse while
+   recording — both by design. On a 44.1 kHz device expect full-band
+   quality indistinguishable from the aggregate path (passband flat to
+   ≈15 kHz, gentle roll-off above 17 kHz): no pitch shift, no
+   periodic click, no metallic/aliased coloration.
 5. Speak continuously at 50% strength: the voice must stay single (no
    doubled/hollow voice) — the dry path taps the engine input *after*
    the input resampler, so the alignment must hold exactly as on the
    aggregate path.
 6. Switch models while recording: same bounded-fade criteria as the
    aggregate path.
-7. Switch between the Bluetooth microphone and the built-in microphone
-   while running: each direction must rebuild into Running (aggregate ↔
-   split transport switch behind the same busy machine).
+7. Switch between the native-rate microphone and the built-in
+   microphone while running: each direction must rebuild into Running
+   (aggregate ↔ split transport switch behind the same busy machine).
 8. **Drift/endurance**: record 30 continuous minutes through the
-   Bluetooth microphone. Pass criteria: no periodic click, no
+   native-rate microphone. Pass criteria: no periodic click, no
    accumulating gap/overlap, no engine fault, no stall — the drift
    servo must keep the two clock domains aligned for the whole session.
-9. **Profile flip (A2DP ↔ HFP)**: while running, force a rate
-   renegotiation (e.g. play music to the headset before/while starting,
-   or toggle the headset's own transparency/ANC features if they
-   trigger one). The app must either keep running unaffected or rebuild
-   automatically within a moment (a brief busy spinner, then Running) —
-   never a permanently dead session. Unplugging/re-pairing mid-session
-   may still surface as "Audio stalled"/"Microphone disconnected" like
-   any device loss; selecting the device again must recover.
-10. **Virtual-output loss on the split path**: while running on the
-    Bluetooth microphone, uninstall (or otherwise remove) the virtual
+   On a 44.1 kHz device the resampler runs at a non-integer ratio, so
+   this is also the check that the servo's occupancy control holds
+   there; a slow periodic pitch wobble or a click every few seconds
+   would point at it.
+9. **Underrun diagnostics on the split path**: while recording, watch
+   Console for the underrun line (see "Output-underrun diagnostics").
+   With a light model (FastEnhancer-B) the split transport must log
+   zero underruns over 60+ s of continuous speech; record any line
+   verbatim.
+10. **Profile flip (A2DP ↔ HFP)**: while running, force a rate
+    renegotiation (e.g. play music to the headset before/while starting,
+    or toggle the headset's own transparency/ANC features if they
+    trigger one). The app must either keep running unaffected or rebuild
+    automatically within a moment (a brief busy spinner, then Running) —
+    never a permanently dead session. Unplugging/re-pairing mid-session
+    may still surface as "Audio stalled"/"Microphone disconnected" like
+    any device loss; selecting the device again must recover.
+11. **Virtual-output loss on the split path**: while running on the
+    native-rate microphone, uninstall (or otherwise remove) the virtual
     output device — the engine must stop with "Virtual output device
     removed" like on the aggregate path (device-list listener). The
     split transport additionally watches for a *wedged* output side —
@@ -612,8 +646,8 @@ on light models).
 5. Cross-check audibly: models that logged underruns must be the same
    ones whose recordings stutter; the recording of a model with zero
    underruns must be free of dropouts.
-6. Repeat step 2 for one suspect on the split transport (Bluetooth
-   microphone) to confirm the counter works there too. Do not compare
+6. Repeat step 2 for one suspect on the split transport (a Bluetooth
+   or 44.1 kHz microphone) to confirm the counter works there too. Do not compare
    split counts against aggregate counts numerically: the split ring
    is primed with a ~50 ms cushion the drift servo then maintains, so
    a single split underrun means the worker fell behind by the whole
@@ -781,31 +815,42 @@ Run against the PR #14 build (`ad7defd`) on Apple hardware:
   clicks; the lighter models let them through). Lowering the strength
   mixes raw-microphone clicks back in on every model, by design.
 
-## Acceptance checklist (Bluetooth native-rate capture, issue #7)
+## Acceptance checklist (native-rate capture, issue #7)
 
-Run the Bluetooth microphone procedure above; the build passes when:
+Run the non-48 kHz microphone procedure above; the build passes when:
 
-1. **Running on HFP**: a Bluetooth headset microphone (16 kHz HFP) can
-   be selected and the engine reaches `Running`.
+1. **Running on a native rate**: a microphone that cannot run at 48 kHz
+   — a Bluetooth headset on HFP (16 kHz) *or* a 44.1 kHz-family device
+   — can be selected and the engine reaches `Running`. Record which
+   rate was exercised; both kinds are in scope, but one device proves
+   the transport.
 2. **48 kHz output**: recordings through the virtual device remain
-   48 kHz and intelligible (telephony bandwidth expected at the
-   source).
+   48 kHz and intelligible (telephony bandwidth expected at a telephony
+   source; full-band expected from a 44.1 kHz source).
 3. **No drift artifacts**: a 30-minute session produces no clock-drift
-   clicks, gaps, or accumulating timing error.
+   clicks, gaps, pitch wobble, or accumulating timing error — on a
+   44.1 kHz device this also proves the servo at a non-integer ratio.
 4. **Aggregate path unchanged**: the built-in / USB 48 kHz microphone
    path behaves exactly as before (behavior, quality, latency).
-5. **Strength alignment**: 50% strength on the Bluetooth path produces
-   a single voice (no comb-filter/double voice).
+5. **Strength alignment**: 50% strength on the split path produces a
+   single voice (no comb-filter/double voice).
 6. **Rate-change recovery**: an A2DP ↔ HFP renegotiation while running
    rebuilds automatically (or passes through unaffected); it never
-   leaves a dead session.
-7. **UI truthfulness**: the native rate shows in the microphone list,
-   the telephony notice renders for the selection, and unsupported-rate
-   devices (44.1 kHz-family-only) are still refused with a clear
-   reason.
+   leaves a dead session. (Bluetooth devices only; a fixed-rate
+   44.1 kHz interface has nothing to renegotiate.)
+7. **UI truthfulness**: the native rate shows in the microphone list in
+   audio notation, the notice for the selection matches the device kind
+   (telephony trade-offs vs. plain conversion), and devices outside
+   8–192 kHz (or with an unreadable rate) are still refused with a
+   clear reason.
 8. **Real-time constraints hold**: re-run the Real-time audit on the
    split transport — both callbacks (capture and virtual output) stay
-   allocation- and lock-free; resampling runs on the inference worker.
+   allocation- and lock-free; resampling runs on the inference worker
+   with buffers preallocated at start (no growth in the worker after
+   the first second).
+9. **Split-path underruns**: with FastEnhancer-B the split transport
+   logs zero underruns over 60+ s of continuous speech (this also
+   closes criterion 4 of the output-underrun checklist below).
 
 ## Acceptance checklist (output-underrun diagnostics)
 
@@ -824,7 +869,7 @@ when:
 3. **Counts match ears**: models that log underruns are exactly the
    models whose virtual-microphone recordings stutter.
 4. **Split transport covered**: at least one model's counters were
-   exercised through a Bluetooth microphone.
+   exercised through a native-rate (Bluetooth or 44.1 kHz) microphone.
 5. **No regression**: recordings, meters, preview, and model switching
    behave exactly as before on models with zero underruns.
 
