@@ -11,6 +11,15 @@ use ort::value::{DynValue, Tensor};
 /// single-threaded (frames are small; thread wakeups cost more than they
 /// save) with full graph optimization.
 ///
+/// Single-threading is a measured decision, not a guess — it holds even
+/// for the largest streaming model. A/B on 2026-09-02 (x86-64, 4 cores,
+/// `examples/block_bench.rs`, 6000 blocks of FastEnhancer-L):
+/// p50 4.16 ms / p95 6.23 ms with 1 intra-op thread, 6.30 / 9.53 ms with
+/// 2 threads, and 5.77 / 8.72 ms with 4 — synchronization overhead
+/// dominates these small per-frame ops, so extra threads make every
+/// percentile worse. Inter-op stays at 1 as well: the graphs are
+/// sequential, so inter-op parallelism only adds scheduling overhead.
+///
 /// # Errors
 ///
 /// Returns [`StageError::Inference`] when the file cannot be loaded.

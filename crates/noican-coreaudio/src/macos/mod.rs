@@ -345,6 +345,9 @@ struct WorkerLinks {
     tee: MonitorTee,
     levels: Arc<StreamLevels>,
     block_stats: Arc<WorkerBlockStats>,
+    /// Set by the worker to whether its real-time promotion succeeded
+    /// (see [`promote_current_thread_to_realtime`]).
+    realtime: Arc<AtomicBool>,
 }
 
 /// The AUHAL instance(s) a running transport owns, with their callback
@@ -432,6 +435,13 @@ pub struct Runtime {
     frames: Arc<AtomicU64>,
     underruns: Arc<AtomicU64>,
     block_stats: Arc<WorkerBlockStats>,
+    /// Whether the inference worker's real-time promotion succeeded at
+    /// loop start. False until the worker records it; afterwards it keeps
+    /// that start-time result — it is not live scheduling-band membership
+    /// (XNU may demote a thread that persistently overruns its declared
+    /// computation), and a stopped-but-not-dropped runtime retains the
+    /// last start's value.
+    worker_realtime: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
     running: bool,
     /// Control-plane half of the preview monitor (the worker half is the
@@ -476,6 +486,7 @@ impl Runtime {
         let frames = Arc::new(AtomicU64::new(0));
         let underruns = Arc::new(AtomicU64::new(0));
         let block_stats = Arc::new(WorkerBlockStats::new());
+        let worker_realtime = Arc::new(AtomicBool::new(false));
         let context = ContextGuard::new(CallbackContext {
             unit: unit.raw(),
             input: input_producer,
@@ -507,6 +518,7 @@ impl Runtime {
             tee,
             levels,
             block_stats: Arc::clone(&block_stats),
+            realtime: Arc::clone(&worker_realtime),
         };
         let worker = thread::Builder::new()
             .name("noican-inference".to_owned())
@@ -539,6 +551,7 @@ impl Runtime {
             frames,
             underruns,
             block_stats,
+            worker_realtime,
             worker: Some(worker),
             running: true,
             monitor: monitor_control,
@@ -660,6 +673,18 @@ impl Runtime {
     #[must_use]
     pub fn worker_block_max_ns(&self) -> u64 {
         self.block_stats.max_ns()
+    }
+
+    /// Diagnostic: whether the inference worker's mach time-constraint
+    /// (real-time) promotion succeeded at loop start (see
+    /// [`promote_current_thread_to_realtime`]). False means the worker
+    /// runs at default priority, so budget misses on hardware may be
+    /// scheduling, not model cost. This reports the start-time result,
+    /// not live membership: XNU may later demote a persistently
+    /// overrunning thread without this flag changing.
+    #[must_use]
+    pub fn worker_realtime(&self) -> bool {
+        self.worker_realtime.load(Ordering::Acquire)
     }
 
     /// Zeroes the diagnostic counters (underruns and worker block
@@ -910,6 +935,107 @@ fn audio_workgroup(unit: AudioUnit) -> Result<usize, CoreAudioError> {
 /// device period at 256 frames / 48 kHz).
 const WORKER_WAIT_NS: i64 = 2_000_000;
 
+#[repr(C)]
+struct MachTimebaseInfo {
+    numer: u32,
+    denom: u32,
+}
+
+/// `thread_time_constraint_policy` (`mach/thread_policy.h`): all times
+/// in mach absolute-time ticks; `preemptible` is a `boolean_t`.
+#[repr(C)]
+struct ThreadTimeConstraintPolicy {
+    period: u32,
+    computation: u32,
+    constraint: u32,
+    preemptible: u32,
+}
+
+const THREAD_TIME_CONSTRAINT_POLICY: u32 = 2;
+/// `THREAD_TIME_CONSTRAINT_POLICY_COUNT`: four 32-bit fields.
+const THREAD_TIME_CONSTRAINT_POLICY_COUNT: u32 = 4;
+const KERN_SUCCESS: i32 = 0;
+
+#[link(name = "System")]
+unsafe extern "C" {
+    fn mach_timebase_info(info: *mut MachTimebaseInfo) -> i32;
+    fn pthread_self() -> *mut c_void;
+    fn pthread_mach_thread_np(thread: *mut c_void) -> u32;
+    fn thread_policy_set(
+        thread: u32,
+        flavor: u32,
+        policy_info: *const ThreadTimeConstraintPolicy,
+        count: u32,
+    ) -> i32;
+}
+
+/// The worker's declared real-time cadence: one engine block every 10 ms.
+const WORKER_PERIOD_NS: u64 = 10_000_000;
+/// Guaranteed computation per period, sized on the heaviest model's
+/// typical block: p50 ≈ 4.2 ms on a modest 4-core x86-64 host
+/// (`noican-models/examples/block_bench.rs`, 2026-09-02). This is the
+/// CPU slice the scheduler reserves, not a ceiling — with `preemptible`
+/// set the thread may keep running past it up to `constraint` — so p50
+/// (plus margin) rather than that host's p95 of 6.2 ms is the basis:
+/// tail blocks still complete within the period, Apple Silicon
+/// performance cores are faster than the measuring host, and a larger
+/// reservation would only raise the admission cost of the RT band.
+/// Persistent overruns of the declared computation risk demotion by
+/// XNU; what the 2026-09-04 on-device run supports is the absence of
+/// steady-state underruns (block-time figures only reach the log
+/// alongside underrun growth, so the device logged none for clean
+/// models) — the sub-5 ms steady-state figure itself is the
+/// `block_bench` measurement above.
+const WORKER_COMPUTATION_NS: u64 = 5_000_000;
+/// Deadline within each period: the whole period, matching the audio
+/// cadence the output ring absorbs.
+const WORKER_CONSTRAINT_NS: u64 = 10_000_000;
+
+/// Promotes the calling thread to mach time-constraint ("real-time")
+/// scheduling, the setup Apple's audio-workgroup guidance requires for
+/// self-created inference threads *before* they join the device's
+/// workgroup: joining alone conveys the deadline but does not lift the
+/// thread out of its default priority, so the scheduler may still park it on
+/// efficiency cores or preempt it for tens of milliseconds — observed on
+/// hardware (2026-09-02) as chronic 10 ms-budget misses for
+/// FastEnhancer-L (max 80.5 ms) and one-shot 40 ms stalls even on light
+/// models, on a machine where the same models measure well inside the
+/// budget when scheduled.
+///
+/// Returns whether the promotion succeeded; a failure is survivable
+/// (audio still flows at default priority) and is surfaced through
+/// [`Runtime::worker_realtime`] so hardware runs can interpret their
+/// underrun numbers.
+fn promote_current_thread_to_realtime() -> bool {
+    let mut timebase = MachTimebaseInfo { numer: 0, denom: 0 };
+    if unsafe { mach_timebase_info(&raw mut timebase) } != KERN_SUCCESS
+        || timebase.numer == 0
+        || timebase.denom == 0
+    {
+        return false;
+    }
+    let ticks = |ns: u64| -> u32 {
+        let ticks = ns.saturating_mul(u64::from(timebase.denom)) / u64::from(timebase.numer);
+        u32::try_from(ticks).unwrap_or(u32::MAX)
+    };
+    let policy = ThreadTimeConstraintPolicy {
+        period: ticks(WORKER_PERIOD_NS),
+        computation: ticks(WORKER_COMPUTATION_NS),
+        constraint: ticks(WORKER_CONSTRAINT_NS),
+        preemptible: 1,
+    };
+    let thread = unsafe { pthread_mach_thread_np(pthread_self()) };
+    let status = unsafe {
+        thread_policy_set(
+            thread,
+            THREAD_TIME_CONSTRAINT_POLICY,
+            &raw const policy,
+            THREAD_TIME_CONSTRAINT_POLICY_COUNT,
+        )
+    };
+    status == KERN_SUCCESS
+}
+
 /// Membership of the device's audio `os_workgroup` for the lifetime of a
 /// worker loop; leaves the workgroup on drop. A failed join is reported
 /// through [`WorkgroupGuard::joined`] so the loop can flag the fault.
@@ -988,9 +1114,16 @@ fn processing_loop(
         mut tee,
         levels,
         block_stats,
+        realtime,
     } = links;
     levels.reset();
     block_stats.reset();
+    // Real-time promotion must precede the workgroup join (see
+    // promote_current_thread_to_realtime); failure degrades, not faults.
+    // The stored value is the promotion result at loop start; XNU may
+    // later demote a persistently overrunning thread, which this flag
+    // does not track.
+    realtime.store(promote_current_thread_to_realtime(), Ordering::Release);
     let membership = WorkgroupGuard::join(workgroup);
     if !membership.joined() {
         faulted.store(true, Ordering::Release);

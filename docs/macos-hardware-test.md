@@ -580,10 +580,23 @@ log stream --predicate 'subsystem == "com.lightsound.noican"' --level info
 
 One warning line appears for each 1 Hz health-poll tick in which the
 underrun count grew, carrying the count, the active model id, and the
-worker block statistics.
+worker block statistics. In addition, one info line appears about a
+second after every engine start — `Engine transport diagnostics:
+worker realtime scheduling <bool>, Rosetta-translated process <bool>`
+— reporting whether the inference worker's mach time-constraint
+promotion succeeded and whether the process runs translated. Both must
+read `true`/`false` respectively; a `false` realtime flag or a `true`
+translation flag means the budget numbers measure scheduling or
+translation overhead, not model cost (the first hardware run,
+[2026-09-02](acceptance/2026-09-02-underrun-baseline.md), showed
+exactly that failure mode before the worker was promoted: chronic
+41–49% budget misses on FastEnhancer-L and one-shot 40 ms stalls even
+on light models).
 
 1. Select On with a 48 kHz microphone (aggregate path) and record from
-   the virtual device throughout.
+   the virtual device throughout. Confirm the transport line reads
+   `worker realtime scheduling true` and
+   `Rosetta-translated process false`.
 2. For each of `FastEnhancer-B 48k` and `DPDFNet2 48k HR` (light
    controls), then `DPDFNet8 48k HR`, `DeepFilterNet3 48k`, and
    `FastEnhancer-L 48k` (suspects): select the model, speak
@@ -799,6 +812,9 @@ Run the Bluetooth microphone procedure above; the build passes when:
 Run the Output-underrun diagnostics procedure above; the build passes
 when:
 
+0. **Worker is real-time**: the engine-start transport line reads
+   `worker realtime scheduling true` and
+   `Rosetta-translated process false`.
 1. **No false positives**: light models (FastEnhancer-B and friends)
    log zero underruns over 60+ seconds of continuous speech on the
    aggregate path.
