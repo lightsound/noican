@@ -61,3 +61,8 @@ FastEnhancer-L misses and the one-shot bursts on light models. The fix
 (promoting the worker before the workgroup join, surfaced as
 `worker realtime scheduling true` in the transport diagnostics line)
 must be re-verified on this hardware with the same procedure.
+
+Re-verified on the same hardware on 2026-09-04 — see the
+[re-verification record](2026-09-04-underrun-reverify.md): the chronic
+misses and the light-model bursts are gone; only a sub-second warm-up
+burst remains on FastEnhancer-L at model selection.
