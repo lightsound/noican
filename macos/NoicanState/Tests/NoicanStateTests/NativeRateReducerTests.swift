@@ -20,10 +20,8 @@ struct CaptureSupportTests {
     func nativeRates() {
         // Telephony profiles, the 44.1 kHz family, odd-but-real rates,
         // high-rate interfaces, and the range ends.
-        for hertz in [
-            8_000, 11_025, 12_000, 16_000, 22_050, 24_000, 32_000, 44_100, 88_200, 96_000,
-            192_000,
-        ] {
+        let rates = [8_000, 11_025, 12_000, 16_000, 22_050, 24_000, 32_000, 44_100, 88_200]
+        for hertz in rates + [96_000, 192_000] {
             #expect(
                 CaptureSupport.classify(supports48kHz: false, nominalRate: Double(hertz))
                     == .nativeRate(hertz: hertz),
