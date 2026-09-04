@@ -560,8 +560,8 @@ impl Runtime {
 
     /// Opens the split transport for a microphone that cannot run at the
     /// 48 kHz engine rate (issue #7): an input-only AUHAL captures
-    /// `input_device` at `capture_rate` Hz (its native telephony-profile
-    /// rate — must be an integer divisor of 48 kHz), and an output-only
+    /// `input_device` at `capture_rate` Hz (its native rate — any rate
+    /// from 8 to 192 kHz, see [`noican_core::capture`]), and an output-only
     /// AUHAL feeds `output_device` (the `BlackHole`/Noican virtual
     /// output) at 48 kHz. The inference worker bridges the two clock
     /// domains, converting to the engine rate with a drift-compensating
@@ -577,8 +577,8 @@ impl Runtime {
     ///
     /// # Errors
     ///
-    /// Returns [`CoreAudioError`] when `capture_rate` is not an integer
-    /// divisor of 48 kHz, or when AUHAL setup or worker startup fails.
+    /// Returns [`CoreAudioError`] when `capture_rate` lies outside the
+    /// resampler's range, or when AUHAL setup or worker startup fails.
     /// Every error path releases both AUHAL instances, the callback
     /// contexts, and the worker.
     pub fn start_native(
@@ -821,7 +821,7 @@ const fn pcm_format(channels: u32) -> AudioStreamBasicDescription {
 }
 
 /// Packed-float PCM at an arbitrary rate (the split transport captures
-/// at the microphone's native telephony-profile rate).
+/// at the microphone's native rate).
 const fn pcm_format_at(sample_rate: f64, channels: u32) -> AudioStreamBasicDescription {
     AudioStreamBasicDescription {
         sample_rate,

@@ -286,7 +286,7 @@ const fn gcd(mut a: usize, mut b: usize) -> usize {
 ///   reporting is not integer-exact at the output rate.
 /// - **This type**: one windowed-sinc polyphase bank sampled at
 ///   `num_phases` positions per input sample (the exact `L` of the
-///   reduced ratio, oversampled to at least [`MIN_PHASES`]), read at a
+///   reduced ratio, oversampled to at least 128 phases), read at a
 ///   fractional phase step. At zero drift the step is an integer, so the
 ///   output is the *exact* rational polyphase result (no interpolation
 ///   at all: 160/147 for 44.1 kHz, 3/1 for 16 kHz, 1/2 for 96 kHz). At

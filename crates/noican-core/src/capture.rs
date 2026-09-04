@@ -1,24 +1,29 @@
 //! Native-rate capture support for non-48 kHz microphones (issue #7).
 //!
-//! Bluetooth headset microphones run on telephony profiles (HFP/SCO at
-//! 8/16/24 kHz) and cannot be switched to the 48 kHz engine rate, so the
-//! transport captures them at their native rate and converts to 48 kHz
-//! on the inference worker. Two problems are solved here, both
+//! Microphones that cannot run at the 48 kHz engine rate — Bluetooth
+//! telephony profiles (HFP/SCO at 8/16/24 kHz), 44.1 kHz-family devices
+//! (44.1/22.05/11.025 kHz), high-rate-only interfaces (88.2/96 kHz) —
+//! are captured at their native rate and converted to 48 kHz on the
+//! inference worker. Two problems are solved here, both
 //! platform-independently so they stay unit-tested on every CI target:
 //!
-//! 1. **Rate conversion** ([`InputResampler`]): the nominal ratio is an
-//!    exact integer (48000 / 8000/12000/16000/24000), handled by the same
-//!    polyphase [`Interpolator`] the model path uses. Arbitrary-ratio
-//!    conversion (e.g. 44.1 kHz-family microphones) is deliberately out
-//!    of scope: telephony profiles are the target, and every one of them
-//!    is an integer division of 48 kHz.
-//! 2. **Clock drift** ([`DriftServo`] + the micro-ratio stage inside
-//!    [`InputResampler`]): with the microphone and the virtual output on
+//! 1. **Rate conversion** ([`InputResampler`]): any native rate within
+//!    [`MIN_NATIVE_RATE`] to [`MAX_NATIVE_RATE`] (inclusive) is converted by the
+//!    exact reduced ratio through one [`PolyphaseResampler`] — 160/147
+//!    for 44.1 kHz, 3/1 for 16 kHz, 1/2 for 96 kHz. (Earlier revisions
+//!    accepted integer divisors of 48 kHz only; the rational polyphase
+//!    design removed that limit without adding a stage or a dependency —
+//!    see the type's docs for the alternatives weighed.)
+//! 2. **Clock drift** ([`DriftServo`] + the fractional phase step of the
+//!    same resampler): with the microphone and the virtual output on
 //!    separate AUHAL instances there is no Aggregate Device to absorb
 //!    the clock split, so drift is compensated by adapting the effective
-//!    conversion ratio a few hundred ppm around the integer factor,
+//!    conversion ratio a few hundred ppm around the nominal ratio,
 //!    steered by the buffered-sample occupancy between the two clock
-//!    domains (docs/tech-research.md §4.2, the DIY fallback).
+//!    domains (docs/tech-research.md §4.2, the DIY fallback). The servo
+//!    works in engine-rate samples and is ratio-agnostic; the transport
+//!    converts its native-ring occupancy through
+//!    [`InputResampler::to_engine_samples`].
 //!
 //! Everything is preallocated at construction time; `process` and
 //! `update` perform no locking and no allocation in steady state (the
@@ -33,142 +38,34 @@
 //! test below proves it end to end.
 
 use crate::error::StageError;
-use crate::resample::Interpolator;
+pub use crate::resample::MAX_DRIFT_PPM;
+use crate::resample::PolyphaseResampler;
 use crate::stage::ENGINE_SAMPLE_RATE;
 
-/// Largest drift correction the servo may request, in parts per million.
+/// Lowest native capture rate the split transport accepts, in Hz: the
+/// narrowest telephony profile (Bluetooth HFP narrow-band). Nothing
+/// below it exists as a microphone format.
+pub const MIN_NATIVE_RATE: u32 = 8_000;
+
+/// Highest native capture rate the split transport accepts, in Hz.
 ///
-/// ±2000 ppm (0.2%) is an order of magnitude above real crystal
-/// mismatches, small enough to be inaudible (≈3.5 cents), and bounds how
-/// fast the servo can slew the ratio while recovering a priming offset.
-pub const MAX_DRIFT_PPM: f64 = 2000.0;
-
-/// Catmull-Rom cubic interpolation between `p1` and `p2` (`mu` in
-/// `0.0..1.0`). Exact at the knots: `mu == 0.0` returns `p1` bit-exactly.
-fn catmull_rom(p0: f32, p1: f32, p2: f32, p3: f32, mu: f32) -> f32 {
-    let a = 3.0_f32.mul_add(p1 - p2, p3 - p0);
-    let b = 4.0_f32.mul_add(p2, 2.0_f32.mul_add(p0, -5.0_f32.mul_add(p1, p3)));
-    let c = p2 - p0;
-    (0.5 * mu).mul_add(mu.mul_add(mu.mul_add(a, b), c), p1)
-}
-
-/// Number of zero samples seeding [`MicroResampler::buf`] (the cubic's
-/// look-behind at stream start).
-const MICRO_SEED: usize = 2;
-
-/// [`MICRO_SEED`] as the reader's starting position.
-const MICRO_SEED_POS: f64 = 2.0;
-
-/// Streaming fractional reader whose step hovers around 1.0: the
-/// micro-ratio half of drift compensation.
-///
-/// Reads a continuous signal from its input stream by Catmull-Rom cubic
-/// interpolation at positions advancing by `step = 1 / (1 + ppm·1e-6)`
-/// per output sample. At zero correction it is an exact passthrough
-/// (`output[k] == input[k]`); at a nonzero correction it stretches or
-/// squeezes the stream by that ratio. It runs at the 48 kHz engine rate
-/// — *after* the integer-factor interpolation — where telephony-profile
-/// content sits far below Nyquist, so the cubic's passband error is
-/// negligible for the signals this path carries.
-#[derive(Debug)]
-struct MicroResampler {
-    /// History + current chunk. The first two slots seed the cubic's
-    /// look-behind at stream start.
-    buf: Vec<f32>,
-    /// Read position in `buf` coordinates (always ≥ 1.0 so the cubic's
-    /// `p0` tap exists).
-    pos: f64,
-    /// Input samples consumed per output sample.
-    step: f64,
-}
-
-impl MicroResampler {
-    fn new(max_input_len: usize) -> Self {
-        let mut buf = Vec::with_capacity(MICRO_SEED + max_input_len);
-        buf.extend([0.0; MICRO_SEED]);
-        Self {
-            buf,
-            pos: MICRO_SEED_POS,
-            step: 1.0,
-        }
-    }
-
-    fn set_ppm(&mut self, ppm: f64) {
-        let ppm = if ppm.is_finite() {
-            ppm.clamp(-MAX_DRIFT_PPM, MAX_DRIFT_PPM)
-        } else {
-            0.0
-        };
-        self.step = 1.0 / ppm.mul_add(1e-6, 1.0);
-    }
-
-    /// Appends `input` and emits every output sample whose cubic support
-    /// is complete (a two-sample look-ahead is held back until the next
-    /// call; the signal itself is not delayed).
-    fn process(&mut self, input: &[f32], output: &mut Vec<f32>) {
-        self.buf.extend_from_slice(input);
-        loop {
-            #[expect(
-                clippy::cast_possible_truncation,
-                clippy::cast_sign_loss,
-                reason = "pos is kept in 0..buf.len() (a few thousand) by the drain below"
-            )]
-            let index = self.pos.floor() as usize;
-            if index + 2 >= self.buf.len() {
-                break;
-            }
-            #[expect(
-                clippy::cast_precision_loss,
-                clippy::cast_possible_truncation,
-                reason = "the fraction is in 0..1 and buffer indices are tiny"
-            )]
-            let mu = (self.pos - index as f64) as f32;
-            output.push(catmull_rom(
-                self.buf[index - 1],
-                self.buf[index],
-                self.buf[index + 1],
-                self.buf[index + 2],
-                mu,
-            ));
-            self.pos += self.step;
-        }
-        // Drop the consumed prefix, keeping the cubic's look-behind.
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "pos is bounded by buf.len() (a few thousand)"
-        )]
-        let keep_from = (self.pos.floor() as usize).saturating_sub(1);
-        self.buf.drain(..keep_from);
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "keep_from is bounded by buf.len() (a few thousand)"
-        )]
-        {
-            self.pos -= keep_from as f64;
-        }
-    }
-
-    fn reset(&mut self) {
-        self.buf.clear();
-        self.buf.extend([0.0; MICRO_SEED]);
-        self.pos = MICRO_SEED_POS;
-    }
-}
+/// The resampler handles any ratio; this bounds its filter memory and
+/// the transport's per-pass work (a 192 kHz device delivers four native
+/// samples per engine sample). Devices above 48 kHz normally also
+/// advertise 48 kHz and take the aggregate path; the bound is for the
+/// odd interface that does not.
+pub const MAX_NATIVE_RATE: u32 = 192_000;
 
 /// Streaming converter from a microphone's native rate to the 48 kHz
-/// engine rate.
+/// engine rate, with the drift correction folded in.
 ///
-/// Integer-factor polyphase interpolation (the quality-critical
-/// anti-imaging filter, shared with the model path) followed by the
-/// micro-ratio drift stage.
+/// A thin, engine-rate-bound wrapper over [`PolyphaseResampler`]: it
+/// fixes the output rate, validates the native rate range, and exposes
+/// the ratio in the units the transport's drift servo needs.
 #[derive(Debug)]
 pub struct InputResampler {
-    interpolator: Interpolator,
-    micro: MicroResampler,
-    factor: usize,
-    /// Interpolator output, staged between the two stages. Preallocated.
-    stage_buf: Vec<f32>,
+    resampler: PolyphaseResampler,
+    native_rate: u32,
 }
 
 impl InputResampler {
@@ -178,41 +75,57 @@ impl InputResampler {
     ///
     /// # Errors
     ///
-    /// Returns [`StageError::Unsupported`] when `native_rate` is not a
-    /// proper integer divisor of [`ENGINE_SAMPLE_RATE`] (arbitrary-ratio
-    /// conversion is out of scope; see the module docs).
+    /// Returns [`StageError::Unsupported`] when `native_rate` lies
+    /// outside [`MIN_NATIVE_RATE`] to [`MAX_NATIVE_RATE`] (inclusive).
     pub fn new(native_rate: u32, max_input_len: usize) -> Result<Self, StageError> {
-        if native_rate == 0
-            || native_rate >= ENGINE_SAMPLE_RATE
-            || !ENGINE_SAMPLE_RATE.is_multiple_of(native_rate)
-        {
+        if !(MIN_NATIVE_RATE..=MAX_NATIVE_RATE).contains(&native_rate) {
             return Err(StageError::Unsupported(format!(
-                "native rate {native_rate} Hz is not an integer divisor of the \
-                 {ENGINE_SAMPLE_RATE} Hz engine rate"
+                "native rate {native_rate} Hz is outside the {MIN_NATIVE_RATE}–{MAX_NATIVE_RATE} Hz \
+                 range the capture resampler converts to the {ENGINE_SAMPLE_RATE} Hz engine rate"
             )));
         }
-        let factor = (ENGINE_SAMPLE_RATE / native_rate) as usize;
-        let stage_capacity = factor * max_input_len;
         Ok(Self {
-            interpolator: Interpolator::new(factor, max_input_len),
-            micro: MicroResampler::new(stage_capacity),
-            factor,
-            stage_buf: Vec::with_capacity(stage_capacity),
+            resampler: PolyphaseResampler::new(native_rate, ENGINE_SAMPLE_RATE, max_input_len),
+            native_rate,
         })
     }
 
-    /// Integer upsampling factor (`ENGINE_SAMPLE_RATE / native_rate`).
+    /// The native capture rate this converter was built for, in Hz.
     #[must_use]
-    pub const fn factor(&self) -> usize {
-        self.factor
+    pub const fn native_rate(&self) -> u32 {
+        self.native_rate
     }
 
-    /// Group delay in samples at the 48 kHz output rate. The micro stage
-    /// adds none (its look-ahead is buffering, not signal delay), so this
-    /// is the interpolator's filter delay.
+    /// Reduced conversion ratio `(up, down)`: `up` engine samples per
+    /// `down` native samples at zero drift (160/147 for 44.1 kHz, 3/1 for
+    /// 16 kHz).
+    #[must_use]
+    pub const fn ratio(&self) -> (usize, usize) {
+        self.resampler.ratio()
+    }
+
+    /// Converts a count of native-rate samples to the engine-rate samples
+    /// they will become (rounded to nearest), so a transport can express
+    /// its native-ring occupancy in the servo's units.
+    #[must_use]
+    pub const fn to_engine_samples(&self, native_samples: usize) -> usize {
+        let (up, down) = self.resampler.ratio();
+        (native_samples * up + down / 2) / down
+    }
+
+    /// Group delay in samples at the 48 kHz output rate — an integer by
+    /// construction of the polyphase design.
     #[must_use]
     pub const fn delay_output_samples(&self) -> usize {
-        self.interpolator.delay_output_samples()
+        self.resampler.delay_output_samples()
+    }
+
+    /// Upper bound on the samples one [`InputResampler::process`] call
+    /// appends for `input_len` native samples (at the largest drift
+    /// correction); reserve output buffers to it.
+    #[must_use]
+    pub fn max_output_len(&self, input_len: usize) -> usize {
+        self.resampler.max_output_len(input_len)
     }
 
     /// Applies a drift correction in parts per million (clamped to
@@ -220,24 +133,21 @@ impl InputResampler {
     /// values stretch the stream — more output samples per input sample —
     /// which raises the buffered occupancy downstream.
     pub fn set_drift_ppm(&mut self, ppm: f64) {
-        self.micro.set_ppm(ppm);
+        self.resampler.set_drift_ppm(ppm);
     }
 
     /// Converts one chunk of native-rate samples, appending 48 kHz
-    /// samples to `output` (roughly `input.len() × factor`, modulated by
-    /// the drift correction). Allocation-free while `input` stays within
-    /// the preallocated `max_input_len`.
+    /// samples to `output` (`input.len() × up / down` on average,
+    /// modulated by the drift correction). Allocation-free while `input`
+    /// stays within the preallocated `max_input_len` and `output` has
+    /// room for [`InputResampler::max_output_len`].
     pub fn process(&mut self, input: &[f32], output: &mut Vec<f32>) {
-        self.stage_buf.clear();
-        self.interpolator.process(input, &mut self.stage_buf);
-        self.micro.process(&self.stage_buf, output);
+        self.resampler.process(input, output);
     }
 
-    /// Clears filter and reader history (the drift correction persists).
+    /// Clears filter history (the drift correction persists).
     pub fn reset(&mut self) {
-        self.interpolator.reset();
-        self.micro.reset();
-        self.stage_buf.clear();
+        self.resampler.reset();
     }
 }
 
@@ -381,85 +291,29 @@ mod tests {
         best
     }
 
-    #[test]
-    fn micro_resampler_at_unity_is_bit_exact_passthrough() {
-        let input = sine(48_000, 1000.0, 4800);
-        let mut micro = MicroResampler::new(input.len());
-        let mut output = Vec::new();
-        micro.process(&input, &mut output);
-        // The two-sample cubic look-ahead is held back, not delayed.
-        assert_eq!(output.len(), input.len() - MICRO_SEED);
-        assert_eq!(output, input[..output.len()]);
-    }
-
-    #[test]
-    fn micro_resampler_chunked_matches_single_call() {
-        let input = sine(48_000, 700.0, 4800);
-        let mut one = Vec::new();
-        MicroResampler::new(input.len()).process(&input, &mut one);
-
-        let mut chunked = Vec::new();
-        let mut micro = MicroResampler::new(97);
-        for chunk in input.chunks(97) {
-            micro.process(chunk, &mut chunked);
-        }
-        assert_eq!(one, chunked);
-    }
-
-    /// A fixed correction must time-warp the signal by exactly that
-    /// ratio: the output count matches, and the waveform tracks the
-    /// analytically warped sine with high fidelity.
-    #[test]
-    fn micro_resampler_tracks_a_fixed_drift_correction() {
-        let rate = 48_000_u32;
-        let freq = 1000.0_f32;
-        let input = sine(rate, freq, rate as usize * 2);
-        for ppm in [-500.0_f64, 500.0] {
-            let mut micro = MicroResampler::new(1024);
-            micro.set_ppm(ppm);
-            let mut output = Vec::new();
-            for chunk in input.chunks(1024) {
-                micro.process(chunk, &mut output);
-            }
-            let step = 1.0 / ppm.mul_add(1e-6, 1.0);
-            #[expect(
-                clippy::cast_precision_loss,
-                clippy::cast_possible_truncation,
-                clippy::cast_sign_loss,
-                reason = "test sample counts are small and positive"
-            )]
-            let expected_len = ((input.len() - MICRO_SEED) as f64 / step) as usize;
-            assert!(
-                output.len().abs_diff(expected_len) <= 2,
-                "{ppm} ppm: {} outputs, expected ≈{expected_len}",
-                output.len()
-            );
-            let mut err = 0.0_f64;
-            let mut sig = 0.0_f64;
-            for (k, out) in output.iter().enumerate() {
-                #[expect(clippy::cast_precision_loss, reason = "test sample counts are small")]
-                let position = k as f64 * step;
-                let reference = (2.0 * std::f64::consts::PI * f64::from(freq) * position
-                    / f64::from(rate))
-                .sin()
-                    * 0.5;
-                err += (f64::from(*out) - reference).powi(2);
-                sig += reference * reference;
-            }
-            let snr_db = 10.0 * (sig / err).log10();
-            assert!(snr_db > 60.0, "{ppm} ppm: SNR too low: {snr_db} dB");
-        }
-    }
-
-    /// Every telephony-profile factor (24 kHz → ×2, 16 kHz → ×3,
-    /// 12 kHz → ×4, 8 kHz → ×6) must reproduce speech-like audio delayed
+    /// Every capture rate — the telephony profiles (24 kHz → 2/1,
+    /// 16 kHz → 3/1, 12 kHz → 4/1, 8 kHz → 6/1), the 44.1 kHz family
+    /// (160/147, 320/147, 640/147), and the high rates (88.2 kHz →
+    /// 80/147, 96 kHz → 1/2) — must reproduce speech-like audio delayed
     /// by exactly the reported group delay: the cross-correlation peak
     /// sits at `delay_output_samples()` with near-unity correlation.
     #[test]
-    fn input_resampler_reports_its_exact_delay_for_every_integer_ratio() {
-        for native in [24_000_u32, 16_000, 12_000, 8_000] {
-            let mut resampler = InputResampler::new(native, 480).expect("integer ratio");
-            assert_eq!(resampler.factor(), (48_000 / native) as usize);
+    fn input_resampler_reports_its_exact_delay_for_every_rate() {
+        let cases = [
+            (24_000_u32, (2_usize, 1_usize)),
+            (16_000, (3, 1)),
+            (12_000, (4, 1)),
+            (8_000, (6, 1)),
+            (44_100, (160, 147)),
+            (22_050, (320, 147)),
+            (11_025, (640, 147)),
+            (88_200, (80, 147)),
+            (96_000, (1, 2)),
+        ];
+        for (native, ratio) in cases {
+            let mut resampler = InputResampler::new(native, 480).expect("supported rate");
+            assert_eq!(resampler.ratio(), ratio, "{native} Hz");
+            assert_eq!(resampler.native_rate(), native);
             let captured = pseudo_speech(native, native as usize);
             let mut output = Vec::new();
             for chunk in captured.chunks(480) {
@@ -477,29 +331,52 @@ mod tests {
     }
 
     #[test]
-    fn input_resampler_rejects_non_integer_ratios() {
-        for rate in [0_u32, 44_100, 32_000, 48_000, 96_000] {
+    fn input_resampler_rejects_rates_outside_the_supported_range() {
+        for rate in [0_u32, 7_999, 192_001, u32::MAX] {
+            let error = InputResampler::new(rate, 480).expect_err("must be rejected");
             assert!(
-                InputResampler::new(rate, 480).is_err(),
-                "{rate} Hz must be rejected"
+                error.to_string().contains(&rate.to_string()),
+                "unhelpful message for {rate} Hz: {error}"
+            );
+        }
+        for rate in [MIN_NATIVE_RATE, 44_100, 48_000, MAX_NATIVE_RATE] {
+            assert!(
+                InputResampler::new(rate, 480).is_ok(),
+                "{rate} Hz must be accepted"
             );
         }
     }
 
+    /// The servo's occupancy conversion rounds to the nearest engine
+    /// sample for every ratio shape.
+    #[test]
+    fn input_resampler_converts_native_counts_to_engine_samples() {
+        let at_44k = InputResampler::new(44_100, 480).expect("supported rate");
+        assert_eq!(at_44k.to_engine_samples(147), 160);
+        assert_eq!(at_44k.to_engine_samples(441), 480);
+        assert_eq!(at_44k.to_engine_samples(0), 0);
+        let at_16k = InputResampler::new(16_000, 480).expect("supported rate");
+        assert_eq!(at_16k.to_engine_samples(160), 480);
+        let at_96k = InputResampler::new(96_000, 480).expect("supported rate");
+        assert_eq!(at_96k.to_engine_samples(961), 481);
+    }
+
     #[test]
     fn input_resampler_chunked_matches_single_call() {
-        let input = sine(16_000, 440.0, 4800);
-        let mut one = Vec::new();
-        InputResampler::new(16_000, input.len())
-            .expect("integer ratio")
-            .process(&input, &mut one);
+        for (native, chunk) in [(16_000_u32, 160_usize), (44_100, 97)] {
+            let input = sine(native, 440.0, 4800);
+            let mut one = Vec::new();
+            InputResampler::new(native, input.len())
+                .expect("supported rate")
+                .process(&input, &mut one);
 
-        let mut chunked = Vec::new();
-        let mut resampler = InputResampler::new(16_000, 160).expect("integer ratio");
-        for chunk in input.chunks(160) {
-            resampler.process(chunk, &mut chunked);
+            let mut chunked = Vec::new();
+            let mut resampler = InputResampler::new(native, chunk).expect("supported rate");
+            for piece in input.chunks(chunk) {
+                resampler.process(piece, &mut chunked);
+            }
+            assert_eq!(one, chunked, "{native} Hz");
         }
-        assert_eq!(one, chunked);
     }
 
     /// Closed loop: a producer whose clock drifts against the consumer
@@ -564,49 +441,51 @@ mod tests {
         assert!((correction + MAX_DRIFT_PPM).abs() < f64::EPSILON);
     }
 
+    /// Silent stage with a reported latency, standing in for a model:
+    /// at 50% intensity the engine output is exactly the half-gain,
+    /// delay-compensated dry path.
+    #[derive(Debug)]
+    struct Silent {
+        latency: usize,
+    }
+    impl crate::stage::Stage for Silent {
+        fn id(&self) -> &'static str {
+            "silent"
+        }
+        fn process_block(&mut self, input: &[f32], output: &mut [f32]) -> Result<(), StageError> {
+            if input.len() != output.len() {
+                return Err(StageError::BufferLen {
+                    expected: input.len(),
+                    got: output.len(),
+                });
+            }
+            output.fill(0.0);
+            Ok(())
+        }
+        fn latency_samples(&self) -> usize {
+            self.latency
+        }
+        fn reset(&mut self) {}
+    }
+
     /// End-to-end strength alignment (the PR #15 C5 measurement, applied
-    /// to the native-capture path): speech-like audio captured at 16 kHz,
-    /// converted by the input resampler, and processed at 50% intensity
+    /// to the native-capture path): speech-like audio captured at 16 kHz
+    /// and at 44.1 kHz (an integer and a rational ratio), converted by
+    /// the input resampler, and processed at 50% intensity
     /// through a silent stage with reported latency must come out as
     /// exactly half the delayed dry signal — cross-correlation measures
     /// zero residual offset, proving the input resampler's delay cannot
     /// disturb the dry-compensation alignment (both taps sit after it).
     #[test]
     fn strength_alignment_survives_the_input_resampler() {
-        /// Silent stage with a reported latency, standing in for a model:
-        /// at 50% intensity the engine output is exactly the half-gain,
-        /// delay-compensated dry path.
-        #[derive(Debug)]
-        struct Silent {
-            latency: usize,
+        for native_rate in [16_000_u32, 44_100] {
+            check_alignment(native_rate);
         }
-        impl crate::stage::Stage for Silent {
-            fn id(&self) -> &'static str {
-                "silent"
-            }
-            fn process_block(
-                &mut self,
-                input: &[f32],
-                output: &mut [f32],
-            ) -> Result<(), StageError> {
-                if input.len() != output.len() {
-                    return Err(StageError::BufferLen {
-                        expected: input.len(),
-                        got: output.len(),
-                    });
-                }
-                output.fill(0.0);
-                Ok(())
-            }
-            fn latency_samples(&self) -> usize {
-                self.latency
-            }
-            fn reset(&mut self) {}
-        }
+    }
 
-        let native_rate = 16_000_u32;
+    fn check_alignment(native_rate: u32) {
         let captured = pseudo_speech(native_rate, native_rate as usize * 2);
-        let mut resampler = InputResampler::new(native_rate, 160).expect("integer ratio");
+        let mut resampler = InputResampler::new(native_rate, 160).expect("supported rate");
 
         let stage_latency = 1234;
         let (_publisher, mut engine) = SwitchingEngine::new(
@@ -637,7 +516,7 @@ mod tests {
             let expected = engine_input[n - stage_latency] * 0.5;
             assert!(
                 (engine_output[n] - expected).abs() < 1e-5,
-                "sample {n}: {} != {expected}",
+                "{native_rate} Hz, sample {n}: {} != {expected}",
                 engine_output[n]
             );
         }
@@ -645,7 +524,13 @@ mod tests {
         // must find the peak at exactly the reported latency: zero
         // residual offset through the resampler.
         let (lag, corr) = best_lag(&engine_input, &engine_output, 4800);
-        assert_eq!(lag, stage_latency, "residual dry/wet misalignment");
-        assert!(corr > 0.999, "correlation too low: {corr}");
+        assert_eq!(
+            lag, stage_latency,
+            "{native_rate} Hz: residual dry/wet misalignment"
+        );
+        assert!(
+            corr > 0.999,
+            "{native_rate} Hz: correlation too low: {corr}"
+        );
     }
 }
