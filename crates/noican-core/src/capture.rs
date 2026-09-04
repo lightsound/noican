@@ -430,6 +430,89 @@ mod tests {
         }
     }
 
+    /// The same closed loop through the *real* resampler at the rational
+    /// 44.1 kHz ratio, mirroring the split worker: a producer clock
+    /// delivering 441 × (1 + drift) native samples per 10 ms block, the
+    /// resampler feeding an engine-rate FIFO, a consumer taking exactly
+    /// 480 per block, and the servo fed the occupancy the worker
+    /// computes (output ring + FIFO + native ring through
+    /// `to_engine_samples`). The occupancy must stay bounded and settle
+    /// near the target with the correction canceling the drift — the
+    /// integer-factor assumption is gone from every term.
+    #[test]
+    fn servo_holds_occupancy_through_the_rational_resampler() {
+        let target = 2400_usize;
+        let blocks = 2 * 60 * 100; // two minutes of 10 ms blocks (12 servo time constants)
+        for drift_ppm in [-200.0_f64, 150.0] {
+            let mut resampler = InputResampler::new(44_100, 480).expect("supported rate");
+            let mut servo = DriftServo::new(target);
+            let mut output_ring = target;
+            let mut pending: std::collections::VecDeque<f32> = std::collections::VecDeque::new();
+            let mut converted = Vec::with_capacity(resampler.max_output_len(480));
+            let mut native_due = 0.0_f64;
+            let mut phase = 0.0_f32;
+            let mut underruns = 0_usize;
+            let mut correction = 0.0_f64;
+            let mut worst_after_settling = 0_usize;
+            for block in 0..blocks {
+                // Consumer: the output clock takes one engine block.
+                if output_ring < 480 {
+                    underruns += 1;
+                    output_ring = 0;
+                } else {
+                    output_ring -= 480;
+                }
+                // Producer: the microphone clock delivers its 10 ms.
+                native_due = 441.0_f64.mul_add(drift_ppm.mul_add(1e-6, 1.0), native_due);
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "native_due is a small positive count"
+                )]
+                let native_count = native_due.floor() as usize;
+                #[expect(clippy::cast_precision_loss, reason = "small count")]
+                {
+                    native_due -= native_count as f64;
+                }
+                let chunk: Vec<f32> = (0..native_count)
+                    .map(|_| {
+                        phase = (phase + 1000.0 / 44_100.0).fract();
+                        (2.0 * std::f32::consts::PI * phase).sin() * 0.5
+                    })
+                    .collect();
+                // Worker: convert, block up, push to the output ring.
+                converted.clear();
+                resampler.process(&chunk, &mut converted);
+                pending.extend(converted.iter().copied());
+                while pending.len() >= 480 {
+                    pending.drain(..480);
+                    output_ring += 480;
+                }
+                let occupancy = output_ring + pending.len() + resampler.to_engine_samples(0);
+                assert!(
+                    occupancy < 48_000,
+                    "{drift_ppm} ppm: ring ran away at block {block}: {occupancy}"
+                );
+                correction = servo.update(occupancy);
+                resampler.set_drift_ppm(correction);
+                if block > blocks / 2 {
+                    worst_after_settling = worst_after_settling.max(occupancy.abs_diff(target));
+                }
+            }
+            assert_eq!(underruns, 0, "{drift_ppm} ppm: output ring ran dry");
+            assert!(
+                (correction + drift_ppm).abs() < 15.0,
+                "{drift_ppm} ppm: correction settled at {correction}"
+            );
+            // Proportional residual (drift × horizon ≈ 96 samples at
+            // 200 ppm) plus one block of FIFO granularity.
+            assert!(
+                worst_after_settling < 700,
+                "{drift_ppm} ppm: occupancy wandered {worst_after_settling} samples off target"
+            );
+        }
+    }
+
     #[test]
     fn servo_clamps_extreme_corrections() {
         let mut servo = DriftServo::new(2400);
