@@ -978,11 +978,14 @@ const WORKER_PERIOD_NS: u64 = 10_000_000;
 /// set the thread may keep running past it up to `constraint` — so p50
 /// (plus margin) rather than that host's p95 of 6.2 ms is the basis:
 /// tail blocks still complete within the period, Apple Silicon
-/// performance cores are faster than the measuring host (confirmed
-/// on-device 2026-09-04: clean steady state), and a larger reservation
-/// would only raise the admission cost of the RT band. Persistent
-/// overruns of the declared computation risk demotion by XNU; the
-/// on-device numbers show steady state sits well below 5 ms.
+/// performance cores are faster than the measuring host, and a larger
+/// reservation would only raise the admission cost of the RT band.
+/// Persistent overruns of the declared computation risk demotion by
+/// XNU; what the 2026-09-04 on-device run supports is the absence of
+/// steady-state underruns (block-time figures only reach the log
+/// alongside underrun growth, so the device logged none for clean
+/// models) — the sub-5 ms steady-state figure itself is the
+/// `block_bench` measurement above.
 const WORKER_COMPUTATION_NS: u64 = 5_000_000;
 /// Deadline within each period: the whole period, matching the audio
 /// cadence the output ring absorbs.
