@@ -60,8 +60,8 @@ to the aggregate transport. Deferred until a 48 kHz-capable Bluetooth
 *Forward pointer (2026-09-04):* PR #24 lifts this blocker — the split
 transport now converts any 8–192 kHz rate by the exact ratio, and the
 headset's microphone side was since read as 16 kHz HFP (its 44.1 kHz
-device is the playback side). The split-transport re-run is pending and
-will be recorded separately.
+device is the playback side). The split-transport run is recorded in
+[2026-09-05-split-transport-16k.md](2026-09-05-split-transport-16k.md).
 
 ## Reading against the baseline
 
