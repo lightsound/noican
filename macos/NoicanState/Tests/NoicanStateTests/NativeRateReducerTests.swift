@@ -68,13 +68,13 @@ struct CaptureSupportTests {
         #expect(unsupportedMic.rateLabel == "0 Hz")
     }
 
-    @Test("Only telephony rates are narrow-band")
+    @Test("Only telephony rates are narrow-band; the 44.1 kHz family never is")
     func telephonyRates() {
-        for hertz in [8_000, 12_000, 16_000, 24_000] {
+        for hertz in [8_000, 12_000, 16_000, 24_000, 32_000] {
             #expect(CaptureSupport.isTelephonyRate(hertz))
         }
-        for hertz in [32_000, 44_100, 48_000, 96_000] {
-            #expect(!CaptureSupport.isTelephonyRate(hertz))
+        for hertz in [11_025, 22_050, 44_100, 48_000, 96_000] {
+            #expect(!CaptureSupport.isTelephonyRate(hertz), "\(hertz) Hz is not telephony")
         }
     }
 }

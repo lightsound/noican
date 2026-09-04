@@ -38,12 +38,16 @@ public enum CaptureSupport: Hashable, Sendable {
         return .nativeRate(hertz: hertz)
     }
 
-    /// Whether a native rate is a Bluetooth telephony profile (HFP/SCO
-    /// at 8/12/16/24 kHz) — narrow-band capture with the headset-wide
-    /// playback trade-off — as opposed to a full-band rate that is
-    /// merely not 48 kHz (44.1 kHz and up). Drives the selection notice.
+    /// Whether a native rate is a Bluetooth telephony profile — the
+    /// 4 kHz-multiple speech rates up to 32 kHz (CVSD 8 kHz, mSBC
+    /// 16 kHz, LC3 24/32 kHz, and the 12 kHz divisor the split path has
+    /// always listed) — which means narrow-band capture with the
+    /// headset-wide playback trade-off. The 44.1 kHz family (44.1,
+    /// 22.05, 11.025 kHz) is not telephony even where it lies below
+    /// 24 kHz: those are CD-derived rates, and the notice must describe
+    /// only the conversion. Drives the selection notice.
     public static func isTelephonyRate(_ hertz: Int) -> Bool {
-        hertz <= 24_000
+        hertz % 4_000 == 0 && hertz <= 32_000
     }
 }
 
