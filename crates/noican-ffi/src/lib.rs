@@ -693,14 +693,16 @@ pub unsafe extern "C" fn noican_engine_worker_block_max_ns(handle: *const c_void
     unsafe { read_runtime_counter(handle, Runtime::worker_block_max_ns) }
 }
 
-/// Diagnostic: 1 when the inference worker runs under mach
-/// time-constraint (real-time) scheduling, 0 otherwise (including while
-/// stopped and for a null handle).
+/// Diagnostic: 1 when the inference worker's mach time-constraint
+/// (real-time) promotion succeeded at engine start, 0 otherwise
+/// (including while stopped and for a null handle).
 ///
 /// 0 while running means the promotion failed and the worker runs at
 /// default priority — budget misses in that state may be scheduling,
 /// not model cost, and hardware underrun numbers should be read with
-/// that in mind.
+/// that in mind. The value is the start-time promotion result, not
+/// live membership: the kernel may later demote a persistently
+/// overrunning thread without this flag changing.
 ///
 /// # Safety
 ///

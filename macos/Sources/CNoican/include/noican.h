@@ -72,9 +72,11 @@ uint64_t noican_engine_frames_processed(const void *handle);
  * nanoseconds. Counters are cumulative since engine start or the last
  * noican_engine_reset_debug_stats call; reset after a model switch to
  * attribute the numbers to one model. worker_realtime is 1 when the
- * inference worker runs under mach time-constraint (real-time)
- * scheduling; 0 while running means the promotion failed and budget
- * misses may be scheduling, not model cost. Reads take the control
+ * inference worker's mach time-constraint (real-time) promotion
+ * succeeded at engine start; 0 while running means the promotion failed
+ * and budget misses may be scheduling, not model cost. It reports the
+ * start-time result, not live membership (the kernel may demote a
+ * persistently overrunning thread later). Reads take the control
  * mutex (1 Hz diagnostics, not the 20 Hz meter path); the reset is a
  * no-op while stopped. */
 uint64_t noican_engine_output_underruns(const void *handle);

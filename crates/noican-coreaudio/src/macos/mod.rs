@@ -435,8 +435,12 @@ pub struct Runtime {
     frames: Arc<AtomicU64>,
     underruns: Arc<AtomicU64>,
     block_stats: Arc<WorkerBlockStats>,
-    /// Whether the inference worker's real-time promotion succeeded (set
-    /// by the worker at loop start; false until then and when stopped).
+    /// Whether the inference worker's real-time promotion succeeded at
+    /// loop start. False until the worker records it; afterwards it keeps
+    /// that start-time result — it is not live scheduling-band membership
+    /// (XNU may demote a thread that persistently overruns its declared
+    /// computation), and a stopped-but-not-dropped runtime retains the
+    /// last start's value.
     worker_realtime: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
     running: bool,
@@ -671,11 +675,13 @@ impl Runtime {
         self.block_stats.max_ns()
     }
 
-    /// Diagnostic: whether the inference worker runs under mach
-    /// time-constraint (real-time) scheduling (see
+    /// Diagnostic: whether the inference worker's mach time-constraint
+    /// (real-time) promotion succeeded at loop start (see
     /// [`promote_current_thread_to_realtime`]). False means the worker
     /// runs at default priority, so budget misses on hardware may be
-    /// scheduling, not model cost.
+    /// scheduling, not model cost. This reports the start-time result,
+    /// not live membership: XNU may later demote a persistently
+    /// overrunning thread without this flag changing.
     #[must_use]
     pub fn worker_realtime(&self) -> bool {
         self.worker_realtime.load(Ordering::Acquire)
@@ -965,10 +971,18 @@ unsafe extern "C" {
 
 /// The worker's declared real-time cadence: one engine block every 10 ms.
 const WORKER_PERIOD_NS: u64 = 10_000_000;
-/// Expected computation per period. Half the period: the heaviest model
-/// measures p50 ≈ 4.2 ms / p95 ≈ 6.2 ms per block on a modest 4-core
-/// x86-64 host (`noican-models/examples/block_bench.rs`, 2026-09-02);
-/// Apple Silicon performance cores are faster.
+/// Guaranteed computation per period, sized on the heaviest model's
+/// typical block: p50 ≈ 4.2 ms on a modest 4-core x86-64 host
+/// (`noican-models/examples/block_bench.rs`, 2026-09-02). This is the
+/// CPU slice the scheduler reserves, not a ceiling — with `preemptible`
+/// set the thread may keep running past it up to `constraint` — so p50
+/// (plus margin) rather than that host's p95 of 6.2 ms is the basis:
+/// tail blocks still complete within the period, Apple Silicon
+/// performance cores are faster than the measuring host (confirmed
+/// on-device 2026-09-04: clean steady state), and a larger reservation
+/// would only raise the admission cost of the RT band. Persistent
+/// overruns of the declared computation risk demotion by XNU; the
+/// on-device numbers show steady state sits well below 5 ms.
 const WORKER_COMPUTATION_NS: u64 = 5_000_000;
 /// Deadline within each period: the whole period, matching the audio
 /// cadence the output ring absorbs.
@@ -1103,6 +1117,9 @@ fn processing_loop(
     block_stats.reset();
     // Real-time promotion must precede the workgroup join (see
     // promote_current_thread_to_realtime); failure degrades, not faults.
+    // The stored value is the promotion result at loop start; XNU may
+    // later demote a persistently overrunning thread, which this flag
+    // does not track.
     realtime.store(promote_current_thread_to_realtime(), Ordering::Release);
     let membership = WorkgroupGuard::join(workgroup);
     if !membership.joined() {

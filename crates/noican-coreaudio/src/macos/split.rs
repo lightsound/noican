@@ -439,6 +439,9 @@ fn split_processing_loop(
     block_stats.reset();
     // Real-time promotion must precede the workgroup join (see
     // promote_current_thread_to_realtime); failure degrades, not faults.
+    // The stored value is the promotion result at loop start; XNU may
+    // later demote a persistently overrunning thread, which this flag
+    // does not track.
     realtime.store(promote_current_thread_to_realtime(), Ordering::Release);
     let membership = WorkgroupGuard::join(workgroup);
     if !membership.joined() {

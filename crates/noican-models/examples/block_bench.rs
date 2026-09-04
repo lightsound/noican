@@ -69,9 +69,12 @@ fn percent(part: usize, total: usize) -> f64 {
 fn main() {
     let mut args = std::env::args().skip(1);
     let model = args.next().unwrap_or_else(|| "fastenhancer-l".to_owned());
+    // Clamped to one second so a `0` argument cannot reach the quantile
+    // lookup with an empty vector.
     let seconds: usize = args
         .next()
-        .map_or(60, |s| s.parse().expect("seconds must be an integer"));
+        .map_or(60, |s| s.parse().expect("seconds must be an integer"))
+        .max(1);
     let models_dir = std::env::var_os("NOICAN_MODELS_DIR")
         .map_or_else(|| "models".into(), std::path::PathBuf::from);
 
