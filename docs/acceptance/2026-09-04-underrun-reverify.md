@@ -32,8 +32,30 @@ model switch and engine start):
 
 `fastenhancer-b`, `dpdfnet2`, `dpdfnet8`, and `deepfilternet3`
 produced **no diagnostic line at all** over their 60 s runs (zero
-underruns). The split-transport repeat was skipped as in the baseline
-run (the available Bluetooth headset is 44.1 kHz-family only).
+underruns).
+
+## Acceptance outcome
+
+Against the "Acceptance checklist (output-underrun diagnostics)" of
+[docs/macos-hardware-test.md](../macos-hardware-test.md):
+
+| # | Criterion | Outcome |
+|---|---|---|
+| 0 | Worker is real-time | **Pass** (`true`/`false` line, both sessions) |
+| 1 | No false positives on light models | **Pass** (zero lines over 60+ s) |
+| 2 | Suspect counts recorded verbatim | **Pass** (table above) |
+| 3 | Counts match ears | **Pass** (only FE-L stutters, only at selection) |
+| 4 | Split transport covered | **Unverified** — see below |
+| 5 | No regression on clean models | **Pass** |
+
+**Criterion 4 remains unverified in both this run and the baseline.**
+`split_processing_loop` received the identical real-time promotion, but
+no compatible microphone was available: the owner's Bluetooth headset
+captures only at 44.1 kHz-family rates, which the app refuses (no
+integer factor to 48 kHz). The split transport therefore carries **no
+hardware evidence for this fix**; every claim in this record is scoped
+to the aggregate transport. Deferred until a 48 kHz-capable Bluetooth
+(or other native-rate) microphone is available.
 
 ## Reading against the baseline
 
@@ -61,9 +83,11 @@ run (the available Bluetooth headset is 44.1 kHz-family only).
   stutter in the first second after selecting the model; steady-state
   operation is clean.
 
-Conclusion: the real-time promotion resolves the recording dropouts
-and level drop attributed to output-ring underruns. The residual
-FE-L warm-up burst is confined to the moment of model selection; if
-it proves audible enough to matter, the candidate follow-up is to
-warm the session with a few dummy blocks on the loader (control)
-thread before the lock-free swap — out of scope for PR #23.
+Conclusion: on the aggregate transport, the real-time promotion
+resolves the recording dropouts and level drop attributed to
+output-ring underruns. The residual FE-L warm-up burst is confined to
+the moment of model selection; if it proves audible enough to matter,
+the candidate follow-up is to warm the session with a few dummy blocks
+on the loader (control) thread before the lock-free swap — out of
+scope for PR #23. The split transport's promotion is code-identical
+but unexercised on hardware (criterion 4 above).

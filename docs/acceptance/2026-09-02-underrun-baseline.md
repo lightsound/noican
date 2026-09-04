@@ -32,9 +32,13 @@ counters reset on every model switch):
 | 17:28:13 | fastenhancer-l | 6 | 205/501 (41%) | 49.7 ms |
 
 `dpdfnet2` and `deepfilternet3` produced no diagnostic line over their
-60 s runs (zero underruns). The split-transport repeat was skipped: the
-available Bluetooth headset is refused by the app (44.1 kHz-family
-capture rates only, no integer factor to 48 kHz).
+60 s runs (zero underruns).
+
+**Unverified: split transport (acceptance criterion 4).** The
+split-transport repeat could not be exercised: the available Bluetooth
+headset is refused by the app (44.1 kHz-family capture rates only, no
+integer factor to 48 kHz). All numbers in this record are from the
+aggregate transport; the split transport has no baseline.
 
 ## Reading
 
