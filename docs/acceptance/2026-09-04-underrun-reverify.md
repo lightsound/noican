@@ -57,6 +57,12 @@ hardware evidence for this fix**; every claim in this record is scoped
 to the aggregate transport. Deferred until a 48 kHz-capable Bluetooth
 (or other native-rate) microphone is available.
 
+*Forward pointer (2026-09-04):* PR #24 lifts this blocker — the split
+transport now converts any 8–192 kHz rate by the exact ratio, and the
+headset's microphone side was since read as 16 kHz HFP (its 44.1 kHz
+device is the playback side). The split-transport re-run is pending and
+will be recorded separately.
+
 ## Reading against the baseline
 
 - **The chronic budget misses are gone.** In the baseline,
