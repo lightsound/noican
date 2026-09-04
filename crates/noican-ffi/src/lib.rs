@@ -174,9 +174,10 @@ pub unsafe extern "C" fn noican_engine_start(
 /// 48 kHz engine rate (issue #7).
 ///
 /// `input_device` is the microphone's Core Audio device ID and
-/// `capture_sample_rate` its current nominal rate in Hz — any integral
-/// rate from 8000 to 192000 (Bluetooth telephony profiles at 8/16/24 kHz,
-/// the 44.1 kHz family, 88.2/96 kHz interfaces; see
+/// `capture_sample_rate` its current nominal rate in Hz — whole hertz
+/// from 8000 to 192000 whose ratio to 48000 reduces to small terms, i.e.
+/// the standard rate families (Bluetooth telephony profiles at
+/// 8/16/24 kHz, the 44.1 kHz family, 88.2/96 kHz interfaces; see
 /// [`noican_core::capture`]). `output_device` is the Noican/`BlackHole`
 /// virtual output. No Aggregate Device is involved: the microphone is
 /// captured natively and resampled to 48 kHz inside the transport by

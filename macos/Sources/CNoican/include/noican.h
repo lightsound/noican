@@ -14,9 +14,11 @@ int32_t noican_engine_start(void *handle, uint32_t aggregate_device, const char 
 
 /* Split transport for microphones that cannot run at the 48 kHz engine
  * rate (issue #7): captures input_device at capture_sample_rate (its
- * current nominal rate in Hz — any integral rate from 8000 to 192000:
- * Bluetooth telephony profiles at 8/16/24 kHz, the 44.1 kHz family,
- * 88.2/96 kHz interfaces) and feeds output_device (the Noican/BlackHole
+ * current nominal rate in Hz — whole hertz from 8000 to 192000 whose
+ * ratio to 48000 reduces to small terms, i.e. the standard rate
+ * families: Bluetooth telephony profiles at 8/16/24 kHz, the 44.1 kHz
+ * family, 88.2/96 kHz interfaces; an exotic rate such as 16001 Hz is
+ * refused) and feeds output_device (the Noican/BlackHole
  * virtual output) at 48 kHz, with the exact-ratio rate conversion and
  * clock-drift compensation inside the transport. No Aggregate Device is
  * involved; the 48 kHz path (noican_engine_start) is unchanged. */
