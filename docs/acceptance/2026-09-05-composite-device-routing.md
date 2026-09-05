@@ -1,5 +1,19 @@
 # Result record — Composite input/output microphone routing (Shure MV7i), 2026-09-05
 
+> **Superseded criterion (added 2026-09-05, PR #27).** This record was
+> taken against PR #26's single-channel map (`[-1, -1, 0, -1]`: engine
+> signal on the virtual output's first channel, second channel silent).
+> PR #27 changed the aggregate path to dual mono with a one-to-one map
+> (`[-1, -1, 0, 1]`, built-in microphone `[0, 1]`), and acceptance
+> criterion 3 of the composite-microphone checklist now requires the
+> *same* signal on every virtual-output channel with channel 0 within
+> ±1 dB of the previous build. The "channel 1 silent" wording quoted
+> under "Not covered" below, and its "byte-identical to AUHAL's default,
+> so no level change is possible by construction" rationale, therefore
+> describe the superseded build only: on the current build that
+> measurement is required, not unnecessary by construction. The results
+> table is left as recorded.
+
 Hardware run of the "Composite input/output microphone
 (headphone-equipped USB microphone)" procedure of
 [docs/macos-hardware-test.md](../macos-hardware-test.md) on the PR #26
