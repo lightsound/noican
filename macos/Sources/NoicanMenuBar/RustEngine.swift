@@ -227,6 +227,17 @@ final class RustEngine: @unchecked Sendable {
         noican_engine_reset_debug_stats(handle)
     }
 
+    /// Diagnostic: how the aggregate transport routes the engine output
+    /// into the Aggregate Device (reported output channel count, the
+    /// channel map requested, and the map read back), or nil while
+    /// stopped or on the split transport. Reads the control mutex — for
+    /// the one-time start log only.
+    var routingDescription: String? {
+        Self.copyString { buffer, capacity in
+            noican_engine_routing_description(handle, buffer, capacity)
+        }
+    }
+
     /// The selectable model catalog, read from the Rust registry.
     static func models() -> [ModelInfo] {
         (0..<noican_model_count()).compactMap { index in

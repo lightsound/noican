@@ -191,6 +191,12 @@ impl Runtime {
         None
     }
 
+    /// Portable builds never route a render stream.
+    #[must_use]
+    pub const fn routing_description(&self) -> &'static str {
+        ""
+    }
+
     /// Portable builds never run an audio device.
     #[must_use]
     pub const fn is_running(&self) -> bool {

@@ -259,20 +259,35 @@ enum AudioDeviceCatalog {
     /// 48 kHz, 4 at 96 kHz, 2 at 192 kHz), and the snapshot predates the
     /// switch to 48 kHz that composition performs first.
     static func liveOutputChannelCount(_ device: AudioDeviceID) -> UInt32? {
-        readChannelCount(device, scope: kAudioObjectPropertyScopeOutput)
+        readStreamConfiguration(device, scope: kAudioObjectPropertyScopeOutput)?.channels
+    }
+
+    /// Live input channel count of a device, or nil when unreadable
+    /// (start-time diagnostics).
+    static func liveInputChannelCount(_ device: AudioDeviceID) -> UInt32? {
+        readStreamConfiguration(device, scope: kAudioObjectPropertyScopeInput)?.channels
+    }
+
+    /// Number of output streams a device exposes, or nil when unreadable.
+    /// An aggregate carries one stream per subdevice output; logged at
+    /// start so the AUHAL-reported channel count can be held against it.
+    static func liveOutputStreamCount(_ device: AudioDeviceID) -> UInt32? {
+        readStreamConfiguration(device, scope: kAudioObjectPropertyScopeOutput)?.streams
     }
 
     private static func channelCount(
         _ device: AudioDeviceID,
         scope: AudioObjectPropertyScope
     ) -> UInt32 {
-        readChannelCount(device, scope: scope) ?? 0
+        readStreamConfiguration(device, scope: scope)?.channels ?? 0
     }
 
-    private static func readChannelCount(
+    /// The stream configuration of one direction: how many streams the
+    /// device exposes there and their channels summed.
+    private static func readStreamConfiguration(
         _ device: AudioDeviceID,
         scope: AudioObjectPropertyScope
-    ) -> UInt32? {
+    ) -> (streams: UInt32, channels: UInt32)? {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyStreamConfiguration,
             mScope: scope,
@@ -307,9 +322,10 @@ enum AudioDeviceCatalog {
         let buffers = UnsafeMutableAudioBufferListPointer(
             storage.assumingMemoryBound(to: AudioBufferList.self)
         )
-        return buffers.reduce(0) { total, buffer in
+        let channels = buffers.reduce(UInt32(0)) { total, buffer in
             total + buffer.mNumberChannels
         }
+        return (streams: UInt32(buffers.count), channels: channels)
     }
 }
 

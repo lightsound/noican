@@ -103,6 +103,15 @@ uint64_t noican_engine_worker_block_max_ns(const void *handle);
 int32_t noican_engine_worker_realtime(const void *handle);
 void noican_engine_reset_debug_stats(void *handle);
 
+/* Diagnostic: how the running aggregate transport routes the engine
+ * output into the Aggregate Device (the aggregate's reported output
+ * channel count, the AUHAL channel map requested, and the map read back
+ * after the set). Copies the description as UTF-8 and returns the
+ * required byte count including the terminating NUL; 0 while stopped, on
+ * the split transport, or for a null handle. Takes the control mutex —
+ * for the one-time start log, not the poll path. */
+size_t noican_engine_routing_description(const void *handle, char *buffer, size_t capacity);
+
 size_t noican_engine_last_error(const void *handle, char *buffer, size_t capacity);
 
 size_t noican_model_count(void);

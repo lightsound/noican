@@ -55,6 +55,13 @@ final class EngineDiagnostics {
                 \(Self.isTranslated, privacy: .public)
                 """
             )
+            // Aggregate path only: where the engine output lands inside
+            // the aggregate, as AUHAL reports it. The map's effect is
+            // invisible otherwise, and this is the line to read when the
+            // virtual microphone records silence.
+            if let routing = engine.routingDescription {
+                Self.log.info("Aggregate output routing: \(routing, privacy: .public)")
+            }
         }
         let underruns = engine.outputUnderruns
         defer { lastUnderrunCount = underruns }

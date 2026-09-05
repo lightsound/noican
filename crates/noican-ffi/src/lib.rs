@@ -604,6 +604,42 @@ pub unsafe extern "C" fn noican_engine_monitor_device(handle: *const c_void) -> 
     })
 }
 
+/// Diagnostic: how the running aggregate transport routes the engine
+/// output into the Aggregate Device.
+///
+/// The description carries the output channel count AUHAL reports for
+/// the aggregate, the channel map requested, and the map read back after
+/// the set. Copies the description as UTF-8 and returns the required byte count
+/// including the terminating NUL; returns 0 while stopped, on the split
+/// transport (which needs no map), or for a null handle. Takes the
+/// control mutex (meant for the one-time start log, not the poll path).
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle. A non-null `buffer`
+/// must be writable for `capacity` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_engine_routing_description(
+    handle: *const c_void,
+    buffer: *mut c_char,
+    capacity: usize,
+) -> usize {
+    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+        return 0;
+    };
+    let Ok(state) = handle.state.lock() else {
+        return 0;
+    };
+    let Some(runtime) = state.runtime.as_ref() else {
+        return 0;
+    };
+    let description = runtime.routing_description();
+    if description.is_empty() {
+        return 0;
+    }
+    unsafe { copy_string(description, buffer, capacity) }
+}
+
 /// The preview monitor's state as one value.
 ///
 /// 0 = off (no monitor AUHAL, including a stopped engine and a null
@@ -1451,6 +1487,26 @@ mod tests {
                 "portable builds refuse the transport: {error}"
             );
         }
+        unsafe { noican_engine_destroy(handle) };
+    }
+
+    #[test]
+    fn routing_description_is_empty_and_null_safe_while_stopped() {
+        assert_eq!(
+            unsafe { noican_engine_routing_description(ptr::null(), ptr::null_mut(), 0) },
+            0
+        );
+        let handle = unsafe { noican_engine_create(ptr::null()) };
+        assert!(!handle.is_null());
+        assert_eq!(
+            unsafe { noican_engine_routing_description(handle, ptr::null_mut(), 0) },
+            0
+        );
+        let mut buffer: [c_char; 8] = [0; 8];
+        assert_eq!(
+            unsafe { noican_engine_routing_description(handle, buffer.as_mut_ptr(), buffer.len()) },
+            0
+        );
         unsafe { noican_engine_destroy(handle) };
     }
 

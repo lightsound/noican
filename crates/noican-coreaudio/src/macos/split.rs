@@ -269,6 +269,7 @@ pub(super) fn start(
         worker: Some(worker),
         running: true,
         monitor: monitor_control,
+        routing: String::new(),
     })
 }
 

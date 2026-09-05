@@ -1,6 +1,7 @@
 import CoreAudio
 import Foundation
 import NoicanState
+import os
 
 /// A created private aggregate together with the output layout the Rust
 /// transport must route into (see `VirtualOutputChannels` in
@@ -15,6 +16,10 @@ struct AggregateComposition {
 /// start task and teardown on the main actor, but never concurrently —
 /// `AppState.isBusy` serializes every operation that touches this object.
 final class AggregateDevice: @unchecked Sendable {
+    private static let log = Logger(
+        subsystem: "com.lightsound.noican", category: "engine-diagnostics"
+    )
+
     private(set) var identifier = AudioObjectID(kAudioObjectUnknown)
 
     deinit {
@@ -85,6 +90,22 @@ final class AggregateDevice: @unchecked Sendable {
         identifier = aggregate
         try waitUntilAlive()
         try configureTiming()
+        // Core Audio's own view of the composition, to hold against the
+        // channel count AUHAL reports (logged by EngineDiagnostics).
+        Self.log.info(
+            """
+            Aggregate composed: microphone "\(input.name, privacy: .public)" \
+            (in \(AudioDeviceCatalog.liveInputChannelCount(input.id) ?? 0, privacy: .public) / \
+            out \(virtualOutputChannels.firstChannel, privacy: .public)), \
+            virtual output "\(virtualOutput.name, privacy: .public)" \
+            (out \(virtualOutputChannels.channelCount, privacy: .public)); \
+            aggregate reports \
+            \(AudioDeviceCatalog.liveOutputChannelCount(aggregate) ?? 0, privacy: .public) \
+            output channel(s) in \
+            \(AudioDeviceCatalog.liveOutputStreamCount(aggregate) ?? 0, privacy: .public) \
+            stream(s)
+            """
+        )
         return AggregateComposition(
             deviceID: aggregate,
             virtualOutputChannels: virtualOutputChannels
