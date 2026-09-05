@@ -1,5 +1,15 @@
 # Result record — Dual-mono aggregate routing and level integrity, 2026-09-05
 
+> **Superseded remark (added 2026-09-05, PR #29).** The log excerpt
+> below notes "the split transport logs no routing line" at the
+> Bluetooth headset start. That was true of the PR #27 build; from PR
+> #29 on, the split transport sizes its render format from the virtual
+> output's channel count and logs `Split output routing: virtual output
+> channels N, render format requested N ch, render format read back
+> after initialize N ch` (native-rate checklist criterion 10). This is
+> the last record in which the line is legitimately absent. The results
+> table is left as recorded.
+
 Hardware run of the "Composite input/output microphone" (dual-mono
 criteria) and "Level integrity" procedures of
 [docs/macos-hardware-test.md](../macos-hardware-test.md) on the PR #27

@@ -1186,6 +1186,17 @@ Run the non-48 kHz microphone procedure above; the build passes when:
 9. **Split-path underruns**: with FastEnhancer-B the split transport
    logs zero underruns over 60+ s of continuous speech (this also
    closes criterion 4 of the output-underrun checklist below).
+10. **Split render format follows the device**: the `Split output
+    routing` line (procedure step 3) reports a virtual-output channel
+    count equal to the device's output channel count in Audio MIDI
+    Setup, and the requested and read-back render formats both equal
+    it; the recording carries the same signal on every channel of that
+    width. Record the line verbatim. This scores the one Core Audio
+    behaviour the render-format decision record
+    (`noican_coreaudio::routing`, "The split transport's render
+    format") rests on without prior hardware evidence: that the
+    device-side stream-format read behaves on an output-only AUHAL as
+    it does on the aggregate unit.
 
 ## Acceptance checklist (composite input/output microphone)
 
