@@ -18,8 +18,10 @@ void noican_engine_destroy(void *handle);
  * is the number of output channels ahead of the virtual output (the
  * microphone's own output channel count; 0 for the built-in microphone)
  * and virtual_output_channel_count the virtual output's channel count.
- * The transport routes the mono engine output to exactly that range with
- * an AUHAL channel map (silence everywhere else) and refuses to start
+ * The transport renders one client channel per virtual output channel
+ * (the mono engine signal duplicated into each — dual mono) and routes
+ * them to exactly that range with a one-to-one AUHAL channel map
+ * (silence everywhere else); it refuses to start
  * when the range does not end at the aggregate's last output channel or
  * is empty; the capture side (aggregate input channel 0 = microphone) is
  * unchanged. */

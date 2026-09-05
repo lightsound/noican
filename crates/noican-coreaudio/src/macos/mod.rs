@@ -23,6 +23,7 @@ use std::{
 use noican_core::SwitchingEngine;
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use crate::callback::{MAX_CALLBACK_FRAMES, capture_byte_size, render_geometry};
 use crate::monitor::{MonitorTee, fourcc};
 use crate::observe::{StreamLevels, WorkerBlockStats};
 use crate::routing::{VirtualOutputChannels, render_channel_map};
@@ -327,6 +328,12 @@ impl<T> Drop for ContextGuard<T> {
 struct CallbackContext {
     unit: AudioUnit,
     input: Producer<f32>,
+    /// Preallocated landing buffer for `AudioUnitRender` (mono,
+    /// [`MAX_CALLBACK_FRAMES`]). The render buffer AUHAL hands over
+    /// carries one channel per virtual-output channel, so it can no
+    /// longer double as the mono capture target the way it did while the
+    /// render stream was mono too.
+    capture: Vec<f32>,
     output: Consumer<f32>,
     faulted: Arc<AtomicBool>,
     samples_ready: Arc<DispatchSemaphore>,
@@ -478,9 +485,10 @@ impl Runtime {
     /// `BlackHole` output subdevice with drift compensation configured by the
     /// Swift control plane. `virtual_output` says where that subdevice's
     /// channels sit in the aggregate's output channel list (after any
-    /// output channels of the microphone itself); the mono engine output
-    /// is routed there with an explicit AUHAL channel map, see
-    /// [`crate::routing`].
+    /// output channels of the microphone itself); the engine output is
+    /// rendered as one client channel per virtual-output channel (dual
+    /// mono) and routed there with an explicit one-to-one AUHAL channel
+    /// map, see [`crate::routing`].
     ///
     /// `levels` receives per-block input/output peak meters from the
     /// inference worker for the lifetime of this runtime; the worker
@@ -519,6 +527,7 @@ impl Runtime {
         let context = ContextGuard::new(CallbackContext {
             unit: unit.raw(),
             input: input_producer,
+            capture: vec![0.0; MAX_CALLBACK_FRAMES],
             output: output_consumer,
             faulted: Arc::clone(&faulted),
             samples_ready: Arc::clone(&samples_ready),
@@ -817,10 +826,13 @@ fn create_auhal() -> Result<AudioUnit, CoreAudioError> {
     Ok(unit)
 }
 
-/// Configures the aggregate AUHAL: both directions enabled, mono 48 kHz
-/// client formats on both elements, and the output channel map that
-/// routes the mono render stream to `virtual_output`'s channels. Returns
-/// the routing description for [`Runtime::routing_description`].
+/// Configures the aggregate AUHAL: both directions enabled, a mono 48 kHz
+/// capture client format, a 48 kHz render client format with one channel
+/// per virtual-output channel (the callback duplicates the engine sample
+/// into each), the frame bound that sizes the callback's capture landing
+/// buffer, and the one-to-one output channel map that places the render
+/// stream on `virtual_output`'s channels. Returns the routing
+/// description for [`Runtime::routing_description`].
 fn configure_auhal(
     unit: AudioUnit,
     device: AudioDeviceId,
@@ -851,46 +863,71 @@ fn configure_auhal(
         &device,
         "select Aggregate Device",
     )?;
-    let format = pcm_format(1);
+    let capture_format = pcm_format(1);
     set_property(
         unit,
         AUDIO_UNIT_PROPERTY_STREAM_FORMAT,
         AUDIO_UNIT_SCOPE_OUTPUT,
         INPUT_BUS,
-        &format,
+        &capture_format,
         "set AUHAL capture format",
     )?;
+    // Dual mono: as many client channels as the virtual output has, so a
+    // one-to-one channel map can feed every one of them (crate::routing).
+    // A 1-channel virtual output yields the mono format of old.
+    let render_format = pcm_format(virtual_output.count());
     set_property(
         unit,
         AUDIO_UNIT_PROPERTY_STREAM_FORMAT,
         AUDIO_UNIT_SCOPE_INPUT,
         OUTPUT_BUS,
-        &format,
+        &render_format,
         "set AUHAL render format",
     )?;
+    set_max_frames_per_slice(unit, "set AUHAL frame bound")?;
     set_render_channel_map(unit, virtual_output)
 }
 
-/// Routes the mono render stream to the virtual output's channels inside
-/// the aggregate device (see [`crate::routing`] for the bug and the
-/// decision).
+/// Bounds the unit's callback size to [`MAX_CALLBACK_FRAMES`] so the
+/// preallocated capture landing buffer always suffices (the callback
+/// never allocates; see [`crate::callback`]).
+fn set_max_frames_per_slice(
+    unit: AudioUnit,
+    operation: &'static str,
+) -> Result<(), CoreAudioError> {
+    let max_frames = u32::try_from(MAX_CALLBACK_FRAMES)
+        .map_err(|error| CoreAudioError::Worker(format!("frame bound overflow: {error}")))?;
+    set_property(
+        unit,
+        AUDIO_UNIT_PROPERTY_MAXIMUM_FRAMES_PER_SLICE,
+        AUDIO_UNIT_SCOPE_GLOBAL,
+        OUTPUT_BUS,
+        &max_frames,
+        operation,
+    )
+}
+
+/// Places the render stream (one client channel per virtual-output
+/// channel) on the virtual output's channels inside the aggregate device
+/// (see [`crate::routing`] for the bug and the decision).
 ///
 /// The recipe follows Apple's AUHAL notes ("Channel Maps", reproduced
 /// verbatim in `PortAudio`'s `src/hostapi/coreaudio/notes.txt`): for
 /// output, the map is an `SInt32` array sized by the device's channel
 /// count — "Get the Format of the AUHAL's output Element == 0" — with
-/// every entry `-1` except `map[deviceOutputChannel] = clientChannel`.
+/// every entry `-1` except `map[deviceOutputChannel] = clientChannel`,
+/// each client channel named once.
 /// That device-side format is read from `kAudioUnitScope_Output`,
 /// element 0 (the only place it lives; TN2091 notes it is never
-/// writable, so the mono client format set on the input scope cannot
-/// leak into the read). The map is set on that same scope and element:
+/// writable, so the client format set on the input scope cannot leak
+/// into the read). The map is set on that same scope and element:
 /// the property is documented for the input and output scopes, and
 /// `PortAudio`'s Core Audio host API (`pa_mac_core.c`) — the shipping
 /// implementation this was checked against — sets the output-element
 /// map on the output scope, after the stream formats and before
 /// `AudioUnitInitialize`, which is the order used here. AUHAL's default
-/// map (identity: client 0 → device 0) is what sent the engine output
-/// into a headphone-equipped microphone's own outputs.
+/// map (identity: client `i` → device `i`) is what sent the engine
+/// output into a headphone-equipped microphone's own outputs.
 ///
 /// The capture direction keeps AUHAL's default map (client channel 0 ←
 /// device input channel 0 = the microphone, which is the first
@@ -1355,6 +1392,15 @@ fn saturating_elapsed_ns(started: std::time::Instant) -> u64 {
     u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
 }
 
+/// Render callback of the aggregate AUHAL: captures the microphone frames
+/// of this cycle into the preallocated mono landing buffer, pushes them to
+/// the input ring, and fills the (one channel per virtual-output channel)
+/// render buffer from the output ring, duplicating each engine sample
+/// into every channel of its frame — the same dual-mono shape the split
+/// transport's output callback and the preview monitor produce.
+/// Real-time rules (docs/tech-research.md §9): no allocation, no locks;
+/// a callback larger than the frame bound faults instead of allocating;
+/// ring overrun drops samples; underrun renders silence.
 unsafe extern "C" fn render_callback(
     context: *mut c_void,
     action_flags: *mut AudioUnitRenderActionFlags,
@@ -1367,16 +1413,6 @@ unsafe extern "C" fn render_callback(
         return PARAM_ERR;
     }
     let context = unsafe { &mut *context.cast::<CallbackContext>() };
-    let status = unsafe {
-        AudioUnitRender(
-            context.unit,
-            action_flags,
-            timestamp,
-            INPUT_BUS,
-            frame_count,
-            data,
-        )
-    };
     let buffer_list = unsafe { &mut *data };
     if buffer_list.number_buffers == 0 {
         context.faulted.store(true, Ordering::Release);
@@ -1387,20 +1423,44 @@ unsafe extern "C" fn render_callback(
         context.faulted.store(true, Ordering::Release);
         return PARAM_ERR;
     }
-    let available = usize::try_from(buffer.data_byte_size)
-        .unwrap_or(0)
-        .saturating_div(size_of::<f32>());
-    let requested = usize::try_from(frame_count).unwrap_or(0);
-    let sample_count = available.min(requested);
+    let geometry = render_geometry(buffer.data_byte_size, buffer.number_channels, frame_count);
     let samples =
-        unsafe { std::slice::from_raw_parts_mut(buffer.data.cast::<f32>(), sample_count) };
+        unsafe { std::slice::from_raw_parts_mut(buffer.data.cast::<f32>(), geometry.samples()) };
+    let frames = usize::try_from(frame_count).unwrap_or(0);
+    let Some(capture_bytes) = capture_byte_size(frames, context.capture.len()) else {
+        // Cannot happen while kAudioUnitProperty_MaximumFramesPerSlice
+        // holds; never allocate on the audio thread to compensate. The
+        // render buffer is silenced first so nothing stale can reach the
+        // virtual output should AUHAL play it despite the error.
+        samples.fill(0.0);
+        context.faulted.store(true, Ordering::Release);
+        return PARAM_ERR;
+    };
+    let mut capture_list = AudioBufferList {
+        number_buffers: 1,
+        buffers: [AudioBuffer {
+            number_channels: 1,
+            data_byte_size: capture_bytes,
+            data: context.capture.as_mut_ptr().cast(),
+        }],
+    };
+    let status = unsafe {
+        AudioUnitRender(
+            context.unit,
+            action_flags,
+            timestamp,
+            INPUT_BUS,
+            frame_count,
+            &raw mut capture_list,
+        )
+    };
     if status != NO_ERR {
         samples.fill(0.0);
         context.faulted.store(true, Ordering::Release);
         return NO_ERR;
     }
-    for sample in samples.iter().copied() {
-        let _ignored = context.input.push(sample);
+    for sample in &context.capture[..frames] {
+        let _ignored = context.input.push(*sample);
     }
     context
         .frames
@@ -1409,15 +1469,16 @@ unsafe extern "C" fn render_callback(
     context.samples_ready.signal();
     let was_primed = context.output_primed;
     let mut popped_any = false;
-    for sample in samples {
-        match context.output.pop() {
+    for frame in samples.chunks_exact_mut(geometry.channels) {
+        let value = match context.output.pop() {
             Ok(value) => {
-                *sample = value;
                 popped_any = true;
+                value
             }
-            Err(_empty) => {
-                *sample = 0.0;
-            }
+            Err(_empty) => 0.0,
+        };
+        for channel in frame {
+            *channel = value;
         }
     }
     if popped_any {

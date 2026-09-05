@@ -104,6 +104,12 @@ public enum AppEvent: Hashable, Sendable {
     /// The health poll saw no frames for three consecutive seconds while
     /// running (unplugged mic, coreaudiod restart, post-sleep stall).
     case audioStalled
+    /// The shell read the Noican virtual output device's own volume and
+    /// mute controls (at start completion and on every health-poll tick)
+    /// and classified them. The reducer only records the reading (the
+    /// notice under the mode control is its projection); it never asks
+    /// for the level to be changed (see `VirtualOutputLevel`).
+    case virtualOutputLevelObserved(VirtualOutputLevel)
     /// Reading the device list itself failed.
     case deviceQueryFailed(String)
 }

@@ -152,8 +152,10 @@ pub unsafe extern "C" fn noican_engine_destroy(handle: *mut c_void) {
 /// output]`, so the first index is the number of output channels the
 /// microphone itself has (0 for the built-in microphone, 2 for a USB
 /// microphone with a stereo headphone jack) and the count is the virtual
-/// output's channel count. The transport routes the mono engine output
-/// there with an explicit AUHAL channel map and refuses to start when
+/// output's channel count. The transport renders one client channel per
+/// virtual output channel (the mono engine signal duplicated into each)
+/// and routes them there with a one-to-one AUHAL channel map; it refuses
+/// to start when
 /// the range does not end at the aggregate's last output channel
 /// (`noican_coreaudio::routing`). An empty range is rejected here,
 /// before any weight download.
