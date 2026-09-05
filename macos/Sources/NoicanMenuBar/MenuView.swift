@@ -115,8 +115,9 @@ struct MenuView: View {
     /// The single top-level control. Preview = engine + self-monitor;
     /// On = engine only. Both feed the virtual microphone. All prose
     /// feedback — engine failures, refused Preview presses (cleared live
-    /// once the output is safe), preview failures and feedback trips —
-    /// renders below the control, where changing height cannot move it.
+    /// once the output is safe), preview failures and feedback trips, and
+    /// the virtual output's turned-down/muted notice — renders below the
+    /// control, where changing height cannot move it.
     private var modePicker: some View {
         VStack(alignment: .leading, spacing: 6) {
             ModePicker(
@@ -143,6 +144,16 @@ struct MenuView: View {
                 Text(message)
                     .font(.caption2)
                     .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            // The virtual output device's own volume/mute (System
+            // Settings › Sound › Input): the engine runs fine, consumers
+            // just hear it quietly — a warning, not an engine failure, so
+            // orange rather than red, and never acted on automatically.
+            if let notice = model.messages.virtualOutputLevelNotice {
+                Text(notice)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

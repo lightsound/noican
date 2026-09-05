@@ -43,7 +43,9 @@ final class AppState: ObservableObject {
 
     /// Full Core Audio device snapshot (the reducer sees the pure
     /// `InputDevice` projection; effects need the identifiers here).
-    private var allDevices: [AudioDeviceInfo] = []
+    /// Internal for the extensions in sibling files (the virtual-output
+    /// level check); written only by `refreshDevices()`.
+    private(set) var allDevices: [AudioDeviceInfo] = []
     private let aggregate = AggregateDevice()
     private var engine: RustEngine?
     /// Watches for engine faults/unexpected stops while a transport is
@@ -156,8 +158,9 @@ final class AppState: ObservableObject {
 
     /// The single writer of `model`: reduce, publish, persist changed
     /// preferences, perform effects, then re-derive the pollers from the
-    /// new state.
-    private func dispatch(_ event: AppEvent) {
+    /// new state. Internal (not private) so the extensions in sibling
+    /// files can dispatch their observations through the same path.
+    func dispatch(_ event: AppEvent) {
         let previous = model
         let (newModel, effects) = AppReducer.reduce(model, event)
         model = newModel
@@ -454,6 +457,7 @@ extension AppState {
         // landing during a busy transition is dropped by the listener's
         // busy guard, so the poll re-checks once per second.
         checkInputRate()
+        checkVirtualOutputLevel()
         if engine.isFaulted {
             dispatch(.engineFaulted)
             return
@@ -656,10 +660,13 @@ extension AppState {
     /// Completion entry point for start effects: records the capture
     /// rate the split transport was built around (nil on the aggregate
     /// path or on failure) as the baseline for the nominal-rate
-    /// listener, then dispatches the outcome.
+    /// listener, then dispatches the outcome and reads the virtual
+    /// output's level controls once right away (the health poll's first
+    /// tick is a second out).
     private func finishStart(captureRate: Double?, error: String?) {
         activeCaptureRate = error == nil ? captureRate : nil
         dispatch(.startCompleted(error: error))
+        checkVirtualOutputLevel()
     }
 
     /// Keeps the nominal-rate listener in lockstep with the transport:

@@ -126,19 +126,31 @@ public struct MessageSlots: Hashable, Sendable {
     /// the toggle to the re-read real status. Cleared by the next toggle
     /// attempt and by a later clean completion.
     public var launchAtLoginError: String?
+    /// The Noican virtual output device's own volume control is turned
+    /// down, or its mute is on, so consumers hear the processed voice
+    /// quietly or not at all (`VirtualOutputLevel.notice`). Shown under
+    /// the mode control while a transport is live; maintained by
+    /// `virtualOutputLevelObserved` (set while the condition holds,
+    /// cleared the moment a reading is nominal) and cleared by any
+    /// engine teardown — the poll that keeps it truthful only runs while
+    /// a transport is live. Never acted on automatically: the level is
+    /// the user's (or another app's) setting to change.
+    public var virtualOutputLevelNotice: String?
 
     public init(
         previewError: String? = nil,
         previewUnavailableReason: String? = nil,
         microphoneError: String? = nil,
         modelError: String? = nil,
-        launchAtLoginError: String? = nil
+        launchAtLoginError: String? = nil,
+        virtualOutputLevelNotice: String? = nil
     ) {
         self.previewError = previewError
         self.previewUnavailableReason = previewUnavailableReason
         self.microphoneError = microphoneError
         self.modelError = modelError
         self.launchAtLoginError = launchAtLoginError
+        self.virtualOutputLevelNotice = virtualOutputLevelNotice
     }
 }
 
