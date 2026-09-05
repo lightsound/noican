@@ -252,10 +252,27 @@ enum AudioDeviceCatalog {
         return string as String
     }
 
+    /// Live output channel count of a device, or nil when its stream
+    /// configuration is unreadable. Read at aggregate-composition time
+    /// rather than taken from the device snapshot: the count can depend
+    /// on the sample rate (ADAT/S-MUX interfaces carry 8 channels at
+    /// 48 kHz, 4 at 96 kHz, 2 at 192 kHz), and the snapshot predates the
+    /// switch to 48 kHz that composition performs first.
+    static func liveOutputChannelCount(_ device: AudioDeviceID) -> UInt32? {
+        readChannelCount(device, scope: kAudioObjectPropertyScopeOutput)
+    }
+
     private static func channelCount(
         _ device: AudioDeviceID,
         scope: AudioObjectPropertyScope
     ) -> UInt32 {
+        readChannelCount(device, scope: scope) ?? 0
+    }
+
+    private static func readChannelCount(
+        _ device: AudioDeviceID,
+        scope: AudioObjectPropertyScope
+    ) -> UInt32? {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyStreamConfiguration,
             mScope: scope,
@@ -266,7 +283,7 @@ enum AudioDeviceCatalog {
             AudioObjectGetPropertyDataSize(device, &address, 0, nil, &byteCount) == noErr,
             byteCount >= UInt32(MemoryLayout<AudioBufferList>.size)
         else {
-            return 0
+            return nil
         }
         let storage = UnsafeMutableRawPointer.allocate(
             byteCount: Int(byteCount),
@@ -285,7 +302,7 @@ enum AudioDeviceCatalog {
                 storage
             ) == noErr
         else {
-            return 0
+            return nil
         }
         let buffers = UnsafeMutableAudioBufferListPointer(
             storage.assumingMemoryBound(to: AudioBufferList.self)

@@ -468,7 +468,13 @@ at channels A..B` means the composed layout and the device disagree;
 record N, A, B, the device's Audio MIDI Setup input/output channel
 counts, and the aggregate's channel count. This refusal is deliberate
 (the alternative is a guessed map that may misroute silently); do not
-characterize the path as working.
+characterize the path as working. The counts are re-read after the
+48 kHz switch and immediately before the aggregate is composed, so a
+rate-dependent channel count (ADAT/S-MUX interfaces expose 8 channels
+at 48 kHz but 4 at 96 kHz) is not a cause of this refusal; if it still
+appears, the first number to question is N — whether AUHAL reports the
+aggregate's total output channels or only its first stream, which no
+primary source states outright.
 
 ## Preview (self-monitor)
 

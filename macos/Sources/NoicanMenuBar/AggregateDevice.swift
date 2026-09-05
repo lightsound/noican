@@ -41,12 +41,18 @@ final class AggregateDevice: @unchecked Sendable {
         // (clock master; aggregate input channel 0 must be the
         // microphone, not the loopback's own input), and the output
         // layout handed to the transport is derived from this same list
-        // so the two can never disagree.
+        // so the two can never disagree. Channel counts are re-read
+        // *now*, after the 48 kHz switch above: on ADAT/S-MUX interfaces
+        // the output channel count depends on the sample rate, so the
+        // device-refresh snapshot may describe a state the aggregate is
+        // not composed from. The snapshot is only the fallback for an
+        // unreadable configuration (the Rust side still checks the
+        // result against the aggregate's own channel count).
         let ahead = [input]
         let order = ahead + [virtualOutput]
         let virtualOutputChannels = VirtualOutputChannels(
-            outputChannelsAhead: ahead.map(\.outputChannels),
-            virtualOutputChannels: virtualOutput.outputChannels
+            outputChannelsAhead: ahead.map(Self.liveOutputChannels),
+            virtualOutputChannels: Self.liveOutputChannels(virtualOutput)
         )
         let subdevices: [[String: Any]] = order.map { device -> [String: Any] in
             [
@@ -91,6 +97,12 @@ final class AggregateDevice: @unchecked Sendable {
         }
         AudioHardwareDestroyAggregateDevice(identifier)
         identifier = AudioObjectID(kAudioObjectUnknown)
+    }
+
+    /// Output channel count of `device` as it is right now, falling back
+    /// to the refresh-time snapshot when the live read fails.
+    private static func liveOutputChannels(_ device: AudioDeviceInfo) -> UInt32 {
+        AudioDeviceCatalog.liveOutputChannelCount(device.id) ?? device.outputChannels
     }
 
     /// Switches `device` to 48 kHz (polling the asynchronous change),
