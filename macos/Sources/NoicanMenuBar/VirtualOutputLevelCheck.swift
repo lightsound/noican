@@ -59,7 +59,13 @@ enum VirtualOutputLevelProbe {
                 continue
             }
             var byteCount = UInt32(MemoryLayout<T>.size)
-            if AudioObjectGetPropertyData(device, &address, 0, nil, &byteCount, &value) == noErr {
+            // An explicit typed pointer: `&value` on a generic inout would
+            // form a raw pointer to a possibly reference-holding `T`,
+            // which the compiler (rightly) warns about.
+            let status = withUnsafeMutablePointer(to: &value) { pointer in
+                AudioObjectGetPropertyData(device, &address, 0, nil, &byteCount, pointer)
+            }
+            if status == noErr {
                 return true
             }
         }
