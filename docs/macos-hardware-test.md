@@ -338,7 +338,20 @@ microphone list must show the same value.
    reach `Running` (green indicator). No Aggregate Device appears in
    Audio MIDI Setup for this path (two AUHAL instances instead). The
    one-time transport diagnostics line in Console must show
-   `worker realtime scheduling true`.
+   `worker realtime scheduling true`, and it is followed by the split
+   transport's routing line — `Split output routing: virtual output
+   channels N, render format requested N ch, render format read back
+   after initialize N ch` — where N is the virtual output's output
+   channel count as AUHAL reports it for the output-only unit (2 for
+   the current Noican driver and for stock BlackHole 2ch; 1 for a
+   1-channel driver). The render format is sized from that count
+   rather than fixed at two channels, so all three numbers must agree
+   and match the device's channel count in Audio MIDI Setup; record the
+   line verbatim. A start refusal reading `virtual output routing
+   failed: the virtual output device reports no output channels (split
+   transport)` means AUHAL reported zero channels for the device — the
+   transport refuses rather than guessing a width; record the device's
+   Audio MIDI Setup channel counts.
 4. Record 30+ seconds from the virtual device in QuickTime: the
    recording must be 48 kHz, non-silent, and intelligible. On a
    telephony profile expect telephony bandwidth (the source is 8–16 kHz
