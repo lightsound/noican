@@ -507,7 +507,7 @@ impl Runtime {
     ) -> Result<Self, CoreAudioError> {
         let samples_ready = Arc::new(DispatchSemaphore::new()?);
         let mut unit = AuhalUnit::create()?;
-        let routing = configure_auhal(unit.raw(), aggregate_device, virtual_output)?;
+        let requested_routing = configure_auhal(unit.raw(), aggregate_device, virtual_output)?;
 
         let (input_producer, input_consumer) = RingBuffer::new(RING_CAPACITY);
         let (output_producer, output_consumer) = RingBuffer::new(RING_CAPACITY);
@@ -533,6 +533,10 @@ impl Runtime {
             "AudioUnitSetProperty(render callback)",
         )?;
         unit.initialize()?;
+        let routing = format!(
+            "{requested_routing}, {}",
+            describe_applied_channel_map(unit.raw())
+        );
 
         let workgroup = audio_workgroup(unit.raw())?;
         let (monitor_control, tee) = monitor::monitor_pair(monitor_state);
@@ -775,10 +779,12 @@ impl Runtime {
     /// Diagnostic: how the render stream is routed into the device on the
     /// aggregate transport — the output channel count AUHAL reports for
     /// the aggregate, the channel map requested, and the map read back
-    /// after the set (a read-back that differs from the request means
-    /// AUHAL did not keep the map). Empty on the split transport. Meant
-    /// for the one-time start log on hardware, where the map's effect
-    /// cannot otherwise be observed.
+    /// after `AudioUnitInitialize` (the point where AUHAL reconciles its
+    /// configuration with the device; whether it may alter a map there is
+    /// not documented, which is why the read-back is recorded rather
+    /// than assumed). Empty on the split transport. Meant for the
+    /// one-time start log on hardware, where the map's effect cannot
+    /// otherwise be observed.
     #[must_use]
     pub fn routing_description(&self) -> &str {
         &self.routing
@@ -909,13 +915,34 @@ fn set_render_channel_map(
         },
         "set AUHAL render channel map",
     )?;
-    // Read the map back for the start-time diagnostics: on hardware the
-    // map's effect is otherwise invisible, and a read-back that differs
-    // from the request is the first thing to look at when the virtual
-    // microphone stays silent.
-    let mut applied = vec![0_i32; map.len()];
+    Ok(format!(
+        "aggregate output channels {device_channels}, virtual output at channels {}..{}, \
+         channel map requested {map:?}",
+        virtual_output.first(),
+        virtual_output.end()
+    ))
+}
+
+/// Reads the output channel map back for the start-time diagnostics.
+/// Called after `AudioUnitInitialize`, the point where AUHAL reconciles
+/// its configuration with the device: before it, a read would only echo
+/// the array the setter just accepted. On hardware the map's effect is
+/// otherwise invisible, so this — together with the requested map — is
+/// the first thing to look at when the virtual microphone stays silent.
+/// Never fails the start: an unreadable map is reported as such.
+fn describe_applied_channel_map(unit: AudioUnit) -> String {
+    let Ok(device_channels) = device_output_channels(unit) else {
+        return "channel map read back: device format unreadable".to_owned();
+    };
+    let Ok(len) = usize::try_from(device_channels) else {
+        return "channel map read back: channel count overflow".to_owned();
+    };
+    let Ok(byte_size) = channel_map_bytes(len) else {
+        return "channel map read back: size overflow".to_owned();
+    };
+    let mut applied = vec![0_i32; len];
     let mut applied_size = byte_size;
-    let read_back = unsafe {
+    let status = unsafe {
         AudioUnitGetProperty(
             unit,
             AUDIO_OUTPUT_UNIT_PROPERTY_CHANNEL_MAP,
@@ -925,21 +952,18 @@ fn set_render_channel_map(
             &raw mut applied_size,
         )
     };
+    if status != NO_ERR {
+        return format!("channel map read back after initialize: unreadable (OSStatus {status})");
+    }
     let applied_len = usize::try_from(applied_size)
         .unwrap_or(0)
         .saturating_div(size_of::<i32>())
         .min(applied.len());
-    let applied_text = if read_back == NO_ERR {
-        format!("{:?}", &applied[..applied_len])
-    } else {
-        format!("unreadable (OSStatus {read_back})")
-    };
-    Ok(format!(
-        "aggregate output channels {device_channels}, virtual output at channels {}..{}, \
-         channel map requested {map:?}, read back {applied_text}",
-        virtual_output.first(),
-        virtual_output.end()
-    ))
+    format!(
+        "channel map read back after initialize {:?} (device output channels then \
+         {device_channels})",
+        &applied[..applied_len]
+    )
 }
 
 /// Byte size of a channel map with `entries` `i32` slots.

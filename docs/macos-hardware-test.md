@@ -425,9 +425,23 @@ microphone's outputs never precede the virtual output there.
    the system default output.
 3. Select the composite device as the microphone, select `Passthrough`
    or `FastEnhancer-B 48k`, then select On. The engine must reach
-   `Running`; the private aggregate in Audio MIDI Setup must list the
-   microphone first and the Noican/BlackHole device second, with an
-   output side of (microphone outputs + 2) channels.
+   `Running`. The private aggregate is hidden from Audio MIDI Setup, so
+   read its composition from Console instead (subsystem
+   `com.lightsound.noican`, category `engine-diagnostics`, or the
+   `log stream` command from the underrun section) — two info lines
+   appear on every aggregate-path start:
+   - `Aggregate composed: microphone "<name>" (in X / out Y), virtual
+     output "<name>" (out Z); aggregate reports W output channel(s) in
+     S stream(s)` — Core Audio's view, written when the aggregate is
+     created (Y is the microphone's own output channel count, W must be
+     Y + Z, and S the number of subdevices contributing outputs);
+   - `Aggregate output routing: aggregate output channels N, virtual
+     output at channels A..B, channel map requested [...], channel map
+     read back after initialize [...]` — AUHAL's view, written about a
+     second after start. N must equal W, `A..B` must be `Y..Y+Z`, the
+     requested map must be `-1` everywhere except a `0` at index A, and
+     the read-back must equal the request.
+   Record both lines verbatim in the result record.
 4. Record 30+ seconds of speech from the Noican virtual microphone in
    QuickTime (or CleanShot / OBS). The recording must be non-silent,
    intelligible, and — at 100% strength — processed (materially differs
@@ -466,7 +480,10 @@ A start refusal reading `virtual output routing failed: the aggregate
 device reports N output channel(s), but the virtual output was expected
 at channels A..B` means the composed layout and the device disagree;
 record N, A, B, the device's Audio MIDI Setup input/output channel
-counts, and the aggregate's channel count. This refusal is deliberate
+counts, and the `Aggregate composed` line (the only one of the two
+Console lines that prints on a refusal — there is no running transport,
+so the `Aggregate output routing` line never appears; N, A and B are in
+the refusal message itself). This refusal is deliberate
 (the alternative is a guessed map that may misroute silently); do not
 characterize the path as working. The counts are re-read after the
 48 kHz switch and immediately before the aggregate is composed, so a

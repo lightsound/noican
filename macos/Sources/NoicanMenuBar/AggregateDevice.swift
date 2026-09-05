@@ -90,25 +90,38 @@ final class AggregateDevice: @unchecked Sendable {
         identifier = aggregate
         try waitUntilAlive()
         try configureTiming()
-        // Core Audio's own view of the composition, to hold against the
-        // channel count AUHAL reports (logged by EngineDiagnostics).
-        Self.log.info(
+        let composition = AggregateComposition(
+            deviceID: aggregate,
+            virtualOutputChannels: virtualOutputChannels
+        )
+        Self.logComposition(composition, input: input, virtualOutput: virtualOutput)
+        return composition
+    }
+
+    /// Core Audio's own view of the composition, logged once per start
+    /// to hold against the channel count AUHAL reports (the routing line
+    /// logged by `EngineDiagnostics`). Same subsystem/category as the
+    /// other engine diagnostics.
+    private static func logComposition(
+        _ composition: AggregateComposition,
+        input: AudioDeviceInfo,
+        virtualOutput: AudioDeviceInfo
+    ) {
+        let layout = composition.virtualOutputChannels
+        let aggregate = composition.deviceID
+        log.info(
             """
             Aggregate composed: microphone "\(input.name, privacy: .public)" \
             (in \(AudioDeviceCatalog.liveInputChannelCount(input.id) ?? 0, privacy: .public) / \
-            out \(virtualOutputChannels.firstChannel, privacy: .public)), \
+            out \(layout.firstChannel, privacy: .public)), \
             virtual output "\(virtualOutput.name, privacy: .public)" \
-            (out \(virtualOutputChannels.channelCount, privacy: .public)); \
+            (out \(layout.channelCount, privacy: .public)); \
             aggregate reports \
             \(AudioDeviceCatalog.liveOutputChannelCount(aggregate) ?? 0, privacy: .public) \
             output channel(s) in \
             \(AudioDeviceCatalog.liveOutputStreamCount(aggregate) ?? 0, privacy: .public) \
             stream(s)
             """
-        )
-        return AggregateComposition(
-            deviceID: aggregate,
-            virtualOutputChannels: virtualOutputChannels
         )
     }
 
