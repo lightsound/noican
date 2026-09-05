@@ -12,10 +12,13 @@
 //! split transport — a native-rate capture AUHAL plus a 48 kHz virtual-
 //! output AUHAL bridged by a drift-compensating resampler — for
 //! telephony-profile microphones such as Bluetooth headsets (issue #7).
-//! On the aggregate path the mono engine output is steered to the virtual
-//! output's channels with an explicit AUHAL channel map ([`routing`]), so
-//! a microphone with its own output channels (a headphone jack) does not
-//! capture the engine output ahead of the virtual output.
+//! On the aggregate path the engine output is rendered as one client
+//! channel per virtual-output channel (the mono engine sample duplicated
+//! into each — dual mono, like the split path and the monitor) and
+//! steered to the virtual output's channels with an explicit one-to-one
+//! AUHAL channel map ([`routing`]), so a microphone with its own output
+//! channels (a headphone jack) does not capture the engine output ahead
+//! of the virtual output.
 //!
 //! Real-time rules (docs/tech-research.md §9): the Core Audio render
 //! callback only calls `AudioUnitRender`, moves `f32` samples through
@@ -33,6 +36,7 @@ use std::sync::Arc;
 #[cfg(not(target_os = "macos"))]
 use noican_core::SwitchingEngine;
 
+pub mod callback;
 pub mod monitor;
 pub mod observe;
 pub mod routing;
@@ -122,7 +126,7 @@ pub enum CoreAudioError {
     /// Message shape: see [`CoreAudioError::MonitorLoopbackOutput`].
     #[error("the built-in speakers would feed back")]
     MonitorSpeakerOutput,
-    /// The mono engine output could not be routed to the virtual output's
+    /// The engine output could not be routed to the virtual output's
     /// channels inside the Aggregate Device: the layout the control plane
     /// composed does not match the channel count the device reports, or
     /// the described range is empty (see [`routing`]). Refusing to start

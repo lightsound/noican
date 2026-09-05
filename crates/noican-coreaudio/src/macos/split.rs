@@ -48,27 +48,23 @@ use std::thread;
 use noican_core::{DriftServo, InputResampler, SwitchingEngine};
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use crate::callback::MAX_CALLBACK_FRAMES;
 use crate::monitor::MonitorTee;
 use crate::observe::{StreamLevels, WorkerBlockStats};
 use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
 
 use super::{
     AUDIO_OUTPUT_UNIT_PROPERTY_CURRENT_DEVICE, AUDIO_OUTPUT_UNIT_PROPERTY_ENABLE_IO,
-    AUDIO_OUTPUT_UNIT_PROPERTY_SET_INPUT_CALLBACK, AUDIO_UNIT_PROPERTY_MAXIMUM_FRAMES_PER_SLICE,
-    AUDIO_UNIT_PROPERTY_STREAM_FORMAT, AUDIO_UNIT_SCOPE_GLOBAL, AUDIO_UNIT_SCOPE_INPUT,
-    AUDIO_UNIT_SCOPE_OUTPUT, AudioBuffer, AudioBufferList, AudioDeviceId, AudioUnit,
-    AudioUnitRender, AudioUnitRenderActionFlags, AudioUnitRenderCallback, AudioUnitSetProperty,
-    AuhalUnit, ContextGuard, DispatchSemaphore, INPUT_BUS, NO_ERR, OSStatus, OUTPUT_BUS, PARAM_ERR,
-    RING_CAPACITY, Runtime, Transport, WORKER_WAIT_NS, WorkgroupGuard, attach_render_callback,
-    audio_workgroup, check_status, monitor, pcm_format, pcm_format_at,
-    promote_current_thread_to_realtime, run_block, saturating_elapsed_ns, set_property, size_u32,
-    start_output_unit, stop_output_unit,
+    AUDIO_OUTPUT_UNIT_PROPERTY_SET_INPUT_CALLBACK, AUDIO_UNIT_PROPERTY_STREAM_FORMAT,
+    AUDIO_UNIT_SCOPE_GLOBAL, AUDIO_UNIT_SCOPE_INPUT, AUDIO_UNIT_SCOPE_OUTPUT, AudioBuffer,
+    AudioBufferList, AudioDeviceId, AudioUnit, AudioUnitRender, AudioUnitRenderActionFlags,
+    AudioUnitRenderCallback, AudioUnitSetProperty, AuhalUnit, ContextGuard, DispatchSemaphore,
+    INPUT_BUS, NO_ERR, OSStatus, OUTPUT_BUS, PARAM_ERR, RING_CAPACITY, Runtime, Transport,
+    WORKER_WAIT_NS, WorkgroupGuard, attach_render_callback, audio_workgroup, check_status, monitor,
+    pcm_format, pcm_format_at, promote_current_thread_to_realtime, run_block,
+    saturating_elapsed_ns, set_max_frames_per_slice, set_property, size_u32, start_output_unit,
+    stop_output_unit,
 };
-
-/// Largest callback the capture unit may deliver, in frames. Set as
-/// `kAudioUnitProperty_MaximumFramesPerSlice` and used to size the
-/// preallocated render buffer, so the capture callback never allocates.
-const MAX_CAPTURE_FRAMES: usize = 4_096;
 
 /// Native-rate samples drained from the capture ring per worker pass
 /// (also the resampler's preallocation unit): 480 native samples cover
@@ -104,7 +100,7 @@ pub(super) struct CaptureContext {
     unit: AudioUnit,
     input: Producer<f32>,
     /// Preallocated landing buffer for `AudioUnitRender` (mono,
-    /// [`MAX_CAPTURE_FRAMES`]).
+    /// [`MAX_CALLBACK_FRAMES`]).
     buffer: Vec<f32>,
     faulted: Arc<AtomicBool>,
     samples_ready: Arc<DispatchSemaphore>,
@@ -189,7 +185,7 @@ pub(super) fn start(
     let capture_context = ContextGuard::new(CaptureContext {
         unit: capture_unit.raw(),
         input: input_producer,
-        buffer: vec![0.0; MAX_CAPTURE_FRAMES],
+        buffer: vec![0.0; MAX_CALLBACK_FRAMES],
         faulted: Arc::clone(&faulted),
         samples_ready: Arc::clone(&samples_ready),
         frames: Arc::clone(&frames),
@@ -345,16 +341,7 @@ fn configure_capture_auhal(
     )?;
     // Bound the callback size so the preallocated render buffer always
     // suffices (the callback never allocates).
-    let max_frames = u32::try_from(MAX_CAPTURE_FRAMES)
-        .map_err(|error| CoreAudioError::Worker(format!("frame bound overflow: {error}")))?;
-    set_property(
-        unit,
-        AUDIO_UNIT_PROPERTY_MAXIMUM_FRAMES_PER_SLICE,
-        AUDIO_UNIT_SCOPE_GLOBAL,
-        OUTPUT_BUS,
-        &max_frames,
-        "set capture frame bound",
-    )
+    set_max_frames_per_slice(unit, "set capture frame bound")
 }
 
 /// Output-only AUHAL on the virtual output: input disabled, mono 48 kHz
