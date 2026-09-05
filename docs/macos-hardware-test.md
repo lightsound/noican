@@ -138,24 +138,39 @@ Phase 1 must cover the Noican driver.
    `sudo launchctl kickstart -k system/com.apple.audio.coreaudiod`; use
    `sudo killall coreaudiod` instead.
 3. Open Audio MIDI Setup and confirm **Noican Microphone** appears as a
-   two-channel 48 kHz device (manufacturer `lightsound`).
+   **one-channel** 48 kHz device (manufacturer `lightsound`). A
+   two-channel device means the 0.1.0 driver is still loaded — check the
+   installed bundle's version (docs/driver.md, "History") and that
+   `coreaudiod` was restarted. Quit and relaunch the app after the
+   driver swap and confirm the PID changed (see "Build").
 4. Confirm the device has both output and input streams and can loop a test
    signal before involving Noican.
-5. Record the installed bundle signature:
+5. Record the installed bundle signature and version:
 
    ```bash
    codesign --verify --deep --strict --verbose=2 \
      "/Library/Audio/Plug-Ins/HAL/Noican.driver"
+   /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+     /Library/Audio/Plug-Ins/HAL/Noican.driver/Contents/Info.plist
    ```
 
 6. Coexistence: with stock BlackHole 2ch also installed, start the engine
    and confirm the private aggregate is composed around the **Noican**
-   device (`com.lightsound.noican.2ch_UID`), not `BlackHole2ch_UID` —
-   the app prefers the Noican driver when both are present
-   (docs/driver.md, "Coexistence"). Then uninstall stock BlackHole (or
-   test the Noican-only state first) and confirm the app still selects
-   the Noican device.
-7. Uninstall check (after the functional tests): `bash
+   device (`com.lightsound.noican.mic_UID`; the 0.1.0 driver's
+   `com.lightsound.noican.2ch_UID` is also a Noican device to the app),
+   not `BlackHole2ch_UID` — the app prefers the Noican driver when both
+   are present (docs/driver.md, "Coexistence"). Then uninstall stock
+   BlackHole (or test the Noican-only state first) and confirm the app
+   still selects the Noican device.
+7. Driver swap: the UID changed with the 1-channel driver, and meeting
+   applications remember the microphone by UID. Open a meeting
+   application (or QuickTime) that had Noican Microphone selected under
+   the 0.1.0 driver and record whether it had to be selected again.
+   Then confirm the reverse direction keeps working: uninstall, install
+   the 0.1.0 (2-channel) build — or use stock BlackHole 2ch — and start
+   the app: it must run, with dual-mono recordings as before. Return to
+   the current driver afterwards.
+8. Uninstall check (after the functional tests): `bash
    scripts/uninstall-driver.sh`, then confirm no Noican device remains in
    Audio MIDI Setup and `/Library/Audio/Plug-Ins/HAL/Noican.driver` is
    gone.
@@ -342,9 +357,9 @@ microphone list must show the same value.
    transport's routing line — `Split output routing: virtual output
    channels N, render format requested N ch, render format read back
    after initialize N ch` — where N is the virtual output's output
-   channel count as AUHAL reports it for the output-only unit (2 for
-   the current Noican driver and for stock BlackHole 2ch; 1 for a
-   1-channel driver). The render format is sized from that count
+   channel count as AUHAL reports it for the output-only unit (1 for
+   the current Noican driver, 0.2.0; 2 for stock BlackHole 2ch and for
+   the 0.1.0 Noican driver). The render format is sized from that count
    rather than fixed at two channels, so all three numbers must agree
    and match the device's channel count in Audio MIDI Setup; record the
    line verbatim. A start refusal reading `virtual output routing
@@ -431,9 +446,12 @@ output one-to-one: virtual output channel *i* receives client channel
 *i*, and every device output channel ahead of it — the microphone's own
 outputs — is left silent. The virtual output's position is computed by
 the control plane from the subdevice list it composes and re-checked on
-the Rust side against the channel count the aggregate reports. On the
-built-in-microphone layout the map is `[0, 1]`; with a stereo-headphone
-microphone it is `[-1, -1, 0, 1]`.
+the Rust side against the channel count the aggregate reports. The map's
+tail is as wide as the virtual output: with the current 1-channel Noican
+driver (0.2.0, docs/driver.md "History") the built-in-microphone layout
+gives `[0]` and a stereo-headphone microphone `[-1, -1, 0]`; on a
+2-channel virtual output (stock BlackHole 2ch, the 0.1.0 driver) the
+same layouts give `[0, 1]` and `[-1, -1, 0, 1]`.
 
 The first version of this fix (PR #26) kept a mono client stream and
 mapped it to the virtual output's first channel only, leaving channel 1
@@ -445,16 +463,20 @@ applications — received it 6 dB down. Duplicating in the *map* instead
 an AUHAL map may name one client channel twice, and a rejected map
 would fail every aggregate start; a one-to-one map is the documented
 shape, and its single-entry form was accepted and read back on hardware
-(PR #26's record) — the two-entry form is what acceptance criterion 2
-below pins (see `noican_coreaudio::routing` for the full decision
-record). Step 8 and acceptance criterion 3 pin the new shape:
-both channels carry the same signal, and channel 0's level is unchanged
-against the previous build. Note for consumers that *sum* L+R without
-scaling (rare; most average): the dual-mono signal reads +6 dB there
-compared with the single-channel build. The capture direction is
-untouched. The split (native-rate) transport is not involved: its
-output AUHAL sits on the virtual output device alone, so a microphone's
-outputs never precede the virtual output there.
+(PR #26's record) — the two-entry form was pinned by the 2026-09-05
+record on the 0.1.0 driver (see `noican_coreaudio::routing` for the full
+decision record). Step 8 and acceptance criterion 3 pin the shape:
+every virtual-output channel carries the same signal, and channel 0's
+level is unchanged against the previous build. On the 1-channel driver
+the recording is mono (`channels: 1` from the script below — or, should
+QuickTime widen a 1-channel device to a 2-channel file, two identical
+channels), and channel 0's level must equal the one measured on the
+2-channel driver. Note for consumers that *sum* L+R without scaling
+(rare; most average): a dual-mono 2-channel signal reads +6 dB there
+compared with a single-channel one. The capture direction is untouched.
+The split (native-rate) transport is not involved: its output AUHAL
+sits on the virtual output device alone, so a microphone's outputs
+never precede the virtual output there.
 
 1. Connect the composite device and make sure it advertises 48 kHz
    (Audio MIDI Setup, input side), so the engine takes the aggregate
@@ -480,9 +502,11 @@ outputs never precede the virtual output there.
      read back after initialize [...]` — AUHAL's view, written about a
      second after start. N must equal W, `A..B` must be `Y..Y+Z`, the
      requested map must be `-1` at every index below A and `0, 1, …`
-     (client channel *i* at index A + *i*) from A to the end — e.g.
-     `[-1, -1, 0, 1]` for a stereo-headphone microphone, `[0, 1]` for
-     the built-in microphone — and the read-back must equal the request.
+     (client channel *i* at index A + *i*) from A to the end — with the
+     current 1-channel driver `[-1, -1, 0]` for a stereo-headphone
+     microphone and `[0]` for the built-in microphone; on a 2-channel
+     virtual output `[-1, -1, 0, 1]` and `[0, 1]` — and the read-back
+     must equal the request.
    Record both lines verbatim in the result record.
 4. Record 30+ seconds of speech from the Noican virtual microphone in
    QuickTime (or CleanShot / OBS). The recording must be non-silent,
@@ -511,14 +535,18 @@ outputs never precede the virtual output there.
    Passthrough, strength 100%, the microphone's system input slider
    and the Noican Microphone slider both at maximum — and compare per
    channel with the script in "Level integrity" below. Expected on this
-   build: **every virtual-output channel carries the same signal**
-   (channel RMS within 0.1 dB of each other), and channel 0's RMS is
-   within ±1 dB of the previous build's channel 0 (reference from the
-   2026-09-05 measurement: −16.5 dBFS on the built-in microphone; your
-   absolute figure depends on voice and distance, the *difference*
+   build: **every virtual-output channel carries the same signal** —
+   on the 1-channel driver the file reads `channels: 1` (or, if
+   QuickTime widens the device to a 2-channel file, two channels whose
+   RMS agree within 0.1 dB); on a 2-channel virtual output (stock
+   BlackHole 2ch, the 0.1.0 driver) two channels within 0.1 dB of each
+   other — and channel 0's RMS is within ±1 dB of the previous build's
+   channel 0 (references from the 2026-09-05 measurements on the 0.1.0
+   driver: −16.5 dBFS, later −19.6 dBFS, on the built-in microphone;
+   your absolute figure depends on voice and distance, the *difference*
    between builds is what is pinned). A level change on channel 0
    beyond that, or a channel left silent, fails. Switch back to the
-   composite device: audio must return, on both channels.
+   composite device: audio must return, on every channel.
 9. *(If available)* Repeat 3–4 with an audio interface that has more
    than two outputs: the virtual output sits after all of them, and the
    recording must still carry audio.
@@ -640,18 +668,25 @@ for c in range(ch):
 EOF
 ```
 
-Read the two outputs together:
+Read the two outputs together. The Noican file's `channels:` line says
+which virtual output made it: `1` on the current Noican driver (0.2.0),
+`2` on stock BlackHole 2ch or the 0.1.0 driver (a `2` on the 1-channel
+driver would be QuickTime widening the device — then the two channels
+must be identical). "Noican channels alike" below means: every channel
+the file has carries the same RMS within 0.1 dB — trivially so for one
+channel.
 
-1. Noican channels differ from each other (one `SILENT`, or a gap
-   larger than 0.1 dB): a routing regression — the aggregate path must
-   be dual mono on this build; check the `Aggregate output routing` line
-   and file it.
-2. Noican channels equal, both far below the direct recording, and the
+1. Noican channels differ from each other (on a 2-channel file: one
+   `SILENT`, or a gap larger than 0.1 dB), or the single channel of a
+   1-channel file is `SILENT`: a routing regression — the aggregate path
+   must feed every virtual-output channel on this build; check the
+   `Aggregate output routing` line and file it.
+2. Noican channels alike, far below the direct recording, and the
    popover shows the turned-down/muted line: the Noican Microphone
    slider. Raise it in System Settings and re-record; if it drops again
    without your doing, note which meeting app was running (the log's
    `Virtual output level:` lines carry the scalar and the time).
-3. Noican channels equal, no notice shown, and still quieter than the
+3. Noican channels alike, no notice shown, and still quieter than the
    direct recording by about the difference the microphone's system
    slider makes: the direct recording was taken with that slider up,
    which Noican does not apply — set the level at the microphone or on
@@ -1176,13 +1211,16 @@ passes when:
 2. **Nothing leaks to the microphone's own outputs**: Noican's output
    is inaudible on headphones plugged into the microphone's own jack,
    in both On and Preview.
-3. **Dual mono, level pinned**: the same recording with the built-in
-   microphone carries the same signal on every virtual-microphone
-   channel (per-channel RMS within 0.1 dB of each other), and channel
-   0's RMS is within ±1 dB of a same-settings recording on the previous
-   build (per-channel measurement with the "Level integrity" script) —
-   the engine level is unchanged, only the silent channel is gone. The
-   composite device must show the same shape.
+3. **Every channel fed, level pinned**: the same recording with the
+   built-in microphone carries the same signal on every
+   virtual-microphone channel — `channels: 1` on the current 1-channel
+   Noican driver (two identical channels if QuickTime widens it);
+   per-channel RMS within 0.1 dB of each other on a 2-channel virtual
+   output (stock BlackHole 2ch, the 0.1.0 driver) — and channel 0's RMS
+   is within ±1 dB of a same-settings recording on the previous build
+   (per-channel measurement with the "Level integrity" script): the
+   engine level is unchanged by the routing or by the driver's width.
+   The composite device must show the same shape.
 4. **Everything else as before**: Preview, model switching, meters, and
    the underrun diagnostics behave exactly as on the earlier records
    with the composite device selected.
@@ -1194,15 +1232,22 @@ passes when:
 
 Run the Level integrity procedure above; the build passes when:
 
-1. **Dual mono on the aggregate path**: with the built-in microphone
-   (Passthrough, 100%, Noican Microphone slider at maximum) the
-   virtual-microphone recording carries the same signal on every
-   channel (RMS within 0.1 dB), and channel 0's RMS is within ±1 dB of
-   a same-settings recording on the previous build.
-2. **Dual mono on a composite device**: the same with the MV7i (or
+1. **Every virtual-output channel fed on the aggregate path**: with the
+   built-in microphone (Passthrough, 100%, Noican Microphone slider at
+   maximum) the virtual-microphone recording carries the same signal on
+   every channel — `channels: 1` on the current 1-channel Noican
+   driver, two channels within 0.1 dB on a 2-channel virtual output —
+   and channel 0's RMS is within ±1 dB of a same-settings recording on
+   the previous build (across the driver swap: within ±1.5 dB of the
+   2-channel driver's channel 0, ideally measured in the same session
+   by swapping drivers). The `Aggregate output routing` line shows
+   `channel map requested [0], read back [0]` on the 1-channel driver
+   (`[0, 1]` on a 2-channel virtual output).
+2. **The same on a composite device**: the same with the MV7i (or
    another input/output device), and the `Aggregate output routing`
-   line shows the one-to-one map (`[-1, -1, 0, 1]` for a stereo
-   headphone jack) read back unchanged after initialize.
+   line shows the one-to-one map read back unchanged after initialize
+   — `[-1, -1, 0]` for a stereo headphone jack on the 1-channel driver,
+   `[-1, -1, 0, 1]` on a 2-channel virtual output.
 3. **Both ears**: the virtual microphone's signal, played back from a
    recording or monitored through a consumer app, is heard in both
    ears of a pair of headphones.
@@ -1215,13 +1260,47 @@ Run the Level integrity procedure above; the build passes when:
    underrun diagnostics (zero on a light model) behave exactly as on
    the earlier records.
 6. **Split path level**: a Bluetooth (or other native-rate) headset
-   recording is unchanged (both channels, same level as before), and
+   recording is unchanged (every channel fed — `channels: 1` on the
+   1-channel driver — at the same level as before; the `Split output
+   routing` line's three counts equal the device's channel count), and
    two additional recordings through Noican — the headset's *system*
    input slider at the middle and at maximum — settle whether the
    split transport applies that slider. Record the two RMS values and
    the conclusion, and keep the Level integrity section's second
    bullet in step with the accumulated evidence (first pair recorded
    2026-09-05: +2.2 dB, attributed to speech variance).
+
+## Acceptance checklist (1-channel driver)
+
+Run the Driver check (including step 7, the driver swap) with the 0.2.0 driver
+installed, then the composite and level-integrity procedures; the build
+passes when:
+
+1. **Shape**: Audio MIDI Setup lists Noican Microphone as a one-channel
+   48 kHz device, `CFBundleShortVersionString` reads `0.2.0`, and the
+   engine's `Aggregate composed` line reports the virtual output with
+   `out 1`.
+2. **Aggregate maps**: `Aggregate output routing` reads `channel map
+   requested [0], … read back after initialize [0]` on the built-in
+   microphone and `[-1, -1, 0]` / `[-1, -1, 0]` on the MV7i.
+3. **Mono recordings, level unchanged**: QuickTime recordings from the
+   Noican virtual microphone read `channels: 1` (or two identical
+   channels, recorded as a QuickTime behaviour) on the built-in
+   microphone, the MV7i, and a Bluetooth headset (split transport, whose
+   `Split output routing` line reads `1` three times), and each RMS is
+   within ±1.5 dB of the 2-channel driver's channel 0 for the same
+   microphone (same-session swap preferred; otherwise the 2026-09-05
+   figures: −19.6, −26.7, −21.0 dBFS).
+4. **Preview and level notice**: Preview plays as before; the Noican
+   Microphone slider at 50% shows the notice within a second and clears
+   at maximum — the device's single control exists at one channel too.
+5. **Re-selection recorded**: whether a meeting application (or
+   QuickTime) that had Noican Microphone selected under the 0.1.0 driver
+   needed it selected again after the UID change, as observed.
+6. **Old driver still served**: with the 0.1.0 (2-channel) driver — or
+   stock BlackHole 2ch — installed instead, the same app build starts and
+   records dual mono as before; with stock BlackHole and the Noican
+   driver both present the Noican device is preferred as before.
 
 ## Acceptance checklist (output-underrun diagnostics)
 

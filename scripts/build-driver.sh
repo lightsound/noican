@@ -9,16 +9,24 @@
 #   bundle          Noican.driver
 #   bundle ID       com.lightsound.noican.driver
 #   device name     "Noican Microphone"  (what meeting apps list)
-#   device UID      "com.lightsound.noican.2ch_UID"
-#   channels        2, sample rates 44.1/48 kHz (Noican pins 48 kHz)
+#   device UID      "com.lightsound.noican.mic_UID"
+#   channels        1, sample rates 44.1/48 kHz (Noican pins 48 kHz)
+#   version         0.2.0 (0.1.0 was the 2-channel "com.lightsound.noican.2ch_UID"
+#                   device; the version is how an installed bundle tells
+#                   which shape it has — docs/driver.md, "History")
 #
 # The device UID cannot be set directly: BlackHole derives kDevice_UID as
 # kDriver_Name "_UID" (with kHas_Driver_Name_Format=false), so kDriver_Name
 # carries the reverse-DNS UID base. kDriver_Name is not user-visible; the
-# visible strings are kDevice_Name and kManufacturer_Name. The resulting UID
-# matches both existing matchers verbatim: Swift
-# AudioDeviceCatalog.isNoicanVirtualDevice and Rust is_noican_loopback_uid
-# (case-insensitive "com.lightsound.noican." prefix).
+# visible strings are kDevice_Name and kManufacturer_Name. The UID base
+# deliberately carries no channel count (the 0.1.0 "2ch" base did, and the
+# name became false the moment the width changed); it must keep the
+# trailing-dot prefix "com.lightsound.noican." that both app-side matchers
+# test — Swift AudioDeviceCatalog.isNoicanVirtualDevice and Rust
+# is_noican_loopback_uid (case-insensitive) — so a base of plain
+# "com.lightsound.noican" (no dot) would produce "com.lightsound.noican_UID"
+# and fail both. The app recognizes the 0.1.0 UID through the same prefix,
+# so old and new drivers can be swapped under one app build.
 #
 # Signing follows scripts/build-macos-app.sh: Developer ID when
 # NOICAN_CODESIGN_IDENTITY is set, ad-hoc otherwise. macOS 15+ coreaudiod
@@ -32,14 +40,22 @@ BLACKHOLE="$ROOT/external/blackhole"
 DRIVER_NAME="Noican"
 BUNDLE_ID="com.lightsound.noican.driver"
 # kDriver_Name: the UID base ("<base>_UID"), not a user-visible string.
-DEVICE_UID_BASE="com.lightsound.noican.2ch"
+# Keep the "com.lightsound.noican." prefix (see the header comment).
+DEVICE_UID_BASE="com.lightsound.noican.mic"
 DEVICE_NAME="Noican Microphone"
 DEVICE2_NAME="Noican Microphone Mirror"
 MANUFACTURER_NAME="lightsound"
 ICON="Noican.icns"
-CHANNELS=2
+# One channel: the engine signal is mono, and the app's transports render
+# one client channel per virtual-output channel whatever the width (dual
+# mono on a 2-channel device, plain mono here), so the device carries the
+# shape of the signal — like the Krisp and JoyCast virtual microphones —
+# with half the ring buffer of the 2-channel build. Consumers record mono.
+CHANNELS=1
 SAMPLE_RATES="44100,48000"
-DRIVER_VERSION="${NOICAN_DRIVER_VERSION:-0.1.0}"
+# Bumped with every change of device shape or UID so an installed bundle's
+# Info.plist (CFBundleShortVersionString) says which one it is.
+DRIVER_VERSION="${NOICAN_DRIVER_VERSION:-0.2.0}"
 # CFPlugIn factory UUID: must be unique per plug-in, but upstream hardcodes
 # one in BlackHole.plist, shared by every unpatched fork (stock BlackHole,
 # JoyCast, ...); coexisting forks then trigger harmless but noisy
@@ -73,8 +89,9 @@ fi
 # with spaces inside a single token (upstream README, "Customizing
 # BlackHole"). kLatency_Frame_Size is deliberately absent: v0.7.1 defines
 # it without an #ifndef guard, so passing it would redefine the macro.
-# The primary device is the visible 2-in/2-out loopback; the mirror stays
-# hidden, exactly like stock BlackHole 2ch (explicit for documentation).
+# The primary device is the visible 1-in/1-out loopback; the mirror stays
+# hidden with input and output, like stock BlackHole (explicit for
+# documentation).
 GCC_DEFS=(
   "kDriver_Name=\\\"$DEVICE_UID_BASE\\\""
   "kHas_Driver_Name_Format=false"
