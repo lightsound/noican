@@ -466,7 +466,7 @@ pub struct Runtime {
     monitor: MonitorControl,
     /// Diagnostic: how the render stream was routed into the device (the
     /// aggregate's reported output channel count, the channel map
-    /// requested, and the map AUHAL reports after the set). Empty on the
+    /// requested, and the map read back after `AudioUnitInitialize`). Empty on the
     /// split transport, which needs no map. See [`Runtime::routing_description`].
     routing: String,
 }

@@ -609,8 +609,9 @@ pub unsafe extern "C" fn noican_engine_monitor_device(handle: *const c_void) -> 
 ///
 /// The description carries the output channel count AUHAL reports for
 /// the aggregate, the channel map requested, and the map read back after
-/// the set. Copies the description as UTF-8 and returns the required byte count
-/// including the terminating NUL; returns 0 while stopped, on the split
+/// `AudioUnitInitialize`. Copies the description as UTF-8 and returns the
+/// required byte count including the terminating NUL; returns 0 while
+/// stopped, on the split
 /// transport (which needs no map), or for a null handle. Takes the
 /// control mutex (meant for the one-time start log, not the poll path).
 ///
