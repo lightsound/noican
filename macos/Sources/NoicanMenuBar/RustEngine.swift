@@ -1,6 +1,7 @@
 import CNoican
 import CoreAudio
 import Foundation
+import NoicanState
 
 /// Picker ratings of one model, 0–5 with "more is better" on every axis
 /// (the registry inverts latency into responsiveness and compute cost

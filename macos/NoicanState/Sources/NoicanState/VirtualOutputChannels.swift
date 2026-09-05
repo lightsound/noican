@@ -1,6 +1,3 @@
-import CoreAudio
-import Foundation
-
 /// Where the virtual output's channels sit in the private aggregate's
 /// output channel list.
 ///
@@ -18,37 +15,22 @@ import Foundation
 /// while the preview kept working). Mirrors `noican_engine_start` in
 /// noican.h; the Rust side re-checks the range against the channel count
 /// the aggregate actually reports.
-struct VirtualOutputChannels: Equatable {
+///
+/// Pure arithmetic, kept in this package so it is unit-tested on every
+/// CI target; the app's `AggregateDevice` feeds it the channel counts of
+/// the very subdevice list it composes.
+public struct VirtualOutputChannels: Hashable, Sendable {
     /// Output channels ahead of the virtual output (the microphone's own
     /// output channel count; 0 for the built-in microphone).
-    let firstChannel: UInt32
+    public let firstChannel: UInt32
     /// The virtual output's own output channel count.
-    let channelCount: UInt32
+    public let channelCount: UInt32
 
-    /// Locates `virtualOutput` within `subdevices`, the aggregate's
-    /// composition order: every subdevice ahead of it contributes its
-    /// output channels to the offset. Returns nil when the virtual output
-    /// is not part of the list.
-    static func locate(
-        virtualOutput: AudioDeviceInfo,
-        in subdevices: [AudioDeviceInfo]
-    ) -> VirtualOutputChannels? {
-        guard let index = subdevices.firstIndex(where: { $0.uid == virtualOutput.uid }) else {
-            return nil
-        }
-        let ahead = subdevices[..<index].reduce(UInt32(0)) { total, device in
-            total + device.outputChannels
-        }
-        return VirtualOutputChannels(
-            firstChannel: ahead,
-            channelCount: virtualOutput.outputChannels
-        )
+    /// Locates a virtual output with `virtualOutputChannels` output
+    /// channels behind the subdevices whose output channel counts are
+    /// `outputChannelsAhead`, in composition order.
+    public init(outputChannelsAhead: [UInt32], virtualOutputChannels: UInt32) {
+        firstChannel = outputChannelsAhead.reduce(UInt32(0), +)
+        channelCount = virtualOutputChannels
     }
-}
-
-/// A created private aggregate together with the output layout the Rust
-/// transport must route into.
-struct AggregateComposition {
-    let deviceID: AudioObjectID
-    let virtualOutputChannels: VirtualOutputChannels
 }

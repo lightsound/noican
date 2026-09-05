@@ -1,5 +1,14 @@
 import CoreAudio
 import Foundation
+import NoicanState
+
+/// A created private aggregate together with the output layout the Rust
+/// transport must route into (see `VirtualOutputChannels` in
+/// `NoicanState`).
+struct AggregateComposition {
+    let deviceID: AudioObjectID
+    let virtualOutputChannels: VirtualOutputChannels
+}
 
 /// Owns the private Aggregate Device combining the physical input and the
 /// virtual output. `@unchecked Sendable`: creation happens on the detached
@@ -33,15 +42,12 @@ final class AggregateDevice: @unchecked Sendable {
         // microphone, not the loopback's own input), and the output
         // layout handed to the transport is derived from this same list
         // so the two can never disagree.
-        let order = [input, virtualOutput]
-        guard let virtualOutputChannels = VirtualOutputChannels.locate(
-            virtualOutput: virtualOutput, in: order
-        ) else {
-            throw CoreAudioControlError(
-                operation: "Virtual output missing from the aggregate composition",
-                status: kAudioHardwareBadObjectError
-            )
-        }
+        let ahead = [input]
+        let order = ahead + [virtualOutput]
+        let virtualOutputChannels = VirtualOutputChannels(
+            outputChannelsAhead: ahead.map(\.outputChannels),
+            virtualOutputChannels: virtualOutput.outputChannels
+        )
         let subdevices: [[String: Any]] = order.map { device -> [String: Any] in
             [
                 kAudioSubDeviceUIDKey: device.uid,
