@@ -850,17 +850,22 @@ fn configure_auhal(
 /// the aggregate device (see [`crate::routing`] for the bug and the
 /// decision).
 ///
-/// The map's length is the device's output channel count, read from the
-/// hardware-side format of the output element (`kAudioUnitScope_Output`,
-/// element 0 — the recipe Apple's AUHAL notes give for sizing an output
-/// channel map), and the map is set on that same scope and element:
-/// the property is documented for the input and output scopes, and the
-/// output-element map is set on the output scope by the shipping
-/// implementations this was checked against (`PortAudio`'s Core Audio
-/// host API, openFrameworks' AUHAL wrapper). Each entry names the client
-/// channel feeding that device channel, `-1` for silence; AUHAL's default
-/// (identity: client 0 → device 0) is what sent the engine output into a
-/// headphone-equipped microphone's own outputs.
+/// The recipe follows Apple's AUHAL notes ("Channel Maps", reproduced
+/// verbatim in `PortAudio`'s `src/hostapi/coreaudio/notes.txt`): for
+/// output, the map is an `SInt32` array sized by the device's channel
+/// count — "Get the Format of the AUHAL's output Element == 0" — with
+/// every entry `-1` except `map[deviceOutputChannel] = clientChannel`.
+/// That device-side format is read from `kAudioUnitScope_Output`,
+/// element 0 (the only place it lives; TN2091 notes it is never
+/// writable, so the mono client format set on the input scope cannot
+/// leak into the read). The map is set on that same scope and element:
+/// the property is documented for the input and output scopes, and
+/// `PortAudio`'s Core Audio host API (`pa_mac_core.c`) — the shipping
+/// implementation this was checked against — sets the output-element
+/// map on the output scope, after the stream formats and before
+/// `AudioUnitInitialize`, which is the order used here. AUHAL's default
+/// map (identity: client 0 → device 0) is what sent the engine output
+/// into a headphone-equipped microphone's own outputs.
 ///
 /// The capture direction keeps AUHAL's default map (client channel 0 ←
 /// device input channel 0 = the microphone, which is the first
