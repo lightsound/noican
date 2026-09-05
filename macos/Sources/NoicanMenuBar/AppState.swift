@@ -59,7 +59,9 @@ final class AppState: ObservableObject {
     /// Real-time budget diagnostics (output underruns, worker block
     /// times), sampled by the 1 Hz health poll and reported to the
     /// unified log instead of the popover (see `EngineDiagnostics`).
-    private let diagnostics = EngineDiagnostics()
+    /// Internal so the virtual-output level check in its sibling file
+    /// logs through the same object.
+    let diagnostics = EngineDiagnostics()
     /// Follows the monitor's actual output device while the preview
     /// plays: a data-source flip (headphone jack → internal speakers on
     /// the same built-in device) fires no device-list or default-output
@@ -448,6 +450,10 @@ extension AppState {
     }
 
     private func checkEngineHealth() {
+        // Ahead of the busy guard: the virtual output's level controls are
+        // a device property read, not an engine call, and the reducer
+        // accepts the reading through monitor/model transitions.
+        checkVirtualOutputLevel()
         guard model.mode != .off, !model.isBusy, let engine else {
             return
         }
@@ -457,7 +463,6 @@ extension AppState {
         // landing during a busy transition is dropped by the listener's
         // busy guard, so the poll re-checks once per second.
         checkInputRate()
-        checkVirtualOutputLevel()
         if engine.isFaulted {
             dispatch(.engineFaulted)
             return

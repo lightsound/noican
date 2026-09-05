@@ -1,4 +1,5 @@
 import Foundation
+import NoicanState
 import os
 
 /// Reports the engine's real-time budget diagnostics (output-ring
@@ -23,6 +24,14 @@ final class EngineDiagnostics {
 
     /// Whether the one-time transport line was written for this start.
     private var startupLogged = false
+
+    /// Last virtual-output level reading written to the log. Deliberately
+    /// *not* reset with the engine counters: the Noican Microphone slider
+    /// belongs to the device, not to a transport, so a restart with the
+    /// slider still down must not log a fresh "detection" of a slider
+    /// that never moved — the log is meant as evidence of how often and
+    /// how far it actually moves.
+    private var lastVirtualOutputLevel = VirtualOutputLevel.nominal
 
     /// True when the process runs translated under Rosetta 2 — inference
     /// would be silently slower, so hardware budget numbers must carry
@@ -80,5 +89,35 @@ final class EngineDiagnostics {
             max \(maxMs, format: .fixed(precision: 1), privacy: .public) ms
             """
         )
+    }
+
+    /// Records a reading of the virtual output device's own volume/mute
+    /// controls: one line per *distinct* reading (a turned-down slider
+    /// logs its scalar again whenever it moves; the return to unity logs
+    /// once), nothing while the reading is unchanged. Detection only —
+    /// the level is never written (see `VirtualOutputLevel`).
+    func recordVirtualOutputLevel(_ level: VirtualOutputLevel, deviceName: String) {
+        guard level != lastVirtualOutputLevel else {
+            return
+        }
+        lastVirtualOutputLevel = level
+        switch level {
+        case let .turnedDown(scalar):
+            Self.log.warning(
+                """
+                Virtual output level: "\(deviceName, privacy: .public)" volume scalar \
+                \(scalar, format: .fixed(precision: 3), privacy: .public) (below unity) — \
+                consumers hear the engine output attenuated; not changed by Noican
+                """
+            )
+        case .muted:
+            Self.log.warning(
+                "Virtual output level: \"\(deviceName, privacy: .public)\" is muted; not changed by Noican"
+            )
+        case .nominal:
+            Self.log.info(
+                "Virtual output level: \"\(deviceName, privacy: .public)\" back at unity and unmuted"
+            )
+        }
     }
 }

@@ -1,7 +1,6 @@
 import CoreAudio
 import Foundation
 import NoicanState
-import os
 
 /// Reads the Noican virtual output device's own volume and mute controls.
 ///
@@ -76,21 +75,20 @@ enum VirtualOutputLevelProbe {
 // MARK: - AppState hook
 
 extension AppState {
-    private static let levelLog = Logger(
-        subsystem: "com.lightsound.noican", category: "engine-diagnostics"
-    )
-
-    /// Reads the virtual output's level controls and forwards a *changed*
-    /// reading to the reducer, logging each detection (with the scalar
-    /// reading, as evidence of how often and how far the slider moves)
-    /// and each resolution. The change key is the whole reading held in
-    /// the model, not the notice text: two slider positions share one
-    /// notice, and comparing texts would log the first move only.
-    /// Called when an engine start settles and by the 1 Hz health poll;
-    /// the reducer accepts it only while a transport is up, so a reading
-    /// while Off is dropped before it can churn the model. The device
-    /// read is the Noican virtual output itself (the same pick the
-    /// aggregate is composed around), never the private aggregate.
+    /// Reads the virtual output's level controls, hands the reading to the
+    /// diagnostics log (which writes one line per distinct reading, with
+    /// the scalar, across transport rebuilds), and forwards a reading
+    /// that differs from the model's to the reducer. The two change keys
+    /// are separate on purpose: the model resets to nominal on every
+    /// teardown so the notice is re-established for a new transport,
+    /// while the log must only record slider moves that actually
+    /// happened. Called when an engine start settles and by the 1 Hz
+    /// health poll (ahead of its busy guard, since this is a device
+    /// property read, not an engine call); the reducer accepts it only
+    /// while a transport is up, so a reading while Off is dropped before
+    /// it can churn the model. The device read is the Noican virtual
+    /// output itself (the same pick the aggregate is composed around),
+    /// never the private aggregate.
     func checkVirtualOutputLevel() {
         guard
             model.transportSession != nil,
@@ -99,26 +97,9 @@ extension AppState {
             return
         }
         let level = VirtualOutputLevelProbe.read(device.id)
+        diagnostics.recordVirtualOutputLevel(level, deviceName: device.name)
         guard level != model.virtualOutputLevel else {
             return
-        }
-        switch level {
-        case let .turnedDown(scalar):
-            Self.levelLog.warning(
-                """
-                Virtual output level: "\(device.name, privacy: .public)" volume scalar \
-                \(scalar, format: .fixed(precision: 3), privacy: .public) (below unity) — \
-                consumers hear the engine output attenuated; not changed by Noican
-                """
-            )
-        case .muted:
-            Self.levelLog.warning(
-                "Virtual output level: \"\(device.name, privacy: .public)\" is muted; not changed by Noican"
-            )
-        case .nominal:
-            Self.levelLog.info(
-                "Virtual output level: \"\(device.name, privacy: .public)\" back at unity and unmuted"
-            )
         }
         dispatch(.virtualOutputLevelObserved(level))
     }
