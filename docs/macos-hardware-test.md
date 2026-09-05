@@ -82,6 +82,15 @@ NOICAN_CODESIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
 
 Expected artifact: `dist/Noican.app`.
 
+The build replaces the bundle on disk but does not touch a running
+instance: after every rebuild quit the app (`pkill -x NoicanMenuBar`),
+`open dist/Noican.app`, and confirm the PID in the Console lines has
+changed before testing — a 2026-09-05 run reported a fix as ineffective
+because the pre-fix process was still the one under test. If `swift
+build` fails to find a type that exists in `macos/NoicanState`, remove
+the stale SwiftPM caches (`rm -rf macos/.build macos/NoicanState/.build`)
+and rebuild.
+
 Validate it:
 
 ```bash
