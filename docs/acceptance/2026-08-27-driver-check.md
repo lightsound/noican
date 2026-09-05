@@ -1,6 +1,6 @@
 # Acceptance record — Noican driver (Driver check), 2026-08-27
 
-> **Superseded shape (added 2026-09-05, 1-channel driver change).** This
+> **Superseded shape (added 2026-09-05, PR #30).** This
 > record describes driver `0.1.0`: two channels, device UID
 > `com.lightsound.noican.2ch_UID`. Driver `0.2.0` has one channel and the
 > UID `com.lightsound.noican.mic_UID` (docs/driver.md, "History"); the
