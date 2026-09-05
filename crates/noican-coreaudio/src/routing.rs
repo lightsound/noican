@@ -103,6 +103,83 @@
 //!   identification policy that lives in the Swift device catalog, and
 //!   still needs the same device-count check to be trusted. The control
 //!   plane already has every number involved.
+//!
+//! # The split transport's render format
+//!
+//! The split transport (non-48 kHz microphones, `macos::split`) has no
+//! aggregate and no map: its output-only AUHAL sits on the virtual
+//! output device alone, so AUHAL's identity map is already right. What
+//! it does share with the aggregate path is the dual-mono contract — one
+//! client channel per virtual-output channel — and until this change its
+//! render format was hard-wired to two channels, i.e. to the current
+//! driver. [`split_render_channels`] replaces that constant with the
+//! channel count read from the device, so a 1-channel virtual output (a
+//! future driver, like Krisp's or `JoyCast`'s) gets a mono client format
+//! and stock `BlackHole` 2ch keeps its stereo one; whether AUHAL would
+//! even accept a 2-channel client format on a 1-channel device is
+//! unverified, and matching the device removes the question.
+//!
+//! Where the count comes from was decided against these criteria: no FFI
+//! change (the `noican_engine_start_native` signature is a three-file
+//! contract — `noican.h`, `RustEngine.swift`, `noican-ffi` — and the
+//! Swift call site lives in a file at its lint length limit); as few
+//! Core Audio behaviours as possible that hardware has not already
+//! shown; every virtual output (1 ch, 2 ch, stock `BlackHole` 2ch)
+//! served by the same code; a refusal, never a silent fallback, when
+//! the count is unusable; and the real-time rules of the output
+//! callback untouched.
+//!
+//! - **Read it on the Rust side from the output-only AUHAL** — the
+//!   device-side stream format of the output element, once the current
+//!   device is set (`kAudioUnitScope_Output`, element 0; TN2091: the
+//!   device format, never writable, so the client format cannot leak
+//!   into the read). This is the exact read the aggregate path already
+//!   performs on its unit (`device_output_channels`), where hardware has
+//!   shown it to return the device's total output channel count
+//!   (2026-09-05, 2- and 4-channel aggregates). No FFI change; the
+//!   value describes the very device the unit is bound to; one call, and
+//!   its only unverified aspect is that the same property behaves the
+//!   same on an output-only unit — which hardware acceptance pins
+//!   (`docs/macos-hardware-test.md`, native-rate section: the `Split
+//!   output routing` line). **Chosen.**
+//! - **Pass it from Swift through the FFI**, as the aggregate path does
+//!   (`AudioDeviceCatalog.liveOutputChannelCount` after the 48 kHz
+//!   switch). Rejected: it costs the three-file FFI change, and the
+//!   number it carries is not a *composed* layout that needs checking
+//!   against the device — on this path the virtual output *is* the
+//!   device, so the Swift value and the AUHAL read would describe the
+//!   same single device through two Core Audio APIs. The aggregate path's
+//!   double check guards a derived position (microphone outputs ahead of
+//!   the virtual output); nothing is derived here. The read-back after
+//!   `AudioUnitInitialize` recorded in the routing description gives the
+//!   same diagnostic value without the extra channel.
+//! - **Both: Swift passes the count and Rust cross-checks it against the
+//!   AUHAL read** (the aggregate pattern verbatim). Superset of the two
+//!   above in cost — the FFI change *and* the AUHAL read — and the
+//!   cross-check can only turn a start that would work into a refusal
+//!   (a disagreement between two readings of one device is a Core Audio
+//!   fault, not a layout the app can act on). Rejected.
+//! - **Read `kAudioDevicePropertyStreamConfiguration` on the device ID
+//!   from Rust** (the property the Swift catalog uses). Same result as
+//!   the chosen option with a second, larger block of unsafe property
+//!   code (a variable-size `AudioBufferList`), where the AUHAL read is a
+//!   fixed-size struct through a helper that already exists. Rejected.
+//! - **Set no client format and take AUHAL's default.** The default
+//!   stream format of an audio unit is non-interleaved 32-bit float
+//!   (Audio Unit Programming Guide, "Commonly Used Properties") — one
+//!   buffer per channel — while the output callback writes a single
+//!   interleaved buffer; it would silence every channel but the first,
+//!   and AUHAL's default channel count on a freshly bound device is not
+//!   documented. Rejected.
+//! - **Keep a mono client format and let AUHAL fan out.** AUHAL does
+//!   not: the identity map sends client channel 0 to device channel 0
+//!   and leaves the rest silent — the left-ear-only result PR #26
+//!   measured on the aggregate path. Rejected.
+//!
+//! No candidate dominating the chosen one was found: every alternative
+//! either adds the FFI change, adds unsafe code, or adds an unverified
+//! AUHAL behaviour without removing the one read the chosen option
+//! makes.
 
 use crate::CoreAudioError;
 
@@ -221,9 +298,61 @@ pub fn render_channel_map(
     Ok(map)
 }
 
+/// Client render channel count for the split transport's output-only
+/// AUHAL, from the output channel count AUHAL reports for the virtual
+/// output device it is bound to.
+///
+/// One client channel per device channel (dual mono — the callback
+/// writes the engine sample into every one), so AUHAL's identity map
+/// feeds the whole device whatever its width (see the module docs, "The
+/// split transport's render format").
+///
+/// # Errors
+///
+/// Returns [`CoreAudioError::OutputRouting`] when the device reports no
+/// output channels: a virtual output without output channels cannot
+/// receive audio, and guessing a width (the old constant 2) would either
+/// be refused by AUHAL or misdescribe the device — the transport refuses
+/// to start instead.
+pub fn split_render_channels(device_output_channels: u32) -> Result<u32, CoreAudioError> {
+    if device_output_channels == 0 {
+        return Err(CoreAudioError::OutputRouting(
+            "the virtual output device reports no output channels (split transport)".to_owned(),
+        ));
+    }
+    Ok(device_output_channels)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_render_format_follows_the_virtual_output_width() {
+        // Stock BlackHole 2ch and the current Noican driver: stereo client
+        // stream, as the old constant produced.
+        assert_eq!(split_render_channels(2).expect("stereo"), 2);
+        // A 1-channel virtual output (future driver): mono client stream.
+        assert_eq!(split_render_channels(1).expect("mono"), 1);
+        // Wider loopbacks are served the same way (BlackHole 16ch).
+        assert_eq!(split_render_channels(16).expect("wide"), 16);
+    }
+
+    #[test]
+    fn split_render_format_refuses_a_channelless_virtual_output() {
+        let error = split_render_channels(0).expect_err("must refuse");
+        assert!(
+            matches!(error, CoreAudioError::OutputRouting(_)),
+            "unexpected error kind: {error:?}"
+        );
+        let message = error.to_string();
+        assert!(
+            message.starts_with("virtual output routing failed")
+                && message.contains("no output channels")
+                && message.contains("split transport"),
+            "unhelpful message: {message}"
+        );
+    }
 
     #[test]
     fn built_in_microphone_layout_feeds_both_virtual_output_channels() {

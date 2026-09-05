@@ -471,10 +471,12 @@ pub struct Runtime {
     /// Control-plane half of the preview monitor (the worker half is the
     /// [`MonitorTee`] owned by the inference worker).
     monitor: MonitorControl,
-    /// Diagnostic: how the render stream was routed into the device (the
-    /// aggregate's reported output channel count, the channel map
-    /// requested, and the map read back after `AudioUnitInitialize`). Empty on the
-    /// split transport, which needs no map. See [`Runtime::routing_description`].
+    /// Diagnostic: how the render stream was routed into the device — on
+    /// the aggregate transport the aggregate's reported output channel
+    /// count, the channel map requested, and the map read back after
+    /// `AudioUnitInitialize`; on the split transport the virtual output's
+    /// reported channel count and the render format set from it (plus its
+    /// read-back). See [`Runtime::routing_description`].
     routing: String,
 }
 
@@ -621,9 +623,12 @@ impl Runtime {
     /// # Errors
     ///
     /// Returns [`CoreAudioError`] when `capture_rate` lies outside the
-    /// resampler's range, or when AUHAL setup or worker startup fails.
-    /// Every error path releases both AUHAL instances, the callback
-    /// contexts, and the worker.
+    /// resampler's range, or when AUHAL setup or worker startup fails —
+    /// including [`CoreAudioError::OutputRouting`] when `output_device`
+    /// reports no output channels (the render format is sized from that
+    /// count, see [`crate::routing::split_render_channels`]). Every error
+    /// path releases both AUHAL instances, the callback contexts, and the
+    /// worker.
     pub fn start_native(
         input_device: u32,
         output_device: u32,
@@ -785,15 +790,19 @@ impl Runtime {
         self.monitor.active_device()
     }
 
-    /// Diagnostic: how the render stream is routed into the device on the
-    /// aggregate transport — the output channel count AUHAL reports for
+    /// Diagnostic: how the render stream is routed into the device. On
+    /// the aggregate transport: the output channel count AUHAL reports for
     /// the aggregate, the channel map requested, and the map read back
     /// after `AudioUnitInitialize` (the point where AUHAL reconciles its
     /// configuration with the device; whether it may alter a map there is
     /// not documented, which is why the read-back is recorded rather
-    /// than assumed). Empty on the split transport. Meant for the
-    /// one-time start log on hardware, where the map's effect cannot
-    /// otherwise be observed.
+    /// than assumed). On the split transport: the output channel count
+    /// AUHAL reports for the virtual output device, the render format
+    /// set from it, and that format read back after initialize (see
+    /// [`split`]). Meant for the one-time start log on hardware, where
+    /// neither the map's effect nor the format negotiation can otherwise
+    /// be observed. The two transports' descriptions start differently
+    /// (`aggregate output channels …` / `virtual output channels …`).
     #[must_use]
     pub fn routing_description(&self) -> &str {
         &self.routing
@@ -936,7 +945,7 @@ fn set_render_channel_map(
     unit: AudioUnit,
     virtual_output: VirtualOutputChannels,
 ) -> Result<String, CoreAudioError> {
-    let device_channels = device_output_channels(unit)?;
+    let device_channels = device_output_channels(unit, "read aggregate device output format")?;
     let map = render_channel_map(device_channels, virtual_output)?;
     let byte_size = channel_map_bytes(map.len())?;
     check_status(
@@ -968,7 +977,8 @@ fn set_render_channel_map(
 /// the first thing to look at when the virtual microphone stays silent.
 /// Never fails the start: an unreadable map is reported as such.
 fn describe_applied_channel_map(unit: AudioUnit) -> String {
-    let Ok(device_channels) = device_output_channels(unit) else {
+    let Ok(device_channels) = device_output_channels(unit, "read aggregate device output format")
+    else {
         return "channel map read back: device format unreadable".to_owned();
     };
     let Ok(len) = usize::try_from(device_channels) else {
@@ -1013,8 +1023,22 @@ fn channel_map_bytes(entries: usize) -> Result<u32, CoreAudioError> {
 
 /// Output channel count of the device behind the AUHAL, from the
 /// hardware-side stream format of the output element (readable once the
-/// current device is set, before initialization).
-fn device_output_channels(unit: AudioUnit) -> Result<u32, CoreAudioError> {
+/// current device is set, before initialization). `operation` names the
+/// caller's device in the error (the aggregate, or the split transport's
+/// virtual output), since both transports read it.
+fn device_output_channels(unit: AudioUnit, operation: &'static str) -> Result<u32, CoreAudioError> {
+    stream_format_channels(unit, AUDIO_UNIT_SCOPE_OUTPUT, operation)
+}
+
+/// Channel count of the output element's stream format on `scope`:
+/// [`AUDIO_UNIT_SCOPE_OUTPUT`] is the device side (what the hardware
+/// carries), [`AUDIO_UNIT_SCOPE_INPUT`] the client side (the render
+/// format this transport set, as AUHAL holds it).
+fn stream_format_channels(
+    unit: AudioUnit,
+    scope: u32,
+    operation: &'static str,
+) -> Result<u32, CoreAudioError> {
     let mut format = AudioStreamBasicDescription::EMPTY;
     let mut size = size_u32::<AudioStreamBasicDescription>()?;
     check_status(
@@ -1022,13 +1046,13 @@ fn device_output_channels(unit: AudioUnit) -> Result<u32, CoreAudioError> {
             AudioUnitGetProperty(
                 unit,
                 AUDIO_UNIT_PROPERTY_STREAM_FORMAT,
-                AUDIO_UNIT_SCOPE_OUTPUT,
+                scope,
                 OUTPUT_BUS,
                 (&raw mut format).cast(),
                 &raw mut size,
             )
         },
-        "read aggregate device output format",
+        operation,
     )?;
     Ok(format.channels_per_frame)
 }

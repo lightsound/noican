@@ -127,11 +127,13 @@ pub enum CoreAudioError {
     #[error("the built-in speakers would feed back")]
     MonitorSpeakerOutput,
     /// The engine output could not be routed to the virtual output's
-    /// channels inside the Aggregate Device: the layout the control plane
+    /// channels: inside the Aggregate Device the layout the control plane
     /// composed does not match the channel count the device reports, or
-    /// the described range is empty (see [`routing`]). Refusing to start
-    /// is deliberate — a guessed map could feed a microphone's headphone
-    /// output and leave the virtual microphone silent.
+    /// the described range is empty; on the split transport the virtual
+    /// output device reports no output channels to size the render
+    /// format from (see [`routing`]). Refusing to start is deliberate — a
+    /// guessed map or width could feed a microphone's headphone output,
+    /// or be refused by AUHAL, and leave the virtual microphone silent.
     #[error("virtual output routing failed: {0}")]
     OutputRouting(String),
     /// This build does not target macOS.
