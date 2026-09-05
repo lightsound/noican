@@ -103,10 +103,16 @@ final class EngineDiagnostics {
         lastVirtualOutputLevel = level
         switch level {
         case let .turnedDown(scalar):
+            // Percent first (the slider position as the user sees it),
+            // scalar second for exact comparison between runs. Truncated,
+            // not rounded: a reading just under the unity threshold must
+            // not print "100%" next to "below unity".
+            let percent = Int(scalar * 100)
             Self.log.warning(
                 """
-                Virtual output level: "\(deviceName, privacy: .public)" volume scalar \
-                \(scalar, format: .fixed(precision: 3), privacy: .public) (below unity) — \
+                Virtual output level: "\(deviceName, privacy: .public)" volume at \
+                \(percent, privacy: .public)% (scalar \
+                \(scalar, format: .fixed(precision: 3), privacy: .public), below unity) — \
                 consumers hear the engine output attenuated; not changed by Noican
                 """
             )
