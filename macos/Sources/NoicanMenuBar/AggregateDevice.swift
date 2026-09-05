@@ -12,10 +12,14 @@ final class AggregateDevice: @unchecked Sendable {
         destroy()
     }
 
+    /// Composes the private aggregate around `input` and `virtualOutput`
+    /// and returns it together with the virtual output's position in the
+    /// aggregate's output channels (`VirtualOutputChannels`), which the
+    /// Rust transport needs to route the engine output there.
     func create(
         input: AudioDeviceInfo,
         virtualOutput: AudioDeviceInfo
-    ) throws -> AudioObjectID {
+    ) throws -> AggregateComposition {
         destroy()
         // Switch the subdevices themselves to 48 kHz before composing the
         // aggregate: the aggregate follows its clock master (the mic), and
@@ -24,16 +28,28 @@ final class AggregateDevice: @unchecked Sendable {
         // Bluetooth profiles, 44.1 kHz defaults, ...).
         try Self.ensure48k(input, role: "microphone \"\(input.name)\"")
         try Self.ensure48k(virtualOutput, role: "virtual output \"\(virtualOutput.name)\"")
-        let subdevices: [[String: Any]] = [
+        // Composition order is load-bearing: the microphone stays first
+        // (clock master; aggregate input channel 0 must be the
+        // microphone, not the loopback's own input), and the output
+        // layout handed to the transport is derived from this same list
+        // so the two can never disagree.
+        let order = [input, virtualOutput]
+        guard let virtualOutputChannels = VirtualOutputChannels.locate(
+            virtualOutput: virtualOutput, in: order
+        ) else {
+            throw CoreAudioControlError(
+                operation: "Virtual output missing from the aggregate composition",
+                status: kAudioHardwareBadObjectError
+            )
+        }
+        let subdevices: [[String: Any]] = order.map { device -> [String: Any] in
             [
-                kAudioSubDeviceUIDKey: input.uid,
-                kAudioSubDeviceDriftCompensationKey: false
-            ],
-            [
-                kAudioSubDeviceUIDKey: virtualOutput.uid,
-                kAudioSubDeviceDriftCompensationKey: true
+                kAudioSubDeviceUIDKey: device.uid,
+                // Only the virtual output is drift-compensated against
+                // the microphone's clock.
+                kAudioSubDeviceDriftCompensationKey: device.uid == virtualOutput.uid
             ]
-        ]
+        }
         let description: [String: Any] = [
             kAudioAggregateDeviceNameKey: "Noican Private Aggregate",
             kAudioAggregateDeviceUIDKey: "com.lightsound.noican.aggregate.\(UUID().uuidString)",
@@ -57,7 +73,10 @@ final class AggregateDevice: @unchecked Sendable {
         identifier = aggregate
         try waitUntilAlive()
         try configureTiming()
-        return aggregate
+        return AggregateComposition(
+            deviceID: aggregate,
+            virtualOutputChannels: virtualOutputChannels
+        )
     }
 
     func destroy() {

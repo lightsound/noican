@@ -34,7 +34,9 @@ use std::sync::atomic::{AtomicI32, Ordering};
 
 use noican_core::capture::{MAX_NATIVE_RATE, MIN_NATIVE_RATE};
 use noican_core::{IntensityControl, Stage, StagePublisher, SwitchingEngine};
-use noican_coreaudio::{Runtime, StreamLevels, WORKER_BLOCK_SAMPLES, monitor::MonitorState};
+use noican_coreaudio::{
+    Runtime, StreamLevels, VirtualOutputChannels, WORKER_BLOCK_SAMPLES, monitor::MonitorState,
+};
 use noican_models::{CatalogEntry, ModelSpec, StageOptions};
 
 const SUCCESS: i32 = 0;
@@ -144,6 +146,18 @@ pub unsafe extern "C" fn noican_engine_destroy(handle: *mut c_void) {
 
 /// Starts AUHAL on an already-created private Aggregate Device.
 ///
+/// `virtual_output_first_channel` and `virtual_output_channel_count`
+/// locate the virtual output's channels inside the aggregate's output
+/// channel list: the aggregate is composed as `[microphone, virtual
+/// output]`, so the first index is the number of output channels the
+/// microphone itself has (0 for the built-in microphone, 2 for a USB
+/// microphone with a stereo headphone jack) and the count is the virtual
+/// output's channel count. The transport routes the mono engine output
+/// there with an explicit AUHAL channel map and refuses to start when
+/// the range does not end at the aggregate's last output channel
+/// (`noican_coreaudio::routing`). An empty range is rejected here,
+/// before any weight download.
+///
 /// Missing model weights are downloaded first (on this control thread,
 /// without holding the control lock).
 ///
@@ -155,6 +169,8 @@ pub unsafe extern "C" fn noican_engine_destroy(handle: *mut c_void) {
 pub unsafe extern "C" fn noican_engine_start(
     handle: *mut c_void,
     aggregate_device: u32,
+    virtual_output_first_channel: u32,
+    virtual_output_channel_count: u32,
     model_id: *const c_char,
 ) -> i32 {
     let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
@@ -164,9 +180,22 @@ pub unsafe extern "C" fn noican_engine_start(
         Ok(model) => model,
         Err(error) => return set_error(handle, error),
     };
+    let virtual_output = match VirtualOutputChannels::new(
+        virtual_output_first_channel,
+        virtual_output_channel_count,
+    ) {
+        Ok(range) => range,
+        Err(error) => return set_error(handle, error.to_string()),
+    };
     start_with(handle, model, |engine, levels, monitor_state| {
-        Runtime::start(aggregate_device, engine, levels, monitor_state)
-            .map_err(|error| error.to_string())
+        Runtime::start(
+            aggregate_device,
+            virtual_output,
+            engine,
+            levels,
+            monitor_state,
+        )
+        .map_err(|error| error.to_string())
     })
 }
 
@@ -1371,6 +1400,50 @@ mod tests {
             assert!(
                 !error.contains("invalid capture sample rate"),
                 "a valid rate must not be blamed: {error}"
+            );
+            #[cfg(not(target_os = "macos"))]
+            assert!(
+                error.contains("only on macOS"),
+                "portable builds refuse the transport: {error}"
+            );
+        }
+        unsafe { noican_engine_destroy(handle) };
+    }
+
+    #[test]
+    fn start_rejects_an_empty_virtual_output_range_before_any_slow_work() {
+        let handle = unsafe { noican_engine_create(ptr::null()) };
+        assert!(!handle.is_null());
+        let model = c"passthrough";
+        // A virtual output without channels cannot receive audio: refused
+        // up front, before weights or audio objects are touched.
+        let result = unsafe { noican_engine_start(handle, 0, 2, 0, model.as_ptr()) };
+        assert_eq!(result, FAILURE);
+        let error = read_string(|buffer, capacity| unsafe {
+            noican_engine_last_error(handle, buffer, capacity)
+        })
+        .expect("range refusal records an error");
+        // (`read_string` truncates at 64 bytes; the prefix is what matters.)
+        assert!(
+            error.starts_with("virtual output routing failed"),
+            "unhelpful message: {error}"
+        );
+        // Valid layouts — the built-in microphone (no own outputs) and a
+        // headphone-equipped microphone (two outputs ahead of the
+        // virtual output) — pass validation; on portable builds the
+        // transport itself then refuses (and macOS fails on the
+        // nonexistent device 0 or its layout), but never with the
+        // empty-range message.
+        for first in [0, 2] {
+            let result = unsafe { noican_engine_start(handle, 0, first, 2, model.as_ptr()) };
+            assert_eq!(result, FAILURE);
+            let error = read_string(|buffer, capacity| unsafe {
+                noican_engine_last_error(handle, buffer, capacity)
+            })
+            .expect("start failure records an error");
+            assert!(
+                !error.starts_with("virtual output routing failed: the virtual output reports"),
+                "a valid layout must not be blamed: {error}"
             );
             #[cfg(not(target_os = "macos"))]
             assert!(

@@ -43,9 +43,19 @@ final class RustEngine: @unchecked Sendable {
         noican_engine_destroy(handle)
     }
 
-    func start(aggregateDevice: AudioObjectID, model: String) throws {
+    /// Starts the aggregate transport on a composed private aggregate.
+    /// The composition's `virtualOutputChannels` tells the Rust side
+    /// where the virtual output's channels sit in the aggregate's output
+    /// list (after the microphone's own output channels, if any) so the
+    /// engine output is routed there rather than into a
+    /// headphone-equipped microphone's own outputs; the Rust side
+    /// re-checks the range against the device before starting.
+    func start(_ aggregate: AggregateComposition, model: String) throws {
+        let layout = aggregate.virtualOutputChannels
         let result = model.withCString { id in
-            noican_engine_start(handle, aggregateDevice, id)
+            noican_engine_start(
+                handle, aggregate.deviceID, layout.firstChannel, layout.channelCount, id
+            )
         }
         try requireSuccess(result)
     }

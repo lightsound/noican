@@ -25,6 +25,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::monitor::{MonitorTee, fourcc};
 use crate::observe::{StreamLevels, WorkerBlockStats};
+use crate::routing::{VirtualOutputChannels, render_channel_map};
 use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
 
 mod monitor;
@@ -51,6 +52,7 @@ const AUDIO_UNIT_MANUFACTURER_APPLE: u32 = fourcc(*b"appl");
 const AUDIO_FORMAT_LINEAR_PCM: u32 = fourcc(*b"lpcm");
 
 const AUDIO_OUTPUT_UNIT_PROPERTY_CURRENT_DEVICE: u32 = 2_000;
+const AUDIO_OUTPUT_UNIT_PROPERTY_CHANNEL_MAP: u32 = 2_002;
 const AUDIO_OUTPUT_UNIT_PROPERTY_ENABLE_IO: u32 = 2_003;
 const AUDIO_OUTPUT_UNIT_PROPERTY_SET_INPUT_CALLBACK: u32 = 2_005;
 const AUDIO_OUTPUT_UNIT_PROPERTY_OS_WORKGROUP: u32 = 2_015;
@@ -85,6 +87,21 @@ struct AudioStreamBasicDescription {
     channels_per_frame: u32,
     bits_per_channel: u32,
     reserved: u32,
+}
+
+impl AudioStreamBasicDescription {
+    /// All-zero description, the landing value for property reads.
+    const EMPTY: Self = Self {
+        sample_rate: 0.0,
+        format_id: 0,
+        format_flags: 0,
+        bytes_per_packet: 0,
+        frames_per_packet: 0,
+        bytes_per_frame: 0,
+        channels_per_frame: 0,
+        bits_per_channel: 0,
+        reserved: 0,
+    };
 }
 
 #[repr(C)]
@@ -454,7 +471,11 @@ impl Runtime {
     ///
     /// `aggregate_device` must contain the selected physical input and the
     /// `BlackHole` output subdevice with drift compensation configured by the
-    /// Swift control plane.
+    /// Swift control plane. `virtual_output` says where that subdevice's
+    /// channels sit in the aggregate's output channel list (after any
+    /// output channels of the microphone itself); the mono engine output
+    /// is routed there with an explicit AUHAL channel map, see
+    /// [`crate::routing`].
     ///
     /// `levels` receives per-block input/output peak meters from the
     /// inference worker for the lifetime of this runtime; the worker
@@ -467,18 +488,21 @@ impl Runtime {
     ///
     /// # Errors
     ///
-    /// Returns [`CoreAudioError`] when AUHAL setup or worker startup fails.
+    /// Returns [`CoreAudioError`] when AUHAL setup or worker startup fails,
+    /// including [`CoreAudioError::OutputRouting`] when `virtual_output`
+    /// does not match the output channel count the aggregate reports.
     /// Every error path releases the AUHAL instance, the callback context,
     /// and the worker (RAII guards; nothing leaks on failed starts).
     pub fn start(
         aggregate_device: u32,
+        virtual_output: VirtualOutputChannels,
         engine: SwitchingEngine,
         levels: Arc<StreamLevels>,
         monitor_state: Arc<AtomicI32>,
     ) -> Result<Self, CoreAudioError> {
         let samples_ready = Arc::new(DispatchSemaphore::new()?);
         let mut unit = AuhalUnit::create()?;
-        configure_auhal(unit.raw(), aggregate_device)?;
+        configure_auhal(unit.raw(), aggregate_device, virtual_output)?;
 
         let (input_producer, input_consumer) = RingBuffer::new(RING_CAPACITY);
         let (output_producer, output_consumer) = RingBuffer::new(RING_CAPACITY);
@@ -769,7 +793,14 @@ fn create_auhal() -> Result<AudioUnit, CoreAudioError> {
     Ok(unit)
 }
 
-fn configure_auhal(unit: AudioUnit, device: AudioDeviceId) -> Result<(), CoreAudioError> {
+/// Configures the aggregate AUHAL: both directions enabled, mono 48 kHz
+/// client formats on both elements, and the output channel map that
+/// routes the mono render stream to `virtual_output`'s channels.
+fn configure_auhal(
+    unit: AudioUnit,
+    device: AudioDeviceId,
+    virtual_output: VirtualOutputChannels,
+) -> Result<(), CoreAudioError> {
     let enabled = 1_u32;
     set_property(
         unit,
@@ -811,7 +842,75 @@ fn configure_auhal(unit: AudioUnit, device: AudioDeviceId) -> Result<(), CoreAud
         OUTPUT_BUS,
         &format,
         "set AUHAL render format",
+    )?;
+    set_render_channel_map(unit, virtual_output)
+}
+
+/// Routes the mono render stream to the virtual output's channels inside
+/// the aggregate device (see [`crate::routing`] for the bug and the
+/// decision).
+///
+/// The map's length is the device's output channel count, read from the
+/// hardware-side format of the output element (`kAudioUnitScope_Output`,
+/// element 0 — the recipe Apple's AUHAL notes give for sizing an output
+/// channel map), and the map is set on that same scope and element:
+/// the property is documented for the input and output scopes, and the
+/// output-element map is set on the output scope by the shipping
+/// implementations this was checked against (`PortAudio`'s Core Audio
+/// host API, openFrameworks' AUHAL wrapper). Each entry names the client
+/// channel feeding that device channel, `-1` for silence; AUHAL's default
+/// (identity: client 0 → device 0) is what sent the engine output into a
+/// headphone-equipped microphone's own outputs.
+///
+/// The capture direction keeps AUHAL's default map (client channel 0 ←
+/// device input channel 0 = the microphone, which is the first
+/// subdevice); it is deliberately not touched here.
+fn set_render_channel_map(
+    unit: AudioUnit,
+    virtual_output: VirtualOutputChannels,
+) -> Result<(), CoreAudioError> {
+    let device_channels = device_output_channels(unit)?;
+    let map = render_channel_map(device_channels, virtual_output)?;
+    let byte_size = map
+        .len()
+        .checked_mul(size_of::<i32>())
+        .and_then(|bytes| u32::try_from(bytes).ok())
+        .ok_or_else(|| CoreAudioError::OutputRouting("channel map size overflow".to_owned()))?;
+    check_status(
+        unsafe {
+            AudioUnitSetProperty(
+                unit,
+                AUDIO_OUTPUT_UNIT_PROPERTY_CHANNEL_MAP,
+                AUDIO_UNIT_SCOPE_OUTPUT,
+                OUTPUT_BUS,
+                map.as_ptr().cast(),
+                byte_size,
+            )
+        },
+        "set AUHAL render channel map",
     )
+}
+
+/// Output channel count of the device behind the AUHAL, from the
+/// hardware-side stream format of the output element (readable once the
+/// current device is set, before initialization).
+fn device_output_channels(unit: AudioUnit) -> Result<u32, CoreAudioError> {
+    let mut format = AudioStreamBasicDescription::EMPTY;
+    let mut size = size_u32::<AudioStreamBasicDescription>()?;
+    check_status(
+        unsafe {
+            AudioUnitGetProperty(
+                unit,
+                AUDIO_UNIT_PROPERTY_STREAM_FORMAT,
+                AUDIO_UNIT_SCOPE_OUTPUT,
+                OUTPUT_BUS,
+                (&raw mut format).cast(),
+                &raw mut size,
+            )
+        },
+        "read aggregate device output format",
+    )?;
+    Ok(format.channels_per_frame)
 }
 
 /// Packed-float PCM at the 48 kHz engine rate with `channels` interleaved

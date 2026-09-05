@@ -361,6 +361,12 @@ fn configure_capture_auhal(
 /// switches the virtual output device itself to 48 kHz before starting
 /// this transport (it feeds consumers and must stay at the engine
 /// rate), so no device-side rate conversion is involved.
+///
+/// No channel map is needed here, unlike the aggregate path
+/// ([`crate::routing`]): this unit sits on the virtual output device
+/// alone, so AUHAL's identity map already lands client channels 0/1 on
+/// the virtual output's channels 0/1 — a microphone's own output
+/// channels never appear in front of them on this transport.
 fn configure_output_auhal(unit: AudioUnit, device: AudioDeviceId) -> Result<(), CoreAudioError> {
     let enabled = 1_u32;
     let disabled = 0_u32;
