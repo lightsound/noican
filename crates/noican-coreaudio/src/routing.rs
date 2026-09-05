@@ -175,10 +175,10 @@ pub fn render_channel_map(
         CoreAudioError::OutputRouting(format!("channel offset overflow: {error}"))
     })?;
     let mut map = vec![UNMAPPED_CHANNEL; len];
-    // `count >= 1` is guaranteed by the constructor, so `first` is in range.
-    if let Some(entry) = map.get_mut(first) {
-        *entry = ENGINE_CHANNEL;
-    }
+    // In range by construction (`count >= 1` and `end() == device_channels`);
+    // a plain index rather than a silent `get_mut`, because an all-`-1` map
+    // would be exactly the silent virtual microphone this module prevents.
+    map[first] = ENGINE_CHANNEL;
     Ok(map)
 }
 
