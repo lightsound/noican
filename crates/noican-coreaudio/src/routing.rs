@@ -22,16 +22,27 @@
 //! # Chosen fix
 //!
 //! Set `kAudioOutputUnitProperty_ChannelMap` on the aggregate AUHAL's
-//! output element explicitly: device channels belonging to the virtual
-//! output receive client channel 0 (the mono engine signal duplicated
-//! into each of them, like the split transport and the monitor already
-//! do in their callbacks); every other device channel — the
-//! microphone's own outputs — is `-1` (silent). The virtual output's
-//! position is computed by the control plane, which composes the
-//! subdevice list and therefore knows the layout by construction, and
-//! is validated here against the channel count AUHAL reports for the
-//! device: a mismatch refuses to start instead of misrouting silently,
-//! which is exactly the failure class this module exists to prevent.
+//! output element explicitly: the virtual output's **first** channel
+//! receives client channel 0 and every other device channel — the
+//! microphone's own outputs and the virtual output's remaining channels
+//! — is `-1` (silent). That reproduces, at the virtual output's actual
+//! position, exactly the signal shape the working built-in-microphone
+//! layout always had (engine signal on the virtual output's channel 0,
+//! silence on channel 1), so consumers see no level or channel change
+//! on that layout. Duplicating the mono signal into every virtual
+//! output channel (as the split transport and the monitor do in their
+//! own callbacks) was considered and deferred: no primary source states
+//! that an AUHAL map may point several device channels at one client
+//! channel, a rejected map would make every aggregate start fail —
+//! including the layout that works today — and it would shift the level
+//! seen by stereo-averaging consumers; it can be revisited on its own
+//! once hardware has confirmed the map, and no test here assumes it.
+//! The virtual output's position is computed by the control plane, which
+//! composes the subdevice list and therefore knows the layout by
+//! construction, and is validated here against the channel count AUHAL
+//! reports for the device: a mismatch refuses to start instead of
+//! misrouting silently, which is exactly the failure class this module
+//! exists to prevent.
 //!
 //! # Rejected alternatives
 //!
@@ -129,8 +140,10 @@ impl VirtualOutputChannels {
 /// to `target` on a device with `device_channels` output channels.
 ///
 /// The map holds one `i32` per device channel: the client channel that
-/// feeds it, or [`UNMAPPED_CHANNEL`]. Channels inside `target` receive
-/// client channel 0; all others are silent.
+/// feeds it, or [`UNMAPPED_CHANNEL`]. Only `target`'s first channel
+/// receives client channel 0; every other channel — ahead of the virtual
+/// output and inside it — is silent (see the module docs for why the
+/// mono signal is not fanned out across the virtual output).
 ///
 /// The map is only valid when `target` ends exactly at the device's last
 /// channel: the control plane composes the aggregate as
@@ -162,7 +175,8 @@ pub fn render_channel_map(
         CoreAudioError::OutputRouting(format!("channel offset overflow: {error}"))
     })?;
     let mut map = vec![UNMAPPED_CHANNEL; len];
-    for entry in &mut map[first..] {
+    // `count >= 1` is guaranteed by the constructor, so `first` is in range.
+    if let Some(entry) = map.get_mut(first) {
         *entry = ENGINE_CHANNEL;
     }
     Ok(map)
@@ -173,10 +187,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn built_in_microphone_layout_feeds_both_virtual_channels() {
-        // No microphone outputs: the virtual output is channels 0..2.
+    fn built_in_microphone_layout_matches_auhal_default() {
+        // No microphone outputs: the virtual output is channels 0..2, and
+        // the map must equal AUHAL's identity default for a mono client
+        // (signal on channel 0, channel 1 silent) so the layout that
+        // always worked keeps its exact signal shape.
         let target = VirtualOutputChannels::new(0, 2).expect("valid range");
-        assert_eq!(render_channel_map(2, target).expect("map"), vec![0, 0]);
+        assert_eq!(
+            render_channel_map(2, target).expect("map"),
+            vec![0, UNMAPPED_CHANNEL]
+        );
     }
 
     #[test]
@@ -185,7 +205,7 @@ mod tests {
         let target = VirtualOutputChannels::new(2, 2).expect("valid range");
         assert_eq!(
             render_channel_map(4, target).expect("map"),
-            vec![UNMAPPED_CHANNEL, UNMAPPED_CHANNEL, 0, 0]
+            vec![UNMAPPED_CHANNEL, UNMAPPED_CHANNEL, 0, UNMAPPED_CHANNEL]
         );
     }
 
@@ -196,7 +216,22 @@ mod tests {
         let map = render_channel_map(10, target).expect("map");
         assert_eq!(map.len(), 10);
         assert!(map[..8].iter().all(|&entry| entry == UNMAPPED_CHANNEL));
-        assert_eq!(&map[8..], &[0, 0]);
+        assert_eq!(&map[8..], &[0, UNMAPPED_CHANNEL]);
+    }
+
+    #[test]
+    fn exactly_one_device_channel_carries_the_engine() {
+        for (first, count) in [(0, 1), (0, 2), (2, 2), (6, 8)] {
+            let target = VirtualOutputChannels::new(first, count).expect("valid range");
+            let map = render_channel_map(first + count, target).expect("map");
+            let fed: Vec<usize> = map
+                .iter()
+                .enumerate()
+                .filter(|&(_, &entry)| entry != UNMAPPED_CHANNEL)
+                .map(|(index, _)| index)
+                .collect();
+            assert_eq!(fed, vec![usize::try_from(first).expect("small")]);
+        }
     }
 
     #[test]

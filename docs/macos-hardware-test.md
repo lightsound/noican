@@ -401,12 +401,17 @@ was never affected — which is why earlier acceptance runs, all made
 with the built-in microphone, did not see it.
 
 The fix sets an explicit AUHAL channel map on the aggregate unit: the
-virtual output's channels (their position is computed by the control
-plane from the subdevice list it composes and re-checked on the Rust
-side against the channel count the aggregate reports) receive the mono
-engine signal, duplicated into each of them like the split transport
-and the monitor already do; every other device output channel — the
-microphone's own outputs — is left silent. The capture direction is
+virtual output's **first** channel (its position is computed by the
+control plane from the subdevice list it composes and re-checked on the
+Rust side against the channel count the aggregate reports) receives the
+mono engine signal; every other device output channel — the
+microphone's own outputs and the virtual output's second channel — is
+left silent. On the built-in-microphone layout this map is identical to
+AUHAL's default, so the virtual microphone's signal shape there (engine
+signal on channel 0, silence on channel 1) is unchanged, and step 8
+verifies exactly that. Fanning the mono signal out to both virtual
+output channels (as the split transport does) was deliberately left out
+of this fix (see `noican_coreaudio::routing`). The capture direction is
 untouched. The split (native-rate) transport is not involved: its
 output AUHAL sits on the virtual output device alone, so a
 microphone's outputs never precede the virtual output there.
@@ -443,7 +448,15 @@ microphone's outputs never precede the virtual output there.
 8. Switch to the built-in microphone while running: after the brief
    busy state, recordings from the virtual microphone must still carry
    audio (regression check for the no-own-outputs layout, where the
-   virtual output is at channels 0–1). Switch back to the composite
+   virtual output is at channels 0–1). Pin the signal shape, not just
+   presence: record a fixed reference (a sentence at constant distance,
+   or a tone played into the room) once on this build and once on the
+   previous release build with the same settings, and compare per
+   channel in the waveform. Expected on this build: channel 0 carries
+   the signal at the same level as before (within about 1 dB of voiced
+   level) and channel 1 is silent, exactly as before — the map for this
+   layout equals AUHAL's default. A level change on channel 0, or
+   signal appearing on channel 1, fails. Switch back to the composite
    device: audio must return.
 9. *(If available)* Repeat 3–4 with an audio interface that has more
    than two outputs: the virtual output sits after all of them, and the
@@ -950,9 +963,12 @@ passes when:
 2. **Nothing leaks to the microphone's own outputs**: Noican's output
    is inaudible on headphones plugged into the microphone's own jack,
    in both On and Preview.
-3. **Built-in microphone unchanged**: the same recording with the
-   built-in microphone still carries audio (no regression on the layout
-   where the virtual output is the first subdevice with outputs).
+3. **Built-in microphone unchanged, level pinned**: the same recording
+   with the built-in microphone has the signal on virtual-microphone
+   channel 0 at the level of the previous build (within ~1 dB of voiced
+   level, per-channel waveform comparison against a same-settings
+   reference recording) and channel 1 silent, exactly as before — the
+   layout that always worked keeps its signal shape.
 4. **Everything else as before**: Preview, model switching, meters, and
    the underrun diagnostics behave exactly as on the earlier records
    with the composite device selected.
