@@ -18,7 +18,7 @@ covered"), which both recorded the owner's headset as refused.
 | App commit | `cursor/split-rational-resample-0035` at `5294b90` (PR #24) |
 | Microphone | HUAWEI FreeClip — Audio MIDI Setup shows it as two devices: **"HUAWEI FreeClip 1"** (input 1 / output 0, format **16,000 Hz, 1 ch, 16-bit integer, fixed**) and "HUAWEI FreeClip 2" (input 0 / output 2, 44.1 kHz selectable — the playback side, not used by the engine) |
 | Transport | Split (input-only AUHAL at 16 kHz → 3/1 polyphase → 48 kHz output-only AUHAL), strength as selected by the owner |
-| Model | **Not captured** — the owner's report and the log excerpt do not name the active model (no underrun line was emitted, and that line is the only place the log carries the model id). The app's default selection is FastEnhancer-B, but that is an inference, not evidence; see criterion 9 |
+| Model | **Not captured** — the owner does not recall which model was selected during the 60 s recording, and the log excerpt cannot tell (no underrun line was emitted, and that line is the only place the log carries the model id). The owner reports having switched through several models during the session without noticing dropouts, which is anecdotal, not a per-model 60 s count; see criterion 9 |
 
 ### What the rate reading corrected
 
@@ -81,7 +81,7 @@ Against the "Acceptance checklist (native-rate capture, issue #7)":
 | 6 | Rate-change recovery (A2DP ↔ HFP) | **Not reported** |
 | 7 | UI truthfulness (rate label, notice kind, out-of-range refusal) | **Partial** — rate label "16 kHz" and the telephony notice confirmed; the refusal of an out-of-range / unreadable-rate device was not exercised (no such device present) |
 | 8 | Real-time constraints hold (Instruments audit on the split transport) | **Partial** — only the start-time promotion result is evidenced (`worker realtime scheduling true`, both sessions); the Allocations / System Trace / Thread Sanitizer audit and the overload-induces-silence check were not run on this build |
-| 9 | Split-path underruns: zero over 60+ s with FastEnhancer-B | **Pass with a caveat** — no underrun line was emitted over the 60 s recording on the split transport; the active model was not captured (see Environment), so the FastEnhancer-B qualifier rests on the app default until the owner confirms |
+| 9 | Split-path underruns: zero over 60+ s with FastEnhancer-B | **Partial** — no underrun line was emitted over the 60 s recording on the split transport (zero underruns for whichever model was active), but the model is unknown, so the FastEnhancer-B qualifier is unverified; a deliberate FastEnhancer-B run closes it |
 
 Against the "Acceptance checklist (output-underrun diagnostics)":
 
@@ -91,10 +91,10 @@ Against the "Acceptance checklist (output-underrun diagnostics)":
 
 ## Open items
 
-- Confirm the model that was active during the 60 s recording (the
-  menu bar's Model picker at the time, or the persisted
-  `selectedModelID` preference) and add it to the Environment table; if
-  it was not FastEnhancer-B, criterion 9 needs a re-run with it.
+- Criterion 9 needs one deliberate run: select FastEnhancer-B, record
+  60+ s through the headset, and note the absence (or the verbatim
+  text) of an underrun line. The model of the 2026-09-05 recording
+  cannot be recovered.
 - Criterion 3 (30-minute endurance on the split transport) and
   criteria 5–6 are not yet evidenced on hardware; run them when
   convenient and append a record.
