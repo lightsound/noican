@@ -210,10 +210,13 @@ pub unsafe extern "C" fn noican_engine_start(
 /// the standard rate families (Bluetooth telephony profiles at
 /// 8/16/24 kHz, the 44.1 kHz family, 88.2/96 kHz interfaces; see
 /// [`noican_core::capture`]). `output_device` is the Noican/`BlackHole`
-/// virtual output. No Aggregate Device is involved: the microphone is
-/// captured natively and resampled to 48 kHz inside the transport by
-/// the exact rational ratio, with clock drift between the two devices
-/// compensated by a ring-occupancy servo.
+/// virtual output; the transport renders one client channel per output
+/// channel that device reports (read on the Rust side once the output
+/// AUHAL is bound to it — no channel count crosses this ABI) and refuses
+/// to start when it reports none. No Aggregate Device is involved: the
+/// microphone is captured natively and resampled to 48 kHz inside the
+/// transport by the exact rational ratio, with clock drift between the
+/// two devices compensated by a ring-occupancy servo.
 /// The split path adds a 50 ms output cushion; the aggregate path
 /// ([`noican_engine_start`]) is unchanged.
 ///
@@ -606,16 +609,18 @@ pub unsafe extern "C" fn noican_engine_monitor_device(handle: *const c_void) -> 
     })
 }
 
-/// Diagnostic: how the running aggregate transport routes the engine
-/// output into the Aggregate Device.
+/// Diagnostic: how the running transport routes the engine output into
+/// the virtual output.
 ///
-/// The description carries the output channel count AUHAL reports for
-/// the aggregate, the channel map requested, and the map read back after
-/// `AudioUnitInitialize`. Copies the description as UTF-8 and returns the
-/// required byte count including the terminating NUL; returns 0 while
-/// stopped, on the split
-/// transport (which needs no map), or for a null handle. Takes the
-/// control mutex (meant for the one-time start log, not the poll path).
+/// On the aggregate transport the description carries the output channel
+/// count AUHAL reports for the aggregate, the channel map requested, and
+/// the map read back after `AudioUnitInitialize`; on the split transport
+/// it carries the output channel count AUHAL reports for the virtual
+/// output device, the render format sized from it, and that format read
+/// back after initialize. Copies the description as UTF-8 and returns
+/// the required byte count including the terminating NUL; returns 0
+/// while stopped or for a null handle. Takes the control mutex (meant
+/// for the one-time start log, not the poll path).
 ///
 /// # Safety
 ///

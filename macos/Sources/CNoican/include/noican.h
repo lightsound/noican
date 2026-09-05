@@ -37,8 +37,11 @@ int32_t noican_engine_start(void *handle, uint32_t aggregate_device,
  * family, 88.2/96 kHz interfaces; an exotic rate such as 16001 Hz is
  * refused) and feeds output_device (the Noican/BlackHole
  * virtual output) at 48 kHz, with the exact-ratio rate conversion and
- * clock-drift compensation inside the transport. No Aggregate Device is
- * involved; the 48 kHz path (noican_engine_start) is unchanged. */
+ * clock-drift compensation inside the transport. The render format has
+ * one client channel per output channel the virtual output reports (read
+ * on the Rust side once the output AUHAL is bound to the device; a device
+ * reporting none refuses the start). No Aggregate Device is involved; the
+ * 48 kHz path (noican_engine_start) is unchanged. */
 int32_t noican_engine_start_native(void *handle, uint32_t input_device, uint32_t output_device,
                                    double capture_sample_rate, const char *model_id);
 void noican_engine_stop(void *handle);
@@ -105,12 +108,14 @@ uint64_t noican_engine_worker_block_max_ns(const void *handle);
 int32_t noican_engine_worker_realtime(const void *handle);
 void noican_engine_reset_debug_stats(void *handle);
 
-/* Diagnostic: how the running aggregate transport routes the engine
- * output into the Aggregate Device (the aggregate's reported output
- * channel count, the AUHAL channel map requested, and the map read back
- * after AudioUnitInitialize). Copies the description as UTF-8 and returns the
- * required byte count including the terminating NUL; 0 while stopped, on
- * the split transport, or for a null handle. Takes the control mutex —
+/* Diagnostic: how the running transport routes the engine output into
+ * the virtual output. Aggregate transport: the aggregate's reported
+ * output channel count, the AUHAL channel map requested, and the map read
+ * back after AudioUnitInitialize. Split transport: the virtual output's
+ * reported output channel count, the render format sized from it, and
+ * that format read back after initialize. Copies the description as
+ * UTF-8 and returns the required byte count including the terminating
+ * NUL; 0 while stopped or for a null handle. Takes the control mutex —
  * for the one-time start log, not the poll path. */
 size_t noican_engine_routing_description(const void *handle, char *buffer, size_t capacity);
 
