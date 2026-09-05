@@ -162,7 +162,7 @@ Phase 1 must cover the Noican driver.
    are present (docs/driver.md, "Coexistence"). Then uninstall stock
    BlackHole (or test the Noican-only state first) and confirm the app
    still selects the Noican device.
-6b. Driver swap: the UID changed with the 1-channel driver, and meeting
+7. Driver swap: the UID changed with the 1-channel driver, and meeting
    applications remember the microphone by UID. Open a meeting
    application (or QuickTime) that had Noican Microphone selected under
    the 0.1.0 driver and record whether it had to be selected again.
@@ -170,7 +170,7 @@ Phase 1 must cover the Noican driver.
    the 0.1.0 (2-channel) build — or use stock BlackHole 2ch — and start
    the app: it must run, with dual-mono recordings as before. Return to
    the current driver afterwards.
-7. Uninstall check (after the functional tests): `bash
+8. Uninstall check (after the functional tests): `bash
    scripts/uninstall-driver.sh`, then confirm no Noican device remains in
    Audio MIDI Setup and `/Library/Audio/Plug-Ins/HAL/Noican.driver` is
    gone.
@@ -1261,7 +1261,7 @@ Run the Level integrity procedure above; the build passes when:
 
 ## Acceptance checklist (1-channel driver)
 
-Run the Driver check (including step 6b) with the 0.2.0 driver
+Run the Driver check (including step 7, the driver swap) with the 0.2.0 driver
 installed, then the composite and level-integrity procedures; the build
 passes when:
 
