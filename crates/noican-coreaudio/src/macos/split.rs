@@ -13,8 +13,11 @@
 //!   format at its native rate (AUHAL performs no sample-rate conversion
 //!   on the input side, so the client rate must equal the device rate);
 //! - an **output-only AUHAL** on the virtual output device at the 48 kHz
-//!   engine rate (mono engine samples duplicated into every device
-//!   channel, like the preview monitor).
+//!   engine rate, with one client channel per virtual-output channel
+//!   (the count is read from the device once the unit is bound to it —
+//!   [`crate::routing::split_render_channels`]) and the mono engine
+//!   sample duplicated into every one of them (dual mono, like the
+//!   aggregate path and the preview monitor).
 //!
 //! The two units run on separate device clocks. The inference worker
 //! bridges them: it drains the native-rate capture ring, converts to
@@ -51,6 +54,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 use crate::callback::MAX_CALLBACK_FRAMES;
 use crate::monitor::MonitorTee;
 use crate::observe::{StreamLevels, WorkerBlockStats};
+use crate::routing::split_render_channels;
 use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
 
 use super::{
@@ -60,10 +64,10 @@ use super::{
     AudioBufferList, AudioDeviceId, AudioUnit, AudioUnitRender, AudioUnitRenderActionFlags,
     AudioUnitRenderCallback, AudioUnitSetProperty, AuhalUnit, ContextGuard, DispatchSemaphore,
     INPUT_BUS, NO_ERR, OSStatus, OUTPUT_BUS, PARAM_ERR, RING_CAPACITY, Runtime, Transport,
-    WORKER_WAIT_NS, WorkgroupGuard, attach_render_callback, audio_workgroup, check_status, monitor,
-    pcm_format, pcm_format_at, promote_current_thread_to_realtime, run_block,
-    saturating_elapsed_ns, set_max_frames_per_slice, set_property, size_u32, start_output_unit,
-    stop_output_unit,
+    WORKER_WAIT_NS, WorkgroupGuard, attach_render_callback, audio_workgroup, check_status,
+    device_output_channels, monitor, pcm_format, pcm_format_at, promote_current_thread_to_realtime,
+    run_block, saturating_elapsed_ns, set_max_frames_per_slice, set_property, size_u32,
+    start_output_unit, stop_output_unit, stream_format_channels,
 };
 
 /// Native-rate samples drained from the capture ring per worker pass
@@ -196,7 +200,7 @@ pub(super) fn start(
 
     // Output half: output-only AUHAL on the virtual output at 48 kHz.
     let output_pulses = Arc::new(AtomicU64::new(0));
-    let (output_unit, output_context) =
+    let (output_unit, output_context, routing) =
         build_output_half(output_device, output_consumer, &output_pulses, &underruns)?;
 
     let (monitor_control, tee) = monitor::monitor_pair(monitor_state);
@@ -265,21 +269,24 @@ pub(super) fn start(
         worker: Some(worker),
         running: true,
         monitor: monitor_control,
-        routing: String::new(),
+        routing,
     })
 }
 
 /// Builds the output half of the split transport: an output-only AUHAL
 /// on the virtual output with the render callback attached and the unit
-/// initialized, ready to be started.
+/// initialized, ready to be started. Also returns the routing
+/// description for [`Runtime::routing_description`]: the virtual
+/// output's reported channel count, the render format set from it, and
+/// that format read back after `AudioUnitInitialize`.
 fn build_output_half(
     output_device: AudioDeviceId,
     output_consumer: Consumer<f32>,
     output_pulses: &Arc<AtomicU64>,
     underruns: &Arc<AtomicU64>,
-) -> Result<(AuhalUnit, ContextGuard<OutputContext>), CoreAudioError> {
+) -> Result<(AuhalUnit, ContextGuard<OutputContext>, String), CoreAudioError> {
     let mut output_unit = AuhalUnit::create()?;
-    configure_output_auhal(output_unit.raw(), output_device)?;
+    let channels = configure_output_auhal(output_unit.raw(), output_device)?;
     let output_context = ContextGuard::new(OutputContext {
         output: output_consumer,
         pulses: Arc::clone(output_pulses),
@@ -293,7 +300,27 @@ fn build_output_half(
         "AudioUnitSetProperty(split output render callback)",
     )?;
     output_unit.initialize()?;
-    Ok((output_unit, output_context))
+    let routing = format!(
+        "virtual output channels {channels}, render format requested {channels} ch, {}",
+        describe_applied_render_format(output_unit.raw())
+    );
+    Ok((output_unit, output_context, routing))
+}
+
+/// Reads the client render format back for the start-time diagnostics,
+/// after `AudioUnitInitialize` — the point where AUHAL reconciles the
+/// client format with the device (the aggregate path reads its channel
+/// map back at the same point, for the same reason). Never fails the
+/// start: an unreadable format is reported as such.
+fn describe_applied_render_format(unit: AudioUnit) -> String {
+    match stream_format_channels(
+        unit,
+        AUDIO_UNIT_SCOPE_INPUT,
+        "read split output render format",
+    ) {
+        Ok(channels) => format!("render format read back after initialize {channels} ch"),
+        Err(error) => format!("render format read back after initialize: unreadable ({error})"),
+    }
 }
 
 /// Input-only AUHAL on the microphone: output disabled, capture client
@@ -345,17 +372,34 @@ fn configure_capture_auhal(
 }
 
 /// Output-only AUHAL on the virtual output: input disabled, mono 48 kHz
-/// engine samples rendered as interleaved stereo. The control plane
-/// switches the virtual output device itself to 48 kHz before starting
-/// this transport (it feeds consumers and must stay at the engine
-/// rate), so no device-side rate conversion is involved.
+/// engine samples rendered as interleaved packed float with **one
+/// client channel per virtual-output channel**. Returns that channel
+/// count. The control plane switches the virtual output device itself
+/// to 48 kHz before starting this transport (it feeds consumers and
+/// must stay at the engine rate), so no device-side rate conversion is
+/// involved.
+///
+/// The channel count is read from the device-side format of the output
+/// element once the current device is set — the same read the aggregate
+/// path performs for its channel map ([`device_output_channels`]), here
+/// on an output-only unit — and validated by
+/// [`split_render_channels`] (a device reporting no output channels
+/// refuses the start; there is no fallback width). The decision record
+/// for reading it here rather than receiving it from the control plane
+/// is in [`crate::routing`] ("The split transport's render format").
+/// Whether the read behaves on an output-only unit exactly as on the
+/// aggregate unit is what the hardware `Split output routing` log line
+/// pins (docs/macos-hardware-test.md).
 ///
 /// No channel map is needed here, unlike the aggregate path
 /// ([`crate::routing`]): this unit sits on the virtual output device
-/// alone, so AUHAL's identity map already lands client channels 0/1 on
-/// the virtual output's channels 0/1 — a microphone's own output
-/// channels never appear in front of them on this transport.
-fn configure_output_auhal(unit: AudioUnit, device: AudioDeviceId) -> Result<(), CoreAudioError> {
+/// alone, so AUHAL's identity map already lands client channel `i` on
+/// the virtual output's channel `i` for every channel the device has —
+/// a microphone's own output channels never appear in front of them on
+/// this transport. The render callback sizes its per-frame duplication
+/// from the buffer AUHAL hands it, so the callback code is the same for
+/// any width.
+fn configure_output_auhal(unit: AudioUnit, device: AudioDeviceId) -> Result<u32, CoreAudioError> {
     let enabled = 1_u32;
     let disabled = 0_u32;
     set_property(
@@ -382,7 +426,9 @@ fn configure_output_auhal(unit: AudioUnit, device: AudioDeviceId) -> Result<(), 
         &device,
         "select virtual output device",
     )?;
-    let format = pcm_format(2);
+    let device_channels = device_output_channels(unit, "read virtual output device format")?;
+    let channels = split_render_channels(device_channels)?;
+    let format = pcm_format(channels);
     set_property(
         unit,
         AUDIO_UNIT_PROPERTY_STREAM_FORMAT,
@@ -390,7 +436,8 @@ fn configure_output_auhal(unit: AudioUnit, device: AudioDeviceId) -> Result<(), 
         OUTPUT_BUS,
         &format,
         "set split output render format",
-    )
+    )?;
+    Ok(channels)
 }
 
 /// Registers `context` as the capture unit's input callback (the
@@ -595,9 +642,12 @@ unsafe extern "C" fn capture_input_callback(
 
 /// Render callback of the output-only AUHAL on the virtual output: pops
 /// engine-rate samples from the output ring into the device buffer,
-/// duplicating the mono engine signal into every device channel.
-/// Underrun renders silence — it never blocks (docs/tech-research.md
-/// §9); systematic underrun is prevented by the drift servo, not here.
+/// duplicating the mono engine signal into every client channel of each
+/// frame (as many as the render format set in [`configure_output_auhal`]
+/// — the width is taken from the buffer AUHAL hands over, so a 1- or
+/// 2-channel virtual output runs the same code). Underrun renders
+/// silence — it never blocks (docs/tech-research.md §9); systematic
+/// underrun is prevented by the drift servo, not here.
 unsafe extern "C" fn output_render_callback(
     context: *mut c_void,
     _action_flags: *mut AudioUnitRenderActionFlags,

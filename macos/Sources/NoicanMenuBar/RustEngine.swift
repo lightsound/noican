@@ -70,7 +70,11 @@ final class RustEngine: @unchecked Sendable {
     /// terms) and resampled to 48 kHz inside
     /// the transport by the exact rational ratio, with clock drift
     /// between the two devices compensated there. No Aggregate Device
-    /// is involved.
+    /// is involved. The virtual output's channel count is not passed:
+    /// the Rust side reads it from the device once its output AUHAL is
+    /// bound to it and sizes the render format from that (one client
+    /// channel per device channel; a device reporting none refuses the
+    /// start).
     func startNative(
         inputDevice: AudioObjectID,
         virtualOutput: AudioObjectID,
@@ -227,12 +231,14 @@ final class RustEngine: @unchecked Sendable {
         noican_engine_reset_debug_stats(handle)
     }
 
-    /// Diagnostic: how the aggregate transport routes the engine output
-    /// into the Aggregate Device (reported output channel count, the
-    /// channel map requested, and the map read back after
-    /// `AudioUnitInitialize`), or nil while
-    /// stopped or on the split transport. Reads the control mutex — for
-    /// the one-time start log only.
+    /// Diagnostic: how the running transport routes the engine output
+    /// into the virtual output — on the aggregate transport the
+    /// aggregate's reported output channel count, the channel map
+    /// requested, and the map read back after `AudioUnitInitialize`; on
+    /// the split transport the virtual output's reported channel count,
+    /// the render format sized from it, and its read-back — or nil while
+    /// stopped. Reads the control mutex — for the one-time start log
+    /// only.
     var routingDescription: String? {
         Self.copyString { buffer, capacity in
             noican_engine_routing_description(handle, buffer, capacity)

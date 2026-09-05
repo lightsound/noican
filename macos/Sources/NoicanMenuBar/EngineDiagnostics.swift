@@ -53,7 +53,10 @@ final class EngineDiagnostics {
     /// underrun count grew since the previous sample, carrying the
     /// active model id and the worker block statistics — enough to
     /// attribute dropouts to a model on hardware without any UI.
-    func sample(_ engine: RustEngine, activeModelID: String) {
+    /// `splitTransport` says which transport shape the session runs
+    /// (the control plane knows it from the start path it took) and
+    /// only selects the prefix of the one-time routing line.
+    func sample(_ engine: RustEngine, activeModelID: String, splitTransport: Bool) {
         if !startupLogged {
             startupLogged = true
             Self.log.info(
@@ -64,12 +67,16 @@ final class EngineDiagnostics {
                 \(Self.isTranslated, privacy: .public)
                 """
             )
-            // Aggregate path only: where the engine output lands inside
-            // the aggregate, as AUHAL reports it. The map's effect is
-            // invisible otherwise, and this is the line to read when the
-            // virtual microphone records silence.
+            // Where the engine output lands, as AUHAL reports it: inside
+            // the aggregate (channel map) on the aggregate path, or the
+            // virtual output's channel count and the render format sized
+            // from it on the split path. Neither is visible otherwise,
+            // and this is the line to read when the virtual microphone
+            // records silence. The prefixes differ so the acceptance
+            // procedures can pin each transport's line by name.
             if let routing = engine.routingDescription {
-                Self.log.info("Aggregate output routing: \(routing, privacy: .public)")
+                let prefix = splitTransport ? "Split output routing" : "Aggregate output routing"
+                Self.log.info("\(prefix, privacy: .public): \(routing, privacy: .public)")
             }
         }
         let underruns = engine.outputUnderruns
