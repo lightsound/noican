@@ -52,9 +52,12 @@ enum AudioDeviceCatalog {
         return identifiers.compactMap(deviceInfo)
     }
 
-    /// Device-UID prefix of the Noican-branded driver. The driver build
-    /// (scripts/build-driver.sh) derives its device UID
-    /// "com.lightsound.noican.2ch_UID" from this prefix; matching is
+    /// Device-UID prefix of the Noican-branded driver (trailing dot
+    /// included). The driver build (scripts/build-driver.sh) derives its
+    /// device UID "com.lightsound.noican.mic_UID" (driver 0.2.0, one
+    /// channel) from this prefix, as it did the 0.1.0 driver's
+    /// "com.lightsound.noican.2ch_UID"; both are recognized, so old and
+    /// new drivers can be swapped under one app build. Matching is
     /// case-insensitive by lowercasing first.
     private static let noicanDriverUIDPrefix = "com.lightsound.noican."
 
