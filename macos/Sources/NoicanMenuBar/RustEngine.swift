@@ -1,6 +1,7 @@
 import CNoican
 import CoreAudio
 import Foundation
+import NoicanState
 
 /// Picker ratings of one model, 0–5 with "more is better" on every axis
 /// (the registry inverts latency into responsiveness and compute cost
@@ -43,9 +44,19 @@ final class RustEngine: @unchecked Sendable {
         noican_engine_destroy(handle)
     }
 
-    func start(aggregateDevice: AudioObjectID, model: String) throws {
+    /// Starts the aggregate transport on a composed private aggregate.
+    /// The composition's `virtualOutputChannels` tells the Rust side
+    /// where the virtual output's channels sit in the aggregate's output
+    /// list (after the microphone's own output channels, if any) so the
+    /// engine output is routed there rather than into a
+    /// headphone-equipped microphone's own outputs; the Rust side
+    /// re-checks the range against the device before starting.
+    func start(_ aggregate: AggregateComposition, model: String) throws {
+        let layout = aggregate.virtualOutputChannels
         let result = model.withCString { id in
-            noican_engine_start(handle, aggregateDevice, id)
+            noican_engine_start(
+                handle, aggregate.deviceID, layout.firstChannel, layout.channelCount, id
+            )
         }
         try requireSuccess(result)
     }
@@ -214,6 +225,18 @@ final class RustEngine: @unchecked Sendable {
     /// be measured in isolation. A no-op while stopped.
     func resetDebugStats() {
         noican_engine_reset_debug_stats(handle)
+    }
+
+    /// Diagnostic: how the aggregate transport routes the engine output
+    /// into the Aggregate Device (reported output channel count, the
+    /// channel map requested, and the map read back after
+    /// `AudioUnitInitialize`), or nil while
+    /// stopped or on the split transport. Reads the control mutex — for
+    /// the one-time start log only.
+    var routingDescription: String? {
+        Self.copyString { buffer, capacity in
+            noican_engine_routing_description(handle, buffer, capacity)
+        }
     }
 
     /// The selectable model catalog, read from the Rust registry.

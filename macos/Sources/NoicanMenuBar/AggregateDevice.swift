@@ -1,21 +1,39 @@
 import CoreAudio
 import Foundation
+import NoicanState
+import os
+
+/// A created private aggregate together with the output layout the Rust
+/// transport must route into (see `VirtualOutputChannels` in
+/// `NoicanState`).
+struct AggregateComposition {
+    let deviceID: AudioObjectID
+    let virtualOutputChannels: VirtualOutputChannels
+}
 
 /// Owns the private Aggregate Device combining the physical input and the
 /// virtual output. `@unchecked Sendable`: creation happens on the detached
 /// start task and teardown on the main actor, but never concurrently —
 /// `AppState.isBusy` serializes every operation that touches this object.
 final class AggregateDevice: @unchecked Sendable {
+    private static let log = Logger(
+        subsystem: "com.lightsound.noican", category: "engine-diagnostics"
+    )
+
     private(set) var identifier = AudioObjectID(kAudioObjectUnknown)
 
     deinit {
         destroy()
     }
 
+    /// Composes the private aggregate around `input` and `virtualOutput`
+    /// and returns it together with the virtual output's position in the
+    /// aggregate's output channels (`VirtualOutputChannels`), which the
+    /// Rust transport needs to route the engine output there.
     func create(
         input: AudioDeviceInfo,
         virtualOutput: AudioDeviceInfo
-    ) throws -> AudioObjectID {
+    ) throws -> AggregateComposition {
         destroy()
         // Switch the subdevices themselves to 48 kHz before composing the
         // aggregate: the aggregate follows its clock master (the mic), and
@@ -24,16 +42,31 @@ final class AggregateDevice: @unchecked Sendable {
         // Bluetooth profiles, 44.1 kHz defaults, ...).
         try Self.ensure48k(input, role: "microphone \"\(input.name)\"")
         try Self.ensure48k(virtualOutput, role: "virtual output \"\(virtualOutput.name)\"")
-        let subdevices: [[String: Any]] = [
+        // Composition order is load-bearing: the microphone stays first
+        // (clock master; aggregate input channel 0 must be the
+        // microphone, not the loopback's own input), and the output
+        // layout handed to the transport is derived from this same list
+        // so the two can never disagree. Channel counts are re-read
+        // *now*, after the 48 kHz switch above: on ADAT/S-MUX interfaces
+        // the output channel count depends on the sample rate, so the
+        // device-refresh snapshot may describe a state the aggregate is
+        // not composed from. The snapshot is only the fallback for an
+        // unreadable configuration (the Rust side still checks the
+        // result against the aggregate's own channel count).
+        let ahead = [input]
+        let order = ahead + [virtualOutput]
+        let virtualOutputChannels = VirtualOutputChannels(
+            outputChannelsAhead: ahead.map(Self.liveOutputChannels),
+            virtualOutputChannels: Self.liveOutputChannels(virtualOutput)
+        )
+        let subdevices: [[String: Any]] = order.map { device -> [String: Any] in
             [
-                kAudioSubDeviceUIDKey: input.uid,
-                kAudioSubDeviceDriftCompensationKey: false
-            ],
-            [
-                kAudioSubDeviceUIDKey: virtualOutput.uid,
-                kAudioSubDeviceDriftCompensationKey: true
+                kAudioSubDeviceUIDKey: device.uid,
+                // Only the virtual output is drift-compensated against
+                // the microphone's clock.
+                kAudioSubDeviceDriftCompensationKey: device.uid == virtualOutput.uid
             ]
-        ]
+        }
         let description: [String: Any] = [
             kAudioAggregateDeviceNameKey: "Noican Private Aggregate",
             kAudioAggregateDeviceUIDKey: "com.lightsound.noican.aggregate.\(UUID().uuidString)",
@@ -57,7 +90,39 @@ final class AggregateDevice: @unchecked Sendable {
         identifier = aggregate
         try waitUntilAlive()
         try configureTiming()
-        return aggregate
+        let composition = AggregateComposition(
+            deviceID: aggregate,
+            virtualOutputChannels: virtualOutputChannels
+        )
+        Self.logComposition(composition, input: input, virtualOutput: virtualOutput)
+        return composition
+    }
+
+    /// Core Audio's own view of the composition, logged once per start
+    /// to hold against the channel count AUHAL reports (the routing line
+    /// logged by `EngineDiagnostics`). Same subsystem/category as the
+    /// other engine diagnostics.
+    private static func logComposition(
+        _ composition: AggregateComposition,
+        input: AudioDeviceInfo,
+        virtualOutput: AudioDeviceInfo
+    ) {
+        let layout = composition.virtualOutputChannels
+        let aggregate = composition.deviceID
+        log.info(
+            """
+            Aggregate composed: microphone "\(input.name, privacy: .public)" \
+            (in \(AudioDeviceCatalog.liveInputChannelCount(input.id) ?? 0, privacy: .public) / \
+            out \(layout.firstChannel, privacy: .public)), \
+            virtual output "\(virtualOutput.name, privacy: .public)" \
+            (out \(layout.channelCount, privacy: .public)); \
+            aggregate reports \
+            \(AudioDeviceCatalog.liveOutputChannelCount(aggregate) ?? 0, privacy: .public) \
+            output channel(s) in \
+            \(AudioDeviceCatalog.liveOutputStreamCount(aggregate) ?? 0, privacy: .public) \
+            stream(s)
+            """
+        )
     }
 
     func destroy() {
@@ -66,6 +131,12 @@ final class AggregateDevice: @unchecked Sendable {
         }
         AudioHardwareDestroyAggregateDevice(identifier)
         identifier = AudioObjectID(kAudioObjectUnknown)
+    }
+
+    /// Output channel count of `device` as it is right now, falling back
+    /// to the refresh-time snapshot when the live read fails.
+    private static func liveOutputChannels(_ device: AudioDeviceInfo) -> UInt32 {
+        AudioDeviceCatalog.liveOutputChannelCount(device.id) ?? device.outputChannels
     }
 
     /// Switches `device` to 48 kHz (polling the asynchronous change),

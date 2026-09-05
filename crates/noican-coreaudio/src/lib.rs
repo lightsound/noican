@@ -12,6 +12,10 @@
 //! split transport — a native-rate capture AUHAL plus a 48 kHz virtual-
 //! output AUHAL bridged by a drift-compensating resampler — for
 //! telephony-profile microphones such as Bluetooth headsets (issue #7).
+//! On the aggregate path the mono engine output is steered to the virtual
+//! output's channels with an explicit AUHAL channel map ([`routing`]), so
+//! a microphone with its own output channels (a headphone jack) does not
+//! capture the engine output ahead of the virtual output.
 //!
 //! Real-time rules (docs/tech-research.md §9): the Core Audio render
 //! callback only calls `AudioUnitRender`, moves `f32` samples through
@@ -31,8 +35,10 @@ use noican_core::SwitchingEngine;
 
 pub mod monitor;
 pub mod observe;
+pub mod routing;
 
 pub use observe::{StreamLevels, WorkerBlockStats};
+pub use routing::VirtualOutputChannels;
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -116,6 +122,14 @@ pub enum CoreAudioError {
     /// Message shape: see [`CoreAudioError::MonitorLoopbackOutput`].
     #[error("the built-in speakers would feed back")]
     MonitorSpeakerOutput,
+    /// The mono engine output could not be routed to the virtual output's
+    /// channels inside the Aggregate Device: the layout the control plane
+    /// composed does not match the channel count the device reports, or
+    /// the described range is empty (see [`routing`]). Refusing to start
+    /// is deliberate — a guessed map could feed a microphone's headphone
+    /// output and leave the virtual microphone silent.
+    #[error("virtual output routing failed: {0}")]
+    OutputRouting(String),
     /// This build does not target macOS.
     #[error("AUHAL is available only on macOS")]
     UnsupportedPlatform,
@@ -135,6 +149,7 @@ impl Runtime {
     /// Always returns [`CoreAudioError::UnsupportedPlatform`].
     pub fn start(
         _aggregate_device: u32,
+        _virtual_output: VirtualOutputChannels,
         _engine: SwitchingEngine,
         _levels: Arc<StreamLevels>,
         _monitor_state: Arc<std::sync::atomic::AtomicI32>,
@@ -174,6 +189,12 @@ impl Runtime {
     #[must_use]
     pub const fn monitor_device(&self) -> Option<u32> {
         None
+    }
+
+    /// Portable builds never route a render stream.
+    #[must_use]
+    pub const fn routing_description(&self) -> &'static str {
+        ""
     }
 
     /// Portable builds never run an audio device.

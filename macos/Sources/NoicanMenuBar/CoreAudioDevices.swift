@@ -252,10 +252,42 @@ enum AudioDeviceCatalog {
         return string as String
     }
 
+    /// Live output channel count of a device, or nil when its stream
+    /// configuration is unreadable. Read at aggregate-composition time
+    /// rather than taken from the device snapshot: the count can depend
+    /// on the sample rate (ADAT/S-MUX interfaces carry 8 channels at
+    /// 48 kHz, 4 at 96 kHz, 2 at 192 kHz), and the snapshot predates the
+    /// switch to 48 kHz that composition performs first.
+    static func liveOutputChannelCount(_ device: AudioDeviceID) -> UInt32? {
+        readStreamConfiguration(device, scope: kAudioObjectPropertyScopeOutput)?.channels
+    }
+
+    /// Live input channel count of a device, or nil when unreadable
+    /// (start-time diagnostics).
+    static func liveInputChannelCount(_ device: AudioDeviceID) -> UInt32? {
+        readStreamConfiguration(device, scope: kAudioObjectPropertyScopeInput)?.channels
+    }
+
+    /// Number of output streams a device exposes, or nil when unreadable.
+    /// An aggregate carries one stream per subdevice output; logged at
+    /// start so the AUHAL-reported channel count can be held against it.
+    static func liveOutputStreamCount(_ device: AudioDeviceID) -> UInt32? {
+        readStreamConfiguration(device, scope: kAudioObjectPropertyScopeOutput)?.streams
+    }
+
     private static func channelCount(
         _ device: AudioDeviceID,
         scope: AudioObjectPropertyScope
     ) -> UInt32 {
+        readStreamConfiguration(device, scope: scope)?.channels ?? 0
+    }
+
+    /// The stream configuration of one direction: how many streams the
+    /// device exposes there and their channels summed.
+    private static func readStreamConfiguration(
+        _ device: AudioDeviceID,
+        scope: AudioObjectPropertyScope
+    ) -> (streams: UInt32, channels: UInt32)? {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyStreamConfiguration,
             mScope: scope,
@@ -266,7 +298,7 @@ enum AudioDeviceCatalog {
             AudioObjectGetPropertyDataSize(device, &address, 0, nil, &byteCount) == noErr,
             byteCount >= UInt32(MemoryLayout<AudioBufferList>.size)
         else {
-            return 0
+            return nil
         }
         let storage = UnsafeMutableRawPointer.allocate(
             byteCount: Int(byteCount),
@@ -285,14 +317,15 @@ enum AudioDeviceCatalog {
                 storage
             ) == noErr
         else {
-            return 0
+            return nil
         }
         let buffers = UnsafeMutableAudioBufferListPointer(
             storage.assumingMemoryBound(to: AudioBufferList.self)
         )
-        return buffers.reduce(0) { total, buffer in
+        let channels = buffers.reduce(UInt32(0)) { total, buffer in
             total + buffer.mNumberChannels
         }
+        return (streams: UInt32(buffers.count), channels: channels)
     }
 }
 

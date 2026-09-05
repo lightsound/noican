@@ -47,6 +47,14 @@ hybrid build (C engine + B transport) must be re-accepted.
   — both are properties of Bluetooth, noted in the UI, not defects. A
   44.1 kHz device is full-band; only the conversion is noted. Devices
   whose rate is unreadable or outside 8–192 kHz are refused.
+- A **composite input/output microphone** for the aggregate-routing
+  checks: a 48 kHz-capable USB microphone that also exposes output
+  channels (a headphone jack — e.g. the Shure MV7+), or an audio
+  interface with both inputs and outputs. Such a device appears in Audio
+  MIDI Setup as *one* device with both an input and an output side; a
+  headset that shows up as two separate devices (input-only plus
+  output-only, as some Bluetooth headsets do) does not exercise this
+  path.
 
 The BlackHole-derived driver is GPL-3.0 and remains a separate program. Do
 not add its source or object files to the application target.
@@ -73,6 +81,15 @@ NOICAN_CODESIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
 ```
 
 Expected artifact: `dist/Noican.app`.
+
+The build replaces the bundle on disk but does not touch a running
+instance: after every rebuild quit the app (`pkill -x NoicanMenuBar`),
+`open dist/Noican.app`, and confirm the PID in the Console lines has
+changed before testing — a 2026-09-05 run reported a fix as ineffective
+because the pre-fix process was still the one under test. If `swift
+build` fails to find a type that exists in `macos/NoicanState`, remove
+the stale SwiftPM caches (`rm -rf macos/.build macos/NoicanState/.build`)
+and rebuild.
 
 Validate it:
 
@@ -372,6 +389,118 @@ microphone list must show the same value.
     noise cancellation off and on") instead of rendering perpetual
     silence under a green pill. A transient hiccup that merely fills
     the output ring must *not* trip it (the callback keeps pulsing).
+
+## Composite input/output microphone (headphone-equipped USB microphone)
+
+The private aggregate is composed as `[microphone, virtual output]`
+(the microphone is the clock master and must stay first so that
+aggregate input channel 0 is the microphone, not the loopback's own
+input). An aggregate's output channels are its subdevices' output
+channels concatenated in that order, so a microphone that has output
+channels of its own — a USB microphone with a headphone jack such as
+the Shure MV7+, or an audio interface — places them *ahead* of the
+virtual output. The transport renders a mono stream, and AUHAL's
+default output channel map sends client channel 0 to device output
+channel 0: on such a device that is the microphone's own headphone
+output, and the virtual output received silence. Recordings from the
+virtual microphone were completely silent while the preview (its own
+AUHAL on the default output) kept working, with no error and no
+underrun line in the log; the built-in microphone, having no outputs,
+was never affected — which is why earlier acceptance runs, all made
+with the built-in microphone, did not see it.
+
+The fix sets an explicit AUHAL channel map on the aggregate unit: the
+virtual output's **first** channel (its position is computed by the
+control plane from the subdevice list it composes and re-checked on the
+Rust side against the channel count the aggregate reports) receives the
+mono engine signal; every other device output channel — the
+microphone's own outputs and the virtual output's second channel — is
+left silent. On the built-in-microphone layout this map is identical to
+AUHAL's default, so the virtual microphone's signal shape there (engine
+signal on channel 0, silence on channel 1) is unchanged, and step 8
+verifies exactly that. Fanning the mono signal out to both virtual
+output channels (as the split transport does) was deliberately left out
+of this fix (see `noican_coreaudio::routing`). The capture direction is
+untouched. The split (native-rate) transport is not involved: its
+output AUHAL sits on the virtual output device alone, so a
+microphone's outputs never precede the virtual output there.
+
+1. Connect the composite device and make sure it advertises 48 kHz
+   (Audio MIDI Setup, input side), so the engine takes the aggregate
+   path. Note its output channel count from the output side (2 for a
+   stereo headphone jack).
+2. Plug wired headphones into the *device's own* headphone jack, and
+   make a different device (the built-in output, or other headphones)
+   the system default output.
+3. Select the composite device as the microphone, select `Passthrough`
+   or `FastEnhancer-B 48k`, then select On. The engine must reach
+   `Running`. The private aggregate is hidden from Audio MIDI Setup, so
+   read its composition from Console instead (subsystem
+   `com.lightsound.noican`, category `engine-diagnostics`, or the
+   `log stream` command from the underrun section) — two info lines
+   appear on every aggregate-path start:
+   - `Aggregate composed: microphone "<name>" (in X / out Y), virtual
+     output "<name>" (out Z); aggregate reports W output channel(s) in
+     S stream(s)` — Core Audio's view, written when the aggregate is
+     created (Y is the microphone's own output channel count, W must be
+     Y + Z, and S the number of subdevices contributing outputs);
+   - `Aggregate output routing: aggregate output channels N, virtual
+     output at channels A..B, channel map requested [...], channel map
+     read back after initialize [...]` — AUHAL's view, written about a
+     second after start. N must equal W, `A..B` must be `Y..Y+Z`, the
+     requested map must be `-1` everywhere except a `0` at index A, and
+     the read-back must equal the request.
+   Record both lines verbatim in the result record.
+4. Record 30+ seconds of speech from the Noican virtual microphone in
+   QuickTime (or CleanShot / OBS). The recording must be non-silent,
+   intelligible, and — at 100% strength — processed (materially differs
+   from a raw-microphone control). This is the check that failed before
+   the fix (a completely silent file).
+5. While recording, listen on the headphones plugged into the
+   microphone's own jack: **nothing from Noican** may come out of them
+   (the device's own hardware monitoring, if it has any, is unrelated
+   and may be audible — distinguish it by muting the device's monitor
+   control). Processed voice on the microphone's headphone jack is the
+   pre-fix misrouting and fails this check.
+6. Select Preview: the processed voice must play on the system default
+   output as before, the recording must continue unaffected, and the
+   microphone's own headphone jack must still stay silent.
+7. Switch models while recording (aggregate-path criteria: bounded fade
+   only) and watch Console for the underrun line — a light model must
+   log zero underruns as before.
+8. Switch to the built-in microphone while running: after the brief
+   busy state, recordings from the virtual microphone must still carry
+   audio (regression check for the no-own-outputs layout, where the
+   virtual output is at channels 0–1). Pin the signal shape, not just
+   presence: record a fixed reference (a sentence at constant distance,
+   or a tone played into the room) once on this build and once on the
+   previous release build with the same settings, and compare per
+   channel in the waveform. Expected on this build: channel 0 carries
+   the signal at the same level as before (within about 1 dB of voiced
+   level) and channel 1 is silent, exactly as before — the map for this
+   layout equals AUHAL's default. A level change on channel 0, or
+   signal appearing on channel 1, fails. Switch back to the composite
+   device: audio must return.
+9. *(If available)* Repeat 3–4 with an audio interface that has more
+   than two outputs: the virtual output sits after all of them, and the
+   recording must still carry audio.
+
+A start refusal reading `virtual output routing failed: the aggregate
+device reports N output channel(s), but the virtual output was expected
+at channels A..B` means the composed layout and the device disagree;
+record N, A, B, the device's Audio MIDI Setup input/output channel
+counts, and the `Aggregate composed` line (the only one of the two
+Console lines that prints on a refusal — there is no running transport,
+so the `Aggregate output routing` line never appears; N, A and B are in
+the refusal message itself). This refusal is deliberate
+(the alternative is a guessed map that may misroute silently); do not
+characterize the path as working. The counts are re-read after the
+48 kHz switch and immediately before the aggregate is composed, so a
+rate-dependent channel count (ADAT/S-MUX interfaces expose 8 channels
+at 48 kHz but 4 at 96 kHz) is not a cause of this refusal; if it still
+appears, the first number to question is N — whether AUHAL reports the
+aggregate's total output channels or only its first stream, which no
+primary source states outright.
 
 ## Preview (self-monitor)
 
@@ -852,6 +981,32 @@ Run the non-48 kHz microphone procedure above; the build passes when:
 9. **Split-path underruns**: with FastEnhancer-B the split transport
    logs zero underruns over 60+ s of continuous speech (this also
    closes criterion 4 of the output-underrun checklist below).
+
+## Acceptance checklist (composite input/output microphone)
+
+Run the composite input/output microphone procedure above; the build
+passes when:
+
+1. **Recordings carry audio**: with a headphone-equipped USB microphone
+   (or an interface with outputs) as the input, a QuickTime recording
+   from the Noican virtual microphone contains the processed speech —
+   not silence. Record the device, its input/output channel counts, and
+   the aggregate's output channel count.
+2. **Nothing leaks to the microphone's own outputs**: Noican's output
+   is inaudible on headphones plugged into the microphone's own jack,
+   in both On and Preview.
+3. **Built-in microphone unchanged, level pinned**: the same recording
+   with the built-in microphone has the signal on virtual-microphone
+   channel 0 at the level of the previous build (within ~1 dB of voiced
+   level, per-channel waveform comparison against a same-settings
+   reference recording) and channel 1 silent, exactly as before — the
+   layout that always worked keeps its signal shape.
+4. **Everything else as before**: Preview, model switching, meters, and
+   the underrun diagnostics behave exactly as on the earlier records
+   with the composite device selected.
+5. *(Optional)* **Split path unaffected**: a recording through a
+   native-rate (Bluetooth or 44.1 kHz) microphone still carries audio —
+   the split transport has no aggregate and takes no channel map.
 
 ## Acceptance checklist (output-underrun diagnostics)
 

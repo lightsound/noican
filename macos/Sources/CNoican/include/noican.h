@@ -10,7 +10,22 @@ extern "C" {
 
 void *noican_engine_create(const char *models_directory);
 void noican_engine_destroy(void *handle);
-int32_t noican_engine_start(void *handle, uint32_t aggregate_device, const char *model_id);
+/* Aggregate transport for 48 kHz microphones. The aggregate is composed
+ * as [microphone, virtual output], and its output channels are the
+ * subdevices' output channels in that order — so a microphone with its
+ * own outputs (a USB microphone with a headphone jack, an audio
+ * interface) sits ahead of the virtual output. virtual_output_first_channel
+ * is the number of output channels ahead of the virtual output (the
+ * microphone's own output channel count; 0 for the built-in microphone)
+ * and virtual_output_channel_count the virtual output's channel count.
+ * The transport routes the mono engine output to exactly that range with
+ * an AUHAL channel map (silence everywhere else) and refuses to start
+ * when the range does not end at the aggregate's last output channel or
+ * is empty; the capture side (aggregate input channel 0 = microphone) is
+ * unchanged. */
+int32_t noican_engine_start(void *handle, uint32_t aggregate_device,
+                            uint32_t virtual_output_first_channel,
+                            uint32_t virtual_output_channel_count, const char *model_id);
 
 /* Split transport for microphones that cannot run at the 48 kHz engine
  * rate (issue #7): captures input_device at capture_sample_rate (its
@@ -87,6 +102,15 @@ uint64_t noican_engine_worker_blocks_over_budget(const void *handle);
 uint64_t noican_engine_worker_block_max_ns(const void *handle);
 int32_t noican_engine_worker_realtime(const void *handle);
 void noican_engine_reset_debug_stats(void *handle);
+
+/* Diagnostic: how the running aggregate transport routes the engine
+ * output into the Aggregate Device (the aggregate's reported output
+ * channel count, the AUHAL channel map requested, and the map read back
+ * after AudioUnitInitialize). Copies the description as UTF-8 and returns the
+ * required byte count including the terminating NUL; 0 while stopped, on
+ * the split transport, or for a null handle. Takes the control mutex —
+ * for the one-time start log, not the poll path. */
+size_t noican_engine_routing_description(const void *handle, char *buffer, size_t capacity);
 
 size_t noican_engine_last_error(const void *handle, char *buffer, size_t capacity);
 

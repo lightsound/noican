@@ -216,10 +216,10 @@ final class AppState: ObservableObject {
             var captureRate: Double?
             let result = Result {
                 if Self.shouldUseAggregate(for: input.id, snapshot: snapshotCapture) {
-                    let aggregateID = try aggregate.create(
+                    let composition = try aggregate.create(
                         input: input, virtualOutput: virtualOutput
                     )
-                    try engine.start(aggregateDevice: aggregateID, model: modelID)
+                    try engine.start(composition, model: modelID)
                 } else {
                     // The virtual output feeds consumers and must stay at
                     // 48 kHz; the aggregate path switches it inside
