@@ -430,9 +430,11 @@ and consumers that average a stereo input to mono — common in meeting
 applications — received it 6 dB down. Duplicating in the *map* instead
 (`[-1, -1, 0, 0]`) was rejected because no primary source states that
 an AUHAL map may name one client channel twice, and a rejected map
-would fail every aggregate start; the one-to-one map is what hardware
-accepted and read back (see `noican_coreaudio::routing` for the full
-decision record). Step 8 and acceptance criterion 3 pin the new shape:
+would fail every aggregate start; a one-to-one map is the documented
+shape, and its single-entry form was accepted and read back on hardware
+(PR #26's record) — the two-entry form is what acceptance criterion 2
+below pins (see `noican_coreaudio::routing` for the full decision
+record). Step 8 and acceptance criterion 3 pin the new shape:
 both channels carry the same signal, and channel 0's level is unchanged
 against the previous build. Note for consumers that *sum* L+R without
 scaling (rare; most average): the dual-mono signal reads +6 dB there
@@ -576,8 +578,10 @@ Microphone is muted in System Settings › Sound › Input."; a nominal
 reading clears it within a second. Each detection and resolution is
 also written to the unified log (subsystem `com.lightsound.noican`,
 category `engine-diagnostics`, prefix `Virtual output level:`) with the
-scalar reading, so the frequency of unexplained changes can be
-established over time. Nothing is written back to the device.
+scalar reading — one line per *distinct* reading, so every slider move
+logs but a restart with the slider still down does not — so the
+frequency of unexplained changes can be established over time. Nothing
+is written back to the device.
 
 **Isolating "Noican sounds quiet".** Record the same sentence at the
 same distance twice in QuickTime (File › New Audio Recording, maximum
