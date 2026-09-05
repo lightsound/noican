@@ -51,8 +51,11 @@
 //!   share a client channel, and a rejected or silently trimmed map
 //!   would break every aggregate start — including the built-in
 //!   microphone layout that has always worked. A one-to-one map, by
-//!   contrast, is the documented shape and was accepted and read back
-//!   unchanged on hardware (an MV7-class microphone, 4-channel aggregate). Rejected.
+//!   contrast, is the documented shape, and its single-entry form
+//!   (`[-1, -1, 0, -1]`) was accepted and read back unchanged on
+//!   hardware (an MV7-class microphone, 4-channel aggregate); the
+//!   two-entry form this module now builds is pinned by the composite
+//!   microphone acceptance checklist rather than measured yet. Rejected.
 //! - **Multichannel client stream, duplicate in the callback** (this
 //!   design). The duplication is a per-frame copy the other two paths
 //!   already perform, and the map stays one-to-one. It costs the

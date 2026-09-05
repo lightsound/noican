@@ -1423,10 +1423,16 @@ unsafe extern "C" fn render_callback(
         context.faulted.store(true, Ordering::Release);
         return PARAM_ERR;
     }
+    let geometry = render_geometry(buffer.data_byte_size, buffer.number_channels, frame_count);
+    let samples =
+        unsafe { std::slice::from_raw_parts_mut(buffer.data.cast::<f32>(), geometry.samples()) };
     let frames = usize::try_from(frame_count).unwrap_or(0);
     let Some(capture_bytes) = capture_byte_size(frames, context.capture.len()) else {
         // Cannot happen while kAudioUnitProperty_MaximumFramesPerSlice
-        // holds; never allocate on the audio thread to compensate.
+        // holds; never allocate on the audio thread to compensate. The
+        // render buffer is silenced first so nothing stale can reach the
+        // virtual output should AUHAL play it despite the error.
+        samples.fill(0.0);
         context.faulted.store(true, Ordering::Release);
         return PARAM_ERR;
     };
@@ -1448,9 +1454,6 @@ unsafe extern "C" fn render_callback(
             &raw mut capture_list,
         )
     };
-    let geometry = render_geometry(buffer.data_byte_size, buffer.number_channels, frame_count);
-    let samples =
-        unsafe { std::slice::from_raw_parts_mut(buffer.data.cast::<f32>(), geometry.samples()) };
     if status != NO_ERR {
         samples.fill(0.0);
         context.faulted.store(true, Ordering::Release);
