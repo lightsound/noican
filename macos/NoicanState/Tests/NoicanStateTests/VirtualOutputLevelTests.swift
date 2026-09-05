@@ -63,7 +63,7 @@ struct VirtualOutputLevelReducerTests {
     func showAndClear() {
         let running = runningModel()
         let (shown, effects) = step(running, .virtualOutputLevelObserved(.turnedDown(scalar: 0.18)))
-        #expect(shown.messages.virtualOutputLevelNotice == VirtualOutputLevel.turnedDown(scalar: 0.18).notice)
+        #expect(shown.virtualOutputLevelNotice == VirtualOutputLevel.turnedDown(scalar: 0.18).notice)
         // Only the message moves: no engine transition, no effect.
         #expect(effects.isEmpty, "the level is never restored automatically")
         #expect(shown.machine == running.machine)
@@ -71,8 +71,21 @@ struct VirtualOutputLevelReducerTests {
         #expect(!shown.isModeUnfulfilled)
 
         let cleared = drive(shown, [.virtualOutputLevelObserved(.nominal)])
-        #expect(cleared.messages.virtualOutputLevelNotice == nil)
+        #expect(cleared.virtualOutputLevelNotice == nil)
         #expect(cleared.machine == running.machine)
+    }
+
+    @Test("Distinct slider positions are distinct readings behind one notice")
+    func scalarMovesAreRecorded() {
+        // The shell dedupes on the whole reading so every move reaches
+        // the log; the model must therefore keep the scalar, not just
+        // the (identical) notice text.
+        let low = drive(runningModel(), [.virtualOutputLevelObserved(.turnedDown(scalar: 0.5))])
+        let lower = drive(low, [.virtualOutputLevelObserved(.turnedDown(scalar: 0.05))])
+        #expect(low.virtualOutputLevel == .turnedDown(scalar: 0.5))
+        #expect(lower.virtualOutputLevel == .turnedDown(scalar: 0.05))
+        #expect(low.virtualOutputLevel != lower.virtualOutputLevel)
+        #expect(low.virtualOutputLevelNotice == lower.virtualOutputLevelNotice)
     }
 
     @Test("Mute replaces the turned-down notice and clears the same way")
@@ -81,9 +94,9 @@ struct VirtualOutputLevelReducerTests {
             .virtualOutputLevelObserved(.turnedDown(scalar: 0.5)),
             .virtualOutputLevelObserved(.muted)
         ])
-        #expect(muted.messages.virtualOutputLevelNotice == VirtualOutputLevel.muted.notice)
+        #expect(muted.virtualOutputLevelNotice == VirtualOutputLevel.muted.notice)
         let cleared = drive(muted, [.virtualOutputLevelObserved(.nominal)])
-        #expect(cleared.messages.virtualOutputLevelNotice == nil)
+        #expect(cleared.virtualOutputLevelNotice == nil)
     }
 
     @Test("Readings are accepted through busy monitor and model transitions")
@@ -93,13 +106,13 @@ struct VirtualOutputLevelReducerTests {
         let armingMonitor = drive(readyModel(), [tap(.preview), .startCompleted(error: nil)])
         #expect(armingMonitor.isBusy)
         let noticed = drive(armingMonitor, [.virtualOutputLevelObserved(.muted)])
-        #expect(noticed.messages.virtualOutputLevelNotice == VirtualOutputLevel.muted.notice)
+        #expect(noticed.virtualOutputLevelNotice == VirtualOutputLevel.muted.notice)
         #expect(noticed.machine == armingMonitor.machine)
 
         let switching = drive(runningModel(), [.modelSelected("dfn3")])
         #expect(switching.isBusy)
         let noticedSwitching = drive(switching, [.virtualOutputLevelObserved(.turnedDown(scalar: 0.4))])
-        #expect(noticedSwitching.messages.virtualOutputLevelNotice != nil)
+        #expect(noticedSwitching.virtualOutputLevelNotice != nil)
     }
 
     @Test("Readings are ignored without a live transport")
@@ -114,19 +127,19 @@ struct VirtualOutputLevelReducerTests {
     @Test("Any engine teardown clears the notice")
     func clearedOnTeardown() {
         let shown = drive(runningModel(), [.virtualOutputLevelObserved(.turnedDown(scalar: 0.2))])
-        #expect(shown.messages.virtualOutputLevelNotice != nil)
+        #expect(shown.virtualOutputLevelNotice != nil)
 
         let off = drive(shown, [tap(.off, isEngineRunning: true)])
-        #expect(off.messages.virtualOutputLevelNotice == nil)
+        #expect(off.virtualOutputLevelNotice == nil)
 
         let stalled = drive(shown, [.audioStalled])
-        #expect(stalled.messages.virtualOutputLevelNotice == nil)
+        #expect(stalled.virtualOutputLevelNotice == nil)
 
         // A live microphone switch rebuilds the transport; the new one
         // is re-read once it is up.
         let rebuilding = drive(shown, [.microphoneSelected(usbMic.uid)])
         #expect(rebuilding.isBusy)
-        #expect(rebuilding.messages.virtualOutputLevelNotice == nil)
+        #expect(rebuilding.virtualOutputLevelNotice == nil)
     }
 
     @Test("The notice survives an engine fault while the transport stays up")
@@ -135,10 +148,10 @@ struct VirtualOutputLevelReducerTests {
             .virtualOutputLevelObserved(.muted),
             .engineFaulted
         ])
-        #expect(faulted.messages.virtualOutputLevelNotice == VirtualOutputLevel.muted.notice)
+        #expect(faulted.virtualOutputLevelNotice == VirtualOutputLevel.muted.notice)
         // The poll keeps running on the faulted-but-live transport, so a
         // nominal reading still clears it.
         let cleared = drive(faulted, [.virtualOutputLevelObserved(.nominal)])
-        #expect(cleared.messages.virtualOutputLevelNotice == nil)
+        #expect(cleared.virtualOutputLevelNotice == nil)
     }
 }

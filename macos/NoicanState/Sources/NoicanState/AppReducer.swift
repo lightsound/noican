@@ -542,15 +542,15 @@ extension AppReducer {
     }
 
     /// The shell's reading of the Noican virtual output device's own
-    /// volume/mute controls: maintain the notice slot — set while the
-    /// device is turned down or muted, cleared as soon as a reading is
-    /// nominal — and nothing else. Deliberately no effect: restoring the
-    /// level would fight whichever app or user set it and remove the
-    /// user's own adjustment (`VirtualOutputLevel`). Accepted only while
-    /// a transport is up (including through busy monitor/model
-    /// transitions — the device is live regardless), because the poll
-    /// that keeps the notice truthful only runs then; teardown paths
-    /// clear the slot themselves.
+    /// volume/mute controls: record it — the notice under the mode
+    /// control is its projection, shown while the device is turned down
+    /// or muted and gone as soon as a reading is nominal — and nothing
+    /// else. Deliberately no effect: restoring the level would fight
+    /// whichever app or user set it and remove the user's own adjustment
+    /// (`VirtualOutputLevel`). Accepted only while a transport is up
+    /// (including through busy monitor/model transitions — the device is
+    /// live regardless), because the poll that keeps the reading
+    /// truthful only runs then; teardown paths reset it themselves.
     private static func virtualOutputLevelObserved(
         _ state: AppModel,
         _ level: VirtualOutputLevel
@@ -559,7 +559,7 @@ extension AppReducer {
             return (state, [])
         }
         var state = state
-        state.messages.virtualOutputLevelNotice = level.notice
+        state.virtualOutputLevel = level
         return (state, [])
     }
 
@@ -593,7 +593,7 @@ extension AppReducer {
         var state = state
         state.messages.previewError = nil
         state.messages.modelError = nil
-        state.messages.virtualOutputLevelNotice = nil
+        state.virtualOutputLevel = .nominal
         state.machine = .settled(.failed(message, session: nil))
         return (state, [.stopEngine])
     }
@@ -621,7 +621,7 @@ extension AppReducer {
     ) -> (state: AppModel, effects: [AppEffect]) {
         var state = state
         state.messages.modelError = nil
-        state.messages.virtualOutputLevelNotice = nil
+        state.virtualOutputLevel = .nominal
         state.machine = .settled(.off)
         return (state, [.stopEngine])
     }
@@ -639,10 +639,10 @@ extension AppReducer {
         var state = state
         // The teardown clears any live session; a model-switch message
         // would describe the torn-down engine, so it clears with it, and
-        // the virtual-output level notice is re-read once the new
+        // the virtual-output level reading is re-taken once the new
         // transport is up (its poll stops with the old one).
         state.messages.modelError = nil
-        state.messages.virtualOutputLevelNotice = nil
+        state.virtualOutputLevel = .nominal
         guard state.isEngineAvailable else {
             state.machine = .settled(.failed("Rust engine unavailable", session: nil))
             return (state, [.stopEngine])

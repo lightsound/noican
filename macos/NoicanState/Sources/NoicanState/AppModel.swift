@@ -126,31 +126,19 @@ public struct MessageSlots: Hashable, Sendable {
     /// the toggle to the re-read real status. Cleared by the next toggle
     /// attempt and by a later clean completion.
     public var launchAtLoginError: String?
-    /// The Noican virtual output device's own volume control is turned
-    /// down, or its mute is on, so consumers hear the processed voice
-    /// quietly or not at all (`VirtualOutputLevel.notice`). Shown under
-    /// the mode control while a transport is live; maintained by
-    /// `virtualOutputLevelObserved` (set while the condition holds,
-    /// cleared the moment a reading is nominal) and cleared by any
-    /// engine teardown — the poll that keeps it truthful only runs while
-    /// a transport is live. Never acted on automatically: the level is
-    /// the user's (or another app's) setting to change.
-    public var virtualOutputLevelNotice: String?
 
     public init(
         previewError: String? = nil,
         previewUnavailableReason: String? = nil,
         microphoneError: String? = nil,
         modelError: String? = nil,
-        launchAtLoginError: String? = nil,
-        virtualOutputLevelNotice: String? = nil
+        launchAtLoginError: String? = nil
     ) {
         self.previewError = previewError
         self.previewUnavailableReason = previewUnavailableReason
         self.microphoneError = microphoneError
         self.modelError = modelError
         self.launchAtLoginError = launchAtLoginError
-        self.virtualOutputLevelNotice = virtualOutputLevelNotice
     }
 }
 
@@ -196,6 +184,19 @@ public struct AppModel: Hashable, Sendable {
     public var isLaunchAtLoginBusy: Bool
     /// The user-facing message slots.
     public var messages: MessageSlots
+    /// The last classified reading of the Noican virtual output device's
+    /// own volume/mute controls (`VirtualOutputLevel`), as observed by
+    /// the shell while a transport is live. Kept as the full reading —
+    /// not just its notice text — so the shell can tell one slider
+    /// position from the next and log every distinct move with its
+    /// scalar, while the popover renders the projection
+    /// `virtualOutputLevelNotice`. Maintained by
+    /// `AppEvent.virtualOutputLevelObserved`; reset to `.nominal` by
+    /// every engine teardown, because the poll that keeps it truthful
+    /// only runs while a transport is live. Never acted on
+    /// automatically: the level is the user's (or another app's) setting
+    /// to change.
+    public var virtualOutputLevel: VirtualOutputLevel
     /// Whether the Rust engine handle was created. When false, mode and
     /// selection changes still update the pickers but never claim engine
     /// transitions.
@@ -212,6 +213,7 @@ public struct AppModel: Hashable, Sendable {
         isLaunchAtLoginEnabled: Bool = false,
         isLaunchAtLoginBusy: Bool = false,
         messages: MessageSlots = MessageSlots(),
+        virtualOutputLevel: VirtualOutputLevel = .nominal,
         isEngineAvailable: Bool = true
     ) {
         self.mode = mode
@@ -224,6 +226,7 @@ public struct AppModel: Hashable, Sendable {
         self.isLaunchAtLoginEnabled = isLaunchAtLoginEnabled
         self.isLaunchAtLoginBusy = isLaunchAtLoginBusy
         self.messages = messages
+        self.virtualOutputLevel = virtualOutputLevel
         self.isEngineAvailable = isEngineAvailable
     }
 }
@@ -362,6 +365,16 @@ extension AppModel {
     /// is not running".
     public var isModeUnfulfilled: Bool {
         engineErrorMessage != nil || (mode == .preview && messages.previewError != nil)
+    }
+
+    /// One-line notice under the mode control when the Noican virtual
+    /// output device's own volume is turned down or its mute is on
+    /// (consumers hear the processed voice quietly or not at all), or nil.
+    /// A projection of `virtualOutputLevel` in the message slots' voice —
+    /// a warning about the environment, not an engine failure, so it
+    /// leaves the phase, the pill tint, and `isModeUnfulfilled` alone.
+    public var virtualOutputLevelNotice: String? {
+        virtualOutputLevel.notice
     }
 
     /// Informational caption for a native-rate selection, shown under

@@ -81,14 +81,16 @@ extension AppState {
     )
 
     /// Reads the virtual output's level controls and forwards a *changed*
-    /// classification to the reducer, logging each detection (with the
-    /// scalar reading, as evidence of how often and how far the slider
-    /// moves) and each resolution. Called when an engine start settles
-    /// and by the 1 Hz health poll; the reducer accepts it only while a
-    /// transport is up, so a reading while Off is dropped before it can
-    /// churn the model. The device read is the Noican virtual output
-    /// itself (the same pick the aggregate is composed around), never the
-    /// private aggregate.
+    /// reading to the reducer, logging each detection (with the scalar
+    /// reading, as evidence of how often and how far the slider moves)
+    /// and each resolution. The change key is the whole reading held in
+    /// the model, not the notice text: two slider positions share one
+    /// notice, and comparing texts would log the first move only.
+    /// Called when an engine start settles and by the 1 Hz health poll;
+    /// the reducer accepts it only while a transport is up, so a reading
+    /// while Off is dropped before it can churn the model. The device
+    /// read is the Noican virtual output itself (the same pick the
+    /// aggregate is composed around), never the private aggregate.
     func checkVirtualOutputLevel() {
         guard
             model.transportSession != nil,
@@ -97,8 +99,7 @@ extension AppState {
             return
         }
         let level = VirtualOutputLevelProbe.read(device.id)
-        let shown = model.messages.virtualOutputLevelNotice
-        guard level.notice != shown else {
+        guard level != model.virtualOutputLevel else {
             return
         }
         switch level {

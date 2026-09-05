@@ -150,7 +150,7 @@ struct MenuView: View {
             // Settings › Sound › Input): the engine runs fine, consumers
             // just hear it quietly — a warning, not an engine failure, so
             // orange rather than red, and never acted on automatically.
-            if let notice = model.messages.virtualOutputLevelNotice {
+            if let notice = model.virtualOutputLevelNotice {
                 Text(notice)
                     .font(.caption2)
                     .foregroundStyle(.orange)

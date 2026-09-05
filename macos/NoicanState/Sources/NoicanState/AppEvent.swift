@@ -106,9 +106,9 @@ public enum AppEvent: Hashable, Sendable {
     case audioStalled
     /// The shell read the Noican virtual output device's own volume and
     /// mute controls (at start completion and on every health-poll tick)
-    /// and classified them. The reducer only maintains the notice slot
-    /// from this; it never asks for the level to be changed (see
-    /// `VirtualOutputLevel`).
+    /// and classified them. The reducer only records the reading (the
+    /// notice under the mode control is its projection); it never asks
+    /// for the level to be changed (see `VirtualOutputLevel`).
     case virtualOutputLevelObserved(VirtualOutputLevel)
     /// Reading the device list itself failed.
     case deviceQueryFailed(String)
