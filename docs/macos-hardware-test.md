@@ -399,7 +399,7 @@ input). An aggregate's output channels are its subdevices' output
 channels concatenated in that order, so a microphone that has output
 channels of its own — a USB microphone with a headphone jack such as
 the Shure MV7+, or an audio interface — places them *ahead* of the
-virtual output. The transport renders a mono stream, and AUHAL's
+virtual output. The transport rendered a mono stream, and AUHAL's
 default output channel map sends client channel 0 to device output
 channel 0: on such a device that is the microphone's own headphone
 output, and the virtual output received silence. Recordings from the
@@ -409,21 +409,37 @@ underrun line in the log; the built-in microphone, having no outputs,
 was never affected — which is why earlier acceptance runs, all made
 with the built-in microphone, did not see it.
 
-The fix sets an explicit AUHAL channel map on the aggregate unit: the
-virtual output's **first** channel (its position is computed by the
-control plane from the subdevice list it composes and re-checked on the
-Rust side against the channel count the aggregate reports) receives the
-mono engine signal; every other device output channel — the
-microphone's own outputs and the virtual output's second channel — is
-left silent. On the built-in-microphone layout this map is identical to
-AUHAL's default, so the virtual microphone's signal shape there (engine
-signal on channel 0, silence on channel 1) is unchanged, and step 8
-verifies exactly that. Fanning the mono signal out to both virtual
-output channels (as the split transport does) was deliberately left out
-of this fix (see `noican_coreaudio::routing`). The capture direction is
+The fix sets an explicit AUHAL channel map on the aggregate unit. The
+transport renders **one client channel per virtual-output channel** and
+writes the mono engine sample into every channel of each frame (dual
+mono — the shape the split transport and the preview monitor always
+produced), and the map places those client channels on the virtual
+output one-to-one: virtual output channel *i* receives client channel
+*i*, and every device output channel ahead of it — the microphone's own
+outputs — is left silent. The virtual output's position is computed by
+the control plane from the subdevice list it composes and re-checked on
+the Rust side against the channel count the aggregate reports. On the
+built-in-microphone layout the map is `[0, 1]`; with a stereo-headphone
+microphone it is `[-1, -1, 0, 1]`.
+
+The first version of this fix (PR #26) kept a mono client stream and
+mapped it to the virtual output's first channel only, leaving channel 1
+silent (measured on the built-in microphone: channel 0 −16.5 dBFS,
+channel 1 silent). That was heard in the left ear only on headphones,
+and consumers that average a stereo input to mono — common in meeting
+applications — received it 6 dB down. Duplicating in the *map* instead
+(`[-1, -1, 0, 0]`) was rejected because no primary source states that
+an AUHAL map may name one client channel twice, and a rejected map
+would fail every aggregate start; the one-to-one map is what hardware
+accepted and read back (see `noican_coreaudio::routing` for the full
+decision record). Step 8 and acceptance criterion 3 pin the new shape:
+both channels carry the same signal, and channel 0's level is unchanged
+against the previous build. Note for consumers that *sum* L+R without
+scaling (rare; most average): the dual-mono signal reads +6 dB there
+compared with the single-channel build. The capture direction is
 untouched. The split (native-rate) transport is not involved: its
-output AUHAL sits on the virtual output device alone, so a
-microphone's outputs never precede the virtual output there.
+output AUHAL sits on the virtual output device alone, so a microphone's
+outputs never precede the virtual output there.
 
 1. Connect the composite device and make sure it advertises 48 kHz
    (Audio MIDI Setup, input side), so the engine takes the aggregate
@@ -448,8 +464,10 @@ microphone's outputs never precede the virtual output there.
      output at channels A..B, channel map requested [...], channel map
      read back after initialize [...]` — AUHAL's view, written about a
      second after start. N must equal W, `A..B` must be `Y..Y+Z`, the
-     requested map must be `-1` everywhere except a `0` at index A, and
-     the read-back must equal the request.
+     requested map must be `-1` at every index below A and `0, 1, …`
+     (client channel *i* at index A + *i*) from A to the end — e.g.
+     `[-1, -1, 0, 1]` for a stereo-headphone microphone, `[0, 1]` for
+     the built-in microphone — and the read-back must equal the request.
    Record both lines verbatim in the result record.
 4. Record 30+ seconds of speech from the Noican virtual microphone in
    QuickTime (or CleanShot / OBS). The recording must be non-silent,
@@ -474,13 +492,18 @@ microphone's outputs never precede the virtual output there.
    virtual output is at channels 0–1). Pin the signal shape, not just
    presence: record a fixed reference (a sentence at constant distance,
    or a tone played into the room) once on this build and once on the
-   previous release build with the same settings, and compare per
-   channel in the waveform. Expected on this build: channel 0 carries
-   the signal at the same level as before (within about 1 dB of voiced
-   level) and channel 1 is silent, exactly as before — the map for this
-   layout equals AUHAL's default. A level change on channel 0, or
-   signal appearing on channel 1, fails. Switch back to the composite
-   device: audio must return.
+   previous build (`main` before this change) with the same settings —
+   Passthrough, strength 100%, the microphone's system input slider
+   and the Noican Microphone slider both at maximum — and compare per
+   channel with the script in "Level integrity" below. Expected on this
+   build: **every virtual-output channel carries the same signal**
+   (channel RMS within 0.1 dB of each other), and channel 0's RMS is
+   within ±1 dB of the previous build's channel 0 (reference from the
+   2026-09-05 measurement: −16.5 dBFS on the built-in microphone; your
+   absolute figure depends on voice and distance, the *difference*
+   between builds is what is pinned). A level change on channel 0
+   beyond that, or a channel left silent, fails. Switch back to the
+   composite device: audio must return, on both channels.
 9. *(If available)* Repeat 3–4 with an audio interface that has more
    than two outputs: the virtual output sits after all of them, and the
    recording must still carry audio.
@@ -501,6 +524,132 @@ at 48 kHz but 4 at 96 kHz) is not a cause of this refusal; if it still
 appears, the first number to question is N — whether AUHAL reports the
 aggregate's total output channels or only its first stream, which no
 primary source states outright.
+
+## Level integrity
+
+What decides how loud consumers hear the virtual microphone, and how to
+tell the pieces apart when "Noican sounds quiet". Established by the
+2026-09-05 hardware investigation (built-in microphone, MV7i, Bluetooth
+headset; all figures from QuickTime recordings measured with the script
+below).
+
+**What sets the level.**
+
+- **The engine path is unity gain.** Passthrough at 100% strength
+  changes nothing; the models change the signal, not its nominal level
+  (Hush carries a measured makeup gain, see functional test 10b).
+- **Noican captures the microphone at unity and does not apply the
+  microphone's system input slider on the aggregate path.** Measured
+  with the built-in microphone: moving System Settings › Sound ›
+  Input's slider for the *microphone* from the middle to maximum
+  changed a direct recording by +7.6 dB and the Noican recording by
+  1.4 dB — within the spread of repeated speech, i.e. no effect. The
+  aggregate's AUHAL reads the device's raw input stream. On the split
+  transport (non-48 kHz microphones, which are opened directly rather
+  than through an aggregate) this is **confirmed for the aggregate path
+  only** until the Bluetooth measurement in the acceptance list below
+  has been made; record its outcome here.
+- **The Noican Microphone device has a volume control and a mute of its
+  own** (System Settings › Sound › Input, with the Noican Microphone
+  selected; Audio MIDI Setup shows the same controls). The
+  BlackHole-derived driver applies this one value (−64…0 dB) to every
+  sample it loops, so it attenuates what *every* consumer receives. It
+  was the cause of the owner's "quiet" report: the slider sat at about
+  −35 dB. Who moved it is unknown — a user, or a meeting application's
+  "automatically adjust microphone volume" feature writing the selected
+  input device's system volume. Noican **does not** restore it (that
+  would fight such an app and take away the user's own adjustment); it
+  detects the condition and says so (below).
+- **Where to adjust level, then:** the Noican Microphone slider (which
+  is what consumers hear), or the microphone itself (MV7i: MOTIV Mix's
+  Auto Level / gain; an interface's preamp). The microphone's *system*
+  slider is not in the chain.
+
+**Detection of a turned-down or muted virtual output.** The app reads
+the Noican Microphone device's volume scalar and mute (input scope,
+output scope as fallback; devices without the controls are not judged)
+when an engine start settles and on every 1 Hz health-poll tick. Below
+unity (scalar < 0.999) shows one orange line under the mode control —
+"Noican Microphone volume is turned down in System Settings › Sound ›
+Input — apps will hear you quietly." — and mute shows "Noican
+Microphone is muted in System Settings › Sound › Input."; a nominal
+reading clears it within a second. Each detection and resolution is
+also written to the unified log (subsystem `com.lightsound.noican`,
+category `engine-diagnostics`, prefix `Virtual output level:`) with the
+scalar reading, so the frequency of unexplained changes can be
+established over time. Nothing is written back to the device.
+
+**Isolating "Noican sounds quiet".** Record the same sentence at the
+same distance twice in QuickTime (File › New Audio Recording, maximum
+quality), once with the Noican Microphone selected and once with the
+microphone directly, with Passthrough at 100% and both the Noican
+Microphone slider and the microphone's slider at maximum. Convert and
+measure each file:
+
+```bash
+afconvert -f WAVE -d LEI16 in.m4a out.wav
+```
+
+```bash
+# Per-channel RMS/peak of a 16-bit WAV (reads the RIFF chunks directly:
+# Python's wave module rejects the WAVE_FORMAT_EXTENSIBLE header afconvert
+# writes).
+python3 - "$WAV" <<'EOF'
+import sys, struct, math
+raw = open(sys.argv[1], "rb").read()
+assert raw[:4] == b"RIFF" and raw[8:12] == b"WAVE", "not a WAV file"
+pos, ch, bits, data = 12, None, None, None
+while pos + 8 <= len(raw):
+    cid, size = raw[pos:pos+4], struct.unpack("<I", raw[pos+4:pos+8])[0]
+    body = raw[pos+8:pos+8+size]
+    if cid == b"fmt ":
+        ch, bits = struct.unpack("<H", body[2:4])[0], struct.unpack("<H", body[14:16])[0]
+    elif cid == b"data":
+        data = body
+    pos += 8 + size + (size & 1)
+assert ch and bits == 16 and data is not None, f"unexpected format: ch={ch} bits={bits}"
+samples = struct.unpack("<%dh" % (len(data) // 2), data)
+print(f"channels: {ch}")
+for c in range(ch):
+    s = samples[c::ch]
+    rms = math.sqrt(sum(x * x for x in s) / len(s)) / 32768
+    peak = max(abs(x) for x in s) / 32768
+    db = 20 * math.log10(rms) if rms > 0 else float("-inf")
+    print(f"ch{c}: rms {db:6.1f} dBFS  peak {peak:.3f}  ({'SILENT' if peak < 0.001 else 'signal'})")
+EOF
+```
+
+Read the two outputs together:
+
+1. Noican channels differ from each other (one `SILENT`, or a gap
+   larger than 0.1 dB): a routing regression — the aggregate path must
+   be dual mono on this build; check the `Aggregate output routing` line
+   and file it.
+2. Noican channels equal, both far below the direct recording, and the
+   popover shows the turned-down/muted line: the Noican Microphone
+   slider. Raise it in System Settings and re-record; if it drops again
+   without your doing, note which meeting app was running (the log's
+   `Virtual output level:` lines carry the scalar and the time).
+3. Noican channels equal, no notice shown, and still quieter than the
+   direct recording by about the difference the microphone's system
+   slider makes: the direct recording was taken with that slider up,
+   which Noican does not apply — set the level at the microphone or on
+   the Noican Microphone slider instead. Verify by moving the
+   microphone's slider and re-recording through Noican: the level must
+   not follow.
+4. Both recordings equally quiet: the microphone or the room; not
+   Noican.
+
+Then, with the engine running on the Noican Microphone:
+
+5. Move the Noican Microphone slider to about 50%: within one second
+   the orange line appears under the mode control and the log gains a
+   `Virtual output level:` warning with a scalar around 0.5. Move it
+   back to maximum: the line disappears within a second and the log
+   records the resolution. Repeat with the mute checkbox (Audio MIDI
+   Setup shows one for the device): the mute wording appears and
+   clears the same way. The level itself must not move on its own at
+   any point — Noican never writes it.
 
 ## Preview (self-monitor)
 
@@ -995,18 +1144,52 @@ passes when:
 2. **Nothing leaks to the microphone's own outputs**: Noican's output
    is inaudible on headphones plugged into the microphone's own jack,
    in both On and Preview.
-3. **Built-in microphone unchanged, level pinned**: the same recording
-   with the built-in microphone has the signal on virtual-microphone
-   channel 0 at the level of the previous build (within ~1 dB of voiced
-   level, per-channel waveform comparison against a same-settings
-   reference recording) and channel 1 silent, exactly as before — the
-   layout that always worked keeps its signal shape.
+3. **Dual mono, level pinned**: the same recording with the built-in
+   microphone carries the same signal on every virtual-microphone
+   channel (per-channel RMS within 0.1 dB of each other), and channel
+   0's RMS is within ±1 dB of a same-settings recording on the previous
+   build (per-channel measurement with the "Level integrity" script) —
+   the engine level is unchanged, only the silent channel is gone. The
+   composite device must show the same shape.
 4. **Everything else as before**: Preview, model switching, meters, and
    the underrun diagnostics behave exactly as on the earlier records
    with the composite device selected.
 5. *(Optional)* **Split path unaffected**: a recording through a
    native-rate (Bluetooth or 44.1 kHz) microphone still carries audio —
    the split transport has no aggregate and takes no channel map.
+
+## Acceptance checklist (level integrity)
+
+Run the Level integrity procedure above; the build passes when:
+
+1. **Dual mono on the aggregate path**: with the built-in microphone
+   (Passthrough, 100%, Noican Microphone slider at maximum) the
+   virtual-microphone recording carries the same signal on every
+   channel (RMS within 0.1 dB), and channel 0's RMS is within ±1 dB of
+   a same-settings recording on the previous build.
+2. **Dual mono on a composite device**: the same with the MV7i (or
+   another input/output device), and the `Aggregate output routing`
+   line shows the one-to-one map (`[-1, -1, 0, 1]` for a stereo
+   headphone jack) read back unchanged after initialize.
+3. **Both ears**: the virtual microphone's signal, played back from a
+   recording or monitored through a consumer app, is heard in both
+   ears of a pair of headphones.
+4. **Turned-down/muted notice**: moving the Noican Microphone slider to
+   50% shows the notice within one second and moving it back to
+   maximum clears it; mute behaves the same with its own wording; the
+   log carries each transition with the scalar; the level is never
+   changed by Noican.
+5. **Everything else as before**: Preview, model switching, and the
+   underrun diagnostics (zero on a light model) behave exactly as on
+   the earlier records.
+6. **Split path level**: a Bluetooth (or other native-rate) headset
+   recording is unchanged (both channels, same level as before), and
+   two additional recordings through Noican — the headset's *system*
+   input slider at the middle and at maximum — settle whether the
+   split transport applies that slider. Record the two RMS values and
+   the conclusion, and update the Level integrity section's second
+   bullet accordingly (it is marked "confirmed for the aggregate path
+   only" until then).
 
 ## Acceptance checklist (output-underrun diagnostics)
 
