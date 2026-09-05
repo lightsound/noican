@@ -548,9 +548,13 @@ below).
   1.4 dB — within the spread of repeated speech, i.e. no effect. The
   aggregate's AUHAL reads the device's raw input stream. On the split
   transport (non-48 kHz microphones, which are opened directly rather
-  than through an aggregate) this is **confirmed for the aggregate path
-  only** until the Bluetooth measurement in the acceptance list below
-  has been made; record its outcome here.
+  than through an aggregate) the same holds within the evidence so far:
+  the 2026-09-05 Bluetooth measurement
+  ([record](acceptance/2026-09-05-dual-mono-level-integrity.md)) read
+  −23.2 dBFS with the headset's slider at the middle and −21.0 dBFS at
+  maximum (+2.2 dB), which the operator attributed to speech variance —
+  far from the +7.6 dB a direct recording shows for a slider that is
+  applied. One pair of recordings; a repeat would firm the figure up.
 - **The Noican Microphone device has a volume control and a mute of its
   own** (System Settings › Sound › Input, with the Noican Microphone
   selected; Audio MIDI Setup shows the same controls). The
@@ -1191,9 +1195,9 @@ Run the Level integrity procedure above; the build passes when:
    two additional recordings through Noican — the headset's *system*
    input slider at the middle and at maximum — settle whether the
    split transport applies that slider. Record the two RMS values and
-   the conclusion, and update the Level integrity section's second
-   bullet accordingly (it is marked "confirmed for the aggregate path
-   only" until then).
+   the conclusion, and keep the Level integrity section's second
+   bullet in step with the accumulated evidence (first pair recorded
+   2026-09-05: +2.2 dB, attributed to speech variance).
 
 ## Acceptance checklist (output-underrun diagnostics)
 
