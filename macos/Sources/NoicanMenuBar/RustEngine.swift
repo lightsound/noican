@@ -229,7 +229,8 @@ final class RustEngine: @unchecked Sendable {
 
     /// Diagnostic: how the aggregate transport routes the engine output
     /// into the Aggregate Device (reported output channel count, the
-    /// channel map requested, and the map read back), or nil while
+    /// channel map requested, and the map read back after
+    /// `AudioUnitInitialize`), or nil while
     /// stopped or on the split transport. Reads the control mutex — for
     /// the one-time start log only.
     var routingDescription: String? {

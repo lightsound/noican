@@ -14,7 +14,7 @@ neither an error nor an underrun line.
 |---|---|
 | Mac model / chip | MacBook Air 15-inch, 2023 — Apple M2 (same machine as the prior records) |
 | macOS version | macOS Tahoe 26 |
-| App commit | `cursor/fix-composite-device-virtual-mic-silence-1d7a` at `885f58e` (PR #26; the diagnostics lines quoted below are from this commit, the routing code is unchanged since `adfb9b7`) |
+| App commit | `cursor/fix-composite-device-virtual-mic-silence-1d7a` at `885f58e` (PR #26; the routing code is unchanged since `adfb9b7`, but the diagnostics changed afterwards — `398e34a` moved the channel-map read-back after `AudioUnitInitialize` and reworded that line, so a fresh log differs in text from the one quoted below) |
 | Microphone | **Shure MV7i** — one USB device, `system_profiler SPAudioDataType`: Input Channels 2, Output Channels 2, Current SampleRate 48000, Transport USB. Also present on the machine: "MOTIV Mix Virtual" (Shure's virtual device, Transport Virtual, the system default input — excluded from Noican's microphone list by the virtual-transport filter) |
 | Virtual output | Noican Microphone (`lightsound`, in 2 / out 2, 48 kHz) |
 | Transport | Aggregate (`[MV7i, Noican]`, MV7i clock master) |
@@ -39,13 +39,14 @@ What the two lines establish:
   **total** channel count (4, not the first stream's 2) — the one API
   fact no primary source stated, now observed. The requested map lands
   the mono engine signal on device channel 2 (the virtual output's first
-  channel) and the read-back equals the request.
+  channel) and the setter stored exactly that array (read back before
+  `AudioUnitInitialize` on this build — see "Not covered").
 
 ## Results
 
 | # | Check | Result |
 |---|---|---|
-| 1 | MV7i → On → QuickTime recording from "Noican Microphone" carries the processed speech | **Pass** — recording is non-silent (the pre-fix defect was a completely silent file) |
+| 1 | MV7i → On → QuickTime recording from "Noican Microphone" is non-silent | **Pass** — the pre-fix defect was a completely silent file. Intelligibility and the processed-vs-raw-control comparison of procedure step 4 were not assessed (the model in use was not recorded) — see "Not covered" |
 | 2 | Nothing from Noican on headphones plugged into the MV7i's own jack (On and Preview) | Not exercised in this run — see "Not covered" |
 | 3 | Built-in microphone recording still carries audio | **Pass** — recorded normally on the same build |
 | 4 | Preview, model switching, meters, underrun diagnostics unchanged with the composite device | Reported as unchanged by the owner on the day, but on a process that turned out to be the pre-fix binary (see below); **not re-run on the fixed build** |
@@ -62,6 +63,18 @@ What the two lines establish:
   by construction; the measurement remains the procedure's requirement
   for a full record.
 - Criterion 4 on the fixed build.
+- Procedure step 4's qualitative half — intelligibility and a material
+  difference from a raw-microphone control at 100% strength. Only
+  non-silence was observed, which is what the routing fix needs.
+- The **post-initialize** channel-map read-back. This run was made on
+  `885f58e`, where the read-back was taken right after
+  `AudioUnitSetProperty`, so the quoted `read back [-1, -1, 0, -1]`
+  only shows the setter stored the array; `398e34a` moved the read to
+  after `AudioUnitInitialize` (the line now reads `channel map read
+  back after initialize [...] (device output channels then N)`) and
+  that observation point is unexercised. Procedure step 3's read-back
+  check is therefore not closed by this record; whichever run closes
+  criteria 2 and 4 will produce it.
 
 ### Procedure lesson: relaunch after rebuilding
 
