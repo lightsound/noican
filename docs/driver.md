@@ -18,11 +18,11 @@ against the new `BlackHole/BlackHole.c`.
 | Bundle | `Noican.driver` | Matches the app artifact naming (`Noican.app`) |
 | Bundle ID | `com.lightsound.noican.driver` | Under the app's `com.lightsound.noican`; must equal `kPlugIn_BundleID` (upstream requirement) |
 | Device name | `Noican Microphone` | The string meeting apps show in their microphone list; "Microphone" says what to pick it as |
-| Device UID | `com.lightsound.noican.2ch_UID` | Matches both existing matchers verbatim (see below); `2ch` keeps room for future channel variants; `_UID` suffix keeps BlackHole's convention |
+| Device UID | `com.lightsound.noican.mic_UID` | Matches both app-side matchers (the `com.lightsound.noican.` prefix, see below); carries no channel count so a future width change needs no rename (the 0.1.0 UID `com.lightsound.noican.2ch_UID` did, and became false with this change — see "History"); `_UID` suffix keeps BlackHole's convention |
 | Manufacturer | `lightsound` | Shown by Audio MIDI Setup / `system_profiler` |
-| Channels | 2 | The engine's stereo loopback (Phase 0 contract) |
+| Channels | 1 | The engine signal is mono and the app renders one client channel per virtual-output channel on both transports, so the device carries the signal's own shape (like the Krisp and JoyCast virtual microphones): consumers record mono, and the driver's ring buffer is half that of the 2-channel build. The 2-channel 0.1.0 driver and stock BlackHole 2ch keep working under the same app (dual mono there) |
 | Sample rates | 44.1 / 48 kHz | The app pins 48 kHz at start (`ensure48k`); 44.1 kHz stays available so other apps that insist on it do not error out |
-| Version | `NOICAN_DRIVER_VERSION` (default `0.1.0`) | `MARKETING_VERSION` → `CFBundleShortVersionString` |
+| Version | `NOICAN_DRIVER_VERSION` (default `0.2.0`) | `MARKETING_VERSION` → `CFBundleShortVersionString`; bumped with every change of device shape or UID so an installed bundle says which one it is (see "History") |
 
 ### How the UID is produced
 
@@ -39,36 +39,95 @@ derived, so the UID is controlled indirectly:
 
 The build sets `kHas_Driver_Name_Format=false` (the default `true` splices
 a `%ich` channel-count format into every UID) and
-`kDriver_Name="com.lightsound.noican.2ch"`. `kDriver_Name` is not a
+`kDriver_Name="com.lightsound.noican.mic"`. `kDriver_Name` is not a
 user-visible string in this configuration — the visible names are
 `kDevice_Name` and `kManufacturer_Name` — so it can carry the reverse-DNS
 UID base. Resulting identifiers:
 
-- device UID: `com.lightsound.noican.2ch_UID`
-- hidden mirror UID: `com.lightsound.noican.2ch_2_UID`
-- model UID: `com.lightsound.noican.2ch_ModelUID`
-- box UID: `com.lightsound.noican.2ch_UID`
+- device UID: `com.lightsound.noican.mic_UID`
+- hidden mirror UID: `com.lightsound.noican.mic_2_UID`
+- model UID: `com.lightsound.noican.mic_ModelUID`
+- box UID: `com.lightsound.noican.mic_UID`
 
 Both app-side matchers accept these without modification, because each one
-lowercases and prefix-matches `com.lightsound.noican.`:
+lowercases and prefix-matches `com.lightsound.noican.` — **with the
+trailing dot**. The UID base must therefore keep a segment after
+`com.lightsound.noican`: a base of plain `com.lightsound.noican` would
+yield `com.lightsound.noican_UID`, which neither matcher accepts (the
+Rust unit tests pin that negative case too).
 
 - Swift: `AudioDeviceCatalog.isNoicanVirtualDevice`
   (macos/Sources/NoicanMenuBar/CoreAudioDevices.swift)
 - Rust: `is_noican_loopback_uid`
-  (crates/noican-coreaudio/src/monitor.rs; unit tests pin the exact UIDs)
+  (crates/noican-coreaudio/src/monitor.rs; unit tests pin the exact UIDs
+  of the current and the 0.1.0 driver)
+
+### History
+
+| Driver version | Channels | Device UID | Mirror UID | Shipped in |
+|---|---|---|---|---|
+| `0.1.0` | 2 | `com.lightsound.noican.2ch_UID` | `com.lightsound.noican.2ch_2_UID` | PR #11 (2026-08-27 driver check) |
+| `0.2.0` | 1 | `com.lightsound.noican.mic_UID` | `com.lightsound.noican.mic_2_UID` | this change |
+
+Tell an installed bundle's shape from its version string (the signature
+display does not carry it):
+
+```bash
+/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+  /Library/Audio/Plug-Ins/HAL/Noican.driver/Contents/Info.plist
+```
+
+Why the UID changed with the channel count, and why to a name without
+one — the alternatives were weighed against: whether external users
+exist (none: the repository has no releases and the driver has only ever
+been installed from Developer ID builds on the owner's machine — the
+premise of this decision; with external installs the answer flips to
+keeping the old UID, because meeting applications remember the
+microphone by UID and every user would have to select Noican Microphone
+again), honesty of the identifier, the matcher prefix and its blast
+radius, and the cost of a future rename:
+
+- **Keep `com.lightsound.noican.2ch`** — no re-selection anywhere; the
+  name states a channel count the device no longer has, forever, and
+  documentation has to carry "historical name" caveats. Rejected while
+  there are no external installs to protect: the cost of a rename is
+  lowest now and only grows.
+- **Rename to `com.lightsound.noican.1ch`** — honest today; the next
+  width change (or an output-only variant) forces the same rename and
+  re-selection again. Rejected.
+- **Rename to a base without a channel count (`com.lightsound.noican.mic`)**
+  — honest, one re-selection now (the owner's, recorded as a hardware
+  check), and the UID survives any future change of shape. The
+  prefix-matching stays untouched. **Chosen.**
+- **Drop the segment (`com.lightsound.noican`)** — yields
+  `com.lightsound.noican_UID`, which the trailing-dot prefix does not
+  match, so both matchers, their tests, and this document would change
+  for no gain over a dotted segment. Rejected; the negative case is
+  pinned by a unit test so the build cannot drift there unnoticed.
+- **Ship both shapes** (a 2-channel visible device plus a 1-channel one)
+  — `kNumber_Of_Channels` is one build-wide constant in upstream
+  BlackHole, so this needs two driver bundles and a selection policy in
+  the app. Rejected as out of proportion.
+
+Swapping drivers (either direction) is an uninstall/install of the same
+bundle path, so the two never coexist on one machine; the app recognizes
+both UIDs, so one app build runs with either. `coreaudiod` may keep the
+old UID's inert box settings in its store (see "Uninstall residue"), and
+any device-level volume a user had set on the 0.1.0 device does not carry
+over — the new device starts at unity.
 
 ### Full macro list injected by scripts/build-driver.sh
 
 | Macro | Value | Guarded upstream? |
 |---|---|---|
-| `kDriver_Name` | `"com.lightsound.noican.2ch"` | `#ifndef` |
+| `kDriver_Name` | `"com.lightsound.noican.mic"` | `#ifndef` |
 | `kHas_Driver_Name_Format` | `false` | `#ifndef` |
 | `kDevice_Name` | `"Noican Microphone"` | `#ifndef` |
 | `kDevice2_Name` | `"Noican Microphone Mirror"` | `#ifndef` |
 | `kPlugIn_BundleID` | `"com.lightsound.noican.driver"` | `#ifndef` |
 | `kPlugIn_Icon` | `"Noican.icns"` | `#ifndef` |
 | `kManufacturer_Name` | `"lightsound"` | `#ifndef` |
-| `kNumber_Of_Channels` | `2` | `#ifndef` |
+| `kNumber_Of_Channels` | `1` | `#ifndef` |
 | `kSampleRates` | `44100,48000` | `#ifndef` |
 | `kDevice_IsHidden` / `kDevice_HasInput` / `kDevice_HasOutput` | `false` / `true` / `true` | `#ifndef` |
 | `kDevice2_IsHidden` / `kDevice2_HasInput` / `kDevice2_HasOutput` | `true` / `true` / `true` | `#ifndef` |
@@ -103,9 +162,17 @@ bundle-metadata editing at build time, consistent with the no-source-patch
 rule. The rewrite deletes the upstream key first, so an upstream bump that
 changes the plist fails the build loudly instead of shipping a stale edit.
 
-The primary device is the visible 2-in/2-out loopback and the mirror
-device stays hidden — the same shape as stock BlackHole 2ch, which the
-Phase 0 transport already passed hardware acceptance against.
+The primary device is the visible 1-in/1-out loopback and the mirror
+device stays hidden with input and output — stock BlackHole's device
+arrangement at one channel. Upstream behaviours worth knowing at this
+width, all inside unpatched code: the preferred channel layout labels the
+single channel `Left` (`kAudioChannelLabel_Left + index`), the
+`PreferredChannelsForStereo` property still answers `[1, 2]` although
+channel 2 does not exist, and the master volume/mute control is
+independent of the channel count (the level notice in the app keeps
+working). How QuickTime records from a 1-channel device (mono file, or a
+2-channel file with both channels identical) is settled by the hardware
+check, not assumed.
 
 ## Coexistence with stock BlackHole
 
@@ -120,7 +187,12 @@ Selection priority is defined in `AudioDeviceCatalog.virtualOutput(in:)`:
 setup). Rationale: the Noican driver is the device this project brands,
 signs, and tests, while stock BlackHole may be shared with — and
 reconfigured by — other software. Before this rule the pick fell to
-Core Audio's device-enumeration order, which is undefined.
+Core Audio's device-enumeration order, which is undefined. The widths
+differ (Noican 1 channel, stock BlackHole 2ch two), and the app does not
+care: both transports size their render format from the virtual output
+they are given — one client channel per device channel, the mono engine
+sample in each — so consumers get a mono recording from the Noican
+device and a dual-mono one from stock BlackHole.
 
 The Rust preview-monitor policy is intentionally broader: it refuses any
 `virt`-transport device, any UID containing `BlackHole`, and the Noican
