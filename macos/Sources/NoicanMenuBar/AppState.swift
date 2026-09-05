@@ -613,8 +613,9 @@ extension AppState {
 
     /// Transport shape for a start effect: 48 kHz-capable microphones
     /// keep the original aggregate path unchanged; other devices
-    /// (Bluetooth telephony profiles) are captured natively through the
-    /// split transport and resampled inside it (issue #7). Decided from
+    /// (Bluetooth telephony profiles, 44.1 kHz-family devices) are
+    /// captured natively through the split transport and resampled
+    /// inside it by the exact ratio (issue #7). Decided from
     /// *live* facts at effect time — a rate-change rebuild can race a
     /// profile flip, and a device that meanwhile reached a
     /// 48 kHz-capable state must take the aggregate path instead of
@@ -623,16 +624,16 @@ extension AppState {
     /// When the advertised-rate list is unreadable (the tri-state probe
     /// reads nil), the live *nominal rate* — readable independently —
     /// outranks the reducer's possibly stale snapshot: a device sitting
-    /// at a rate the split transport cannot convert (48 kHz itself, or
-    /// a non-divisor like 44.1 kHz) goes to the aggregate path, whose
-    /// `ensure48k` returns immediately for a device already at 48 kHz
-    /// and produces the precise refusal otherwise. Only for a live
-    /// telephony-rate (or unreadable) nominal does the snapshot decide:
-    /// a `.nativeRate` pre-flight takes the split path — failing open
-    /// onto the aggregate would poll `ensure48k` for two seconds and
-    /// then fail a device the reducer already approved for native
-    /// capture — while unknown or non-native snapshots keep Phase 0's
-    /// fail-open behavior.
+    /// at a rate the split transport cannot convert (outside the
+    /// resampler's 8–192 kHz range) goes to the aggregate path, whose
+    /// `ensure48k` produces the precise refusal. Only for a live
+    /// convertible (or unreadable) nominal does the snapshot decide: a
+    /// `.nativeRate` pre-flight takes the split path — failing open onto
+    /// the aggregate would poll `ensure48k` for two seconds and then
+    /// fail a device the reducer already approved for native capture —
+    /// while unknown or non-native snapshots keep Phase 0's fail-open
+    /// behavior (a device idling at 48 kHz with an unreadable rate list
+    /// therefore still reaches `ensure48k`, which returns immediately).
     private nonisolated static func shouldUseAggregate(
         for device: AudioObjectID,
         snapshot: CaptureSupport?

@@ -40,6 +40,11 @@ headset is refused by the app (44.1 kHz-family capture rates only, no
 integer factor to 48 kHz). All numbers in this record are from the
 aggregate transport; the split transport has no baseline.
 
+*Forward pointer (2026-09-04):* PR #24 lifts this blocker — the split
+transport now converts any 8–192 kHz rate by the exact ratio. The
+split-transport run is recorded in
+[2026-09-05-split-transport-16k.md](2026-09-05-split-transport-16k.md).
+
 ## Reading
 
 - **FastEnhancer-L misses the budget chronically**: 41–49% of blocks

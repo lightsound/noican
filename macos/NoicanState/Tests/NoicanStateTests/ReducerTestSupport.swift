@@ -7,16 +7,21 @@ let usbMic = InputDevice(uid: "usb", name: "USB Microphone", capture: .engineRat
 /// A telephony-profile Bluetooth headset microphone: selectable since
 /// issue #7 (captured natively at 16 kHz and resampled in the transport).
 let bluetoothMic = InputDevice(uid: "bt", name: "AirPods", capture: .nativeRate(hertz: 16_000))
-/// A device whose rate cannot reach 48 kHz by an integer factor — the
-/// remaining refusal case.
+/// A 44.1 kHz-only device (the owner's Bluetooth headset): selectable
+/// since the capture resampler went rational — full-band, split path.
+let fortyFourMic = InputDevice(
+    uid: "cd", name: "CD-rate Headset", capture: .nativeRate(hertz: 44_100)
+)
+/// A device whose rate lies outside the resampler's 8–192 kHz range —
+/// the remaining refusal case (an unreadable rate reads as 0 Hz).
 let unsupportedMic = InputDevice(
-    uid: "odd", name: "Legacy 44.1 kHz Interface", capture: .unsupported(hertz: 44_100)
+    uid: "odd", name: "Broken Interface", capture: .unsupported(hertz: 0)
 )
 
 /// A ready-to-start model: engine available, devices present, defaults
 /// selected — the state right after launch on a healthy machine.
 func readyModel(
-    devices: [InputDevice] = [builtInMic, usbMic, bluetoothMic, unsupportedMic],
+    devices: [InputDevice] = [builtInMic, usbMic, bluetoothMic, fortyFourMic, unsupportedMic],
     selectedInputUID: String = builtInMic.uid,
     selectedModelID: String = "fastenhancer-b"
 ) -> AppModel {

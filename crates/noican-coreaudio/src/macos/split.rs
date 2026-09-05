@@ -2,9 +2,12 @@
 //! instances bridged by a drift-compensating worker.
 //!
 //! An Aggregate Device drives all its subdevices at one nominal rate, and
-//! the Noican virtual output only supports 44.1/48 kHz, so a telephony-
-//! profile microphone (Bluetooth HFP at 8/16/24 kHz) cannot share an
-//! aggregate with the 48 kHz virtual output. This module instead opens:
+//! the Noican virtual output only supports 44.1/48 kHz, so a microphone
+//! that cannot run at 48 kHz — a telephony-profile Bluetooth headset
+//! (HFP at 8/16/24 kHz), a 44.1 kHz-family device (44.1/22.05/
+//! 11.025 kHz), or a high-rate-only interface (88.2/96 kHz) — cannot
+//! share an aggregate with the 48 kHz virtual output. This module
+//! instead opens:
 //!
 //! - an **input-only AUHAL** on the microphone device with a client
 //!   format at its native rate (AUHAL performs no sample-rate conversion
@@ -15,14 +18,17 @@
 //!
 //! The two units run on separate device clocks. The inference worker
 //! bridges them: it drains the native-rate capture ring, converts to
-//! 48 kHz through [`InputResampler`] (integer-factor polyphase plus a
-//! micro-ratio drift stage), feeds the unchanged engine in 10 ms blocks,
-//! and pushes the result into the output ring. A [`DriftServo`] observes
-//! the total samples buffered between the two clock domains once per
-//! block and steers the resampler a few hundred ppm to cancel clock
-//! drift (docs/tech-research.md §4.2) — the output ring is primed with
-//! [`OUTPUT_PRIME_SAMPLES`] of silence, which is both the initial jitter
-//! cushion and the servo's occupancy target.
+//! 48 kHz through [`InputResampler`] (one arbitrary-ratio polyphase FIR
+//! whose fractional phase step carries the drift correction — exact
+//! 160/147 for 44.1 kHz, 3/1 for 16 kHz), feeds the unchanged engine in
+//! 10 ms blocks, and pushes the result into the output ring. A
+//! [`DriftServo`] observes the total samples buffered between the two
+//! clock domains once per block — native-ring occupancy converted to
+//! engine samples through the same ratio — and steers the resampler a
+//! few hundred ppm to cancel clock drift (docs/tech-research.md §4.2).
+//! The output ring is primed with [`OUTPUT_PRIME_SAMPLES`] of silence,
+//! which is both the initial jitter cushion and the servo's occupancy
+//! target; neither the servo nor the cushion depends on the ratio.
 //!
 //! Real-time rules (docs/tech-research.md §9) hold as on the aggregate
 //! path: the capture callback only calls `AudioUnitRender` into a
@@ -67,7 +73,11 @@ const MAX_CAPTURE_FRAMES: usize = 4_096;
 /// Native-rate samples drained from the capture ring per worker pass
 /// (also the resampler's preallocation unit): 480 native samples cover
 /// 20–60 ms of telephony-profile audio, comfortably above Bluetooth
-/// burst sizes.
+/// burst sizes, and ≈11 ms at 44.1 kHz (about one engine block per
+/// pass). The resampler's per-call output bound
+/// ([`InputResampler::max_output_len`]) sizes the worker's conversion
+/// buffers, so a 96 kHz device (half an engine block per pass) needs no
+/// separate tuning.
 const NATIVE_CHUNK_SAMPLES: usize = 480;
 
 /// Silence pushed into the output ring before the units start: the
@@ -447,15 +457,15 @@ fn split_processing_loop(
     if !membership.joined() {
         faulted.store(true, Ordering::Release);
     }
-    let factor = resampler.factor();
     let output_capacity = output.buffer().capacity();
     let mut native_chunk = [0.0_f32; NATIVE_CHUNK_SAMPLES];
-    // Converted samples per pass: at most chunk × factor, slightly
-    // modulated by the drift correction.
-    let mut converted: Vec<f32> = Vec::with_capacity(NATIVE_CHUNK_SAMPLES * 6 + 16);
+    // Converted samples per pass, bounded by the resampler at the
+    // largest drift correction so the buffer never grows afterwards.
+    let max_converted = resampler.max_output_len(NATIVE_CHUNK_SAMPLES);
+    let mut converted: Vec<f32> = Vec::with_capacity(max_converted);
     // Engine-rate FIFO between conversion output and 10 ms blocks.
     let mut pending: std::collections::VecDeque<f32> =
-        std::collections::VecDeque::with_capacity(NATIVE_CHUNK_SAMPLES * 6 + WORKER_BLOCK_SAMPLES);
+        std::collections::VecDeque::with_capacity(max_converted + WORKER_BLOCK_SAMPLES);
     let mut input_block = [0.0_f32; WORKER_BLOCK_SAMPLES];
     let mut output_block = [0.0_f32; WORKER_BLOCK_SAMPLES];
     let mut last_output_pulses = 0_u64;
@@ -500,10 +510,11 @@ fn split_processing_loop(
             block_stats.record(saturating_elapsed_ns(started));
             // Drift servo: total samples buffered between the capture
             // clock (producer) and the output clock (consumer), in
-            // engine-rate samples. A trend here *is* clock drift.
+            // engine-rate samples (the native ring's occupancy converted
+            // through the nominal ratio). A trend here *is* clock drift.
             let buffered = (output_capacity - output.slots())
                 + pending.len()
-                + input.slots().saturating_mul(factor);
+                + resampler.to_engine_samples(input.slots());
             resampler.set_drift_ppm(servo.update(buffered));
             // Output-side heartbeat (see OUTPUT_STALL_BLOCKS): blocks
             // only run while capture delivers, so a pulse counter that

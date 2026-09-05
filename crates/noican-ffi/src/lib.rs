@@ -32,6 +32,7 @@ use std::{
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
 
+use noican_core::capture::{MAX_NATIVE_RATE, MIN_NATIVE_RATE};
 use noican_core::{IntensityControl, Stage, StagePublisher, SwitchingEngine};
 use noican_coreaudio::{Runtime, StreamLevels, WORKER_BLOCK_SAMPLES, monitor::MonitorState};
 use noican_models::{CatalogEntry, ModelSpec, StageOptions};
@@ -173,12 +174,15 @@ pub unsafe extern "C" fn noican_engine_start(
 /// 48 kHz engine rate (issue #7).
 ///
 /// `input_device` is the microphone's Core Audio device ID and
-/// `capture_sample_rate` its current nominal rate in Hz, which must be a
-/// proper integer divisor of 48000 (Bluetooth telephony profiles:
-/// 8/16/24 kHz). `output_device` is the Noican/`BlackHole` virtual
-/// output. No Aggregate Device is involved: the microphone is captured
-/// natively and resampled to 48 kHz inside the transport, with clock
-/// drift between the two devices compensated by a ring-occupancy servo.
+/// `capture_sample_rate` its current nominal rate in Hz — whole hertz
+/// from 8000 to 192000 whose ratio to 48000 reduces to small terms, i.e.
+/// the standard rate families (Bluetooth telephony profiles at
+/// 8/16/24 kHz, the 44.1 kHz family, 88.2/96 kHz interfaces; see
+/// [`noican_core::capture`]). `output_device` is the Noican/`BlackHole`
+/// virtual output. No Aggregate Device is involved: the microphone is
+/// captured natively and resampled to 48 kHz inside the transport by
+/// the exact rational ratio, with clock drift between the two devices
+/// compensated by a ring-occupancy servo.
 /// The split path adds a 50 ms output cushion; the aggregate path
 /// ([`noican_engine_start`]) is unchanged.
 ///
@@ -291,30 +295,32 @@ fn start_with(
     SUCCESS
 }
 
-/// Validates a native capture rate: finite, integral, and a proper
-/// integer divisor of the 48 kHz engine rate. Rejecting here — before
+/// Validates a native capture rate: finite, whole hertz (Core Audio
+/// nominal rates are exact integers in f64 — 44100.0, never 44100.3 —
+/// so anything fractional is a bogus reading, not a rate to round), and
+/// within the range the capture resampler converts
+/// ([`noican_core::capture::MIN_NATIVE_RATE`] to
+/// [`noican_core::capture::MAX_NATIVE_RATE`]). Rejecting here — before
 /// any weight download or audio object — keeps the failure instant and
-/// its message precise.
+/// its message precise. The reduced ratio's size is bounded by the
+/// resampler itself ([`noican_core::capture::MAX_RATIO_TERM`]) when the
+/// transport constructs it, still before any audio object.
 fn validate_capture_rate(rate: f64) -> Result<u32, String> {
     let rounded = rate.round();
-    if !rate.is_finite() || (rate - rounded).abs() > 0.5 || !(1.0..48_000.0).contains(&rounded) {
+    let min = f64::from(MIN_NATIVE_RATE);
+    let max = f64::from(MAX_NATIVE_RATE);
+    if !rate.is_finite() || (rate - rounded).abs() > 1e-6 || !(min..=max).contains(&rounded) {
         return Err(format!(
-            "invalid capture sample rate {rate} Hz (expected a telephony-profile \
-             rate below 48000 Hz)"
+            "invalid capture sample rate {rate} Hz (the split transport captures \
+             {MIN_NATIVE_RATE}–{MAX_NATIVE_RATE} Hz microphones at whole-hertz rates)"
         ));
     }
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        reason = "bounded to 1..48000 by the range check above"
+        reason = "bounded to MIN_NATIVE_RATE..=MAX_NATIVE_RATE by the range check above"
     )]
     let hertz = rounded as u32;
-    if !48_000_u32.is_multiple_of(hertz) {
-        return Err(format!(
-            "capture rate {hertz} Hz is not an integer divisor of the 48000 Hz \
-             engine rate (Bluetooth telephony profiles are 8/16/24 kHz)"
-        ));
-    }
     Ok(hertz)
 }
 
@@ -1303,8 +1309,11 @@ mod tests {
     }
 
     #[test]
-    fn capture_rate_validation_accepts_only_integer_divisors() {
-        for rate in [8_000.0, 12_000.0, 16_000.0, 24_000.0] {
+    fn capture_rate_validation_accepts_the_resampler_range() {
+        for rate in [
+            8_000.0, 11_025.0, 12_000.0, 16_000.0, 22_050.0, 24_000.0, 32_000.0, 44_100.0,
+            48_000.0, 88_200.0, 96_000.0, 192_000.0,
+        ] {
             #[expect(
                 clippy::cast_possible_truncation,
                 clippy::cast_sign_loss,
@@ -1313,14 +1322,15 @@ mod tests {
             let expected = rate as u32;
             assert_eq!(validate_capture_rate(rate), Ok(expected));
         }
+        // Core Audio nominal rates are whole hertz; a fractional value is
+        // a bogus reading and must not be rounded into an accepted rate.
         for rate in [
             0.0,
             -16_000.0,
-            44_100.0,
-            32_000.0,
-            48_000.0,
-            96_000.0,
+            7_999.0,
+            192_001.0,
             16_000.7,
+            44_100.01,
             f64::NAN,
             f64::INFINITY,
         ] {
@@ -1337,34 +1347,37 @@ mod tests {
         let handle = unsafe { noican_engine_create(ptr::null()) };
         assert!(!handle.is_null());
         let model = c"passthrough";
-        let result = unsafe { noican_engine_start_native(handle, 0, 0, 44_100.0, model.as_ptr()) };
+        let result = unsafe { noican_engine_start_native(handle, 0, 0, 4_000.0, model.as_ptr()) };
         assert_eq!(result, FAILURE);
         let error = read_string(|buffer, capacity| unsafe {
             noican_engine_last_error(handle, buffer, capacity)
         })
         .expect("rate refusal records an error");
         assert!(
-            error.contains("44100") && error.contains("divisor"),
+            error.contains("4000") && error.contains("invalid capture sample rate"),
             "unhelpful message: {error}"
         );
-        // A valid telephony rate passes validation; on portable builds
-        // the transport itself then refuses (and macOS refuses the
-        // nonexistent device 0), but never with the rate message.
-        let result = unsafe { noican_engine_start_native(handle, 0, 0, 16_000.0, model.as_ptr()) };
-        assert_eq!(result, FAILURE);
-        let error = read_string(|buffer, capacity| unsafe {
-            noican_engine_last_error(handle, buffer, capacity)
-        })
-        .expect("start failure records an error");
-        assert!(
-            !error.contains("divisor"),
-            "a valid rate must not be blamed: {error}"
-        );
-        #[cfg(not(target_os = "macos"))]
-        assert!(
-            error.contains("only on macOS"),
-            "portable builds refuse the transport: {error}"
-        );
+        // Valid rates — a telephony profile and the 44.1 kHz family —
+        // pass validation; on portable builds the transport itself then
+        // refuses (and macOS refuses the nonexistent device 0), but
+        // never with the rate message.
+        for rate in [16_000.0, 44_100.0] {
+            let result = unsafe { noican_engine_start_native(handle, 0, 0, rate, model.as_ptr()) };
+            assert_eq!(result, FAILURE);
+            let error = read_string(|buffer, capacity| unsafe {
+                noican_engine_last_error(handle, buffer, capacity)
+            })
+            .expect("start failure records an error");
+            assert!(
+                !error.contains("invalid capture sample rate"),
+                "a valid rate must not be blamed: {error}"
+            );
+            #[cfg(not(target_os = "macos"))]
+            assert!(
+                error.contains("only on macOS"),
+                "portable builds refuse the transport: {error}"
+            );
+        }
         unsafe { noican_engine_destroy(handle) };
     }
 

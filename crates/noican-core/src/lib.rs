@@ -12,10 +12,13 @@
 //!   frame size at its native rate.
 //! - [`framed::FramedStage`]: adapts a `FrameProcessor` to a `Stage`,
 //!   handling resampling (integer factors) and frame accumulation.
-//! - [`resample`]: streaming polyphase FIR decimator/interpolator.
+//! - [`resample`]: streaming polyphase FIR decimator/interpolator
+//!   (integer factors, model path) and the arbitrary-ratio polyphase
+//!   resampler (capture path).
 //! - [`capture`]: native-rate microphone capture support — the input
-//!   resampler (integer factor + micro-ratio drift stage) and the
-//!   ring-occupancy drift servo for non-48 kHz microphones (issue #7).
+//!   resampler (any native rate to 48 kHz, drift correction folded in)
+//!   and the ring-occupancy drift servo for non-48 kHz microphones
+//!   (issue #7).
 //! - [`switch::SwitchingEngine`]: lock-free, click-free runtime switching
 //!   between prepared stages (the live-pipeline building block).
 //! - [`mix::IntensityControl`]: the atomic dry/wet ("strength") control
