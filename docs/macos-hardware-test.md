@@ -82,6 +82,23 @@ NOICAN_CODESIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
 
 Expected artifact: `dist/Noican.app`.
 
+**Known issue (2026-09-09): the Developer ID app build cannot capture
+the microphone.** `scripts/build-macos-app.sh` signs that variant with
+`--options runtime` (hardened runtime) and no entitlements, and the
+repository has no entitlements plist; under the hardened runtime
+`kTCCServiceMicrophone` requires `com.apple.security.device.audio-input`,
+so `tccd` denies capture *without a prompt* (`Prompting policy for
+hardened runtime; service: kTCCServiceMicrophone requires entitlement
+com.apple.security.device.audio-input but it is missing`). The engine
+starts and logs normally; only the meters stay flat — "Noican does not
+react to my voice". Use the ad-hoc build for hardware runs until the
+signing step carries the entitlement (tracked for a separate change;
+first seen in
+[acceptance/2026-09-09-split-render-format.md](acceptance/2026-09-09-split-render-format.md)).
+If a Developer ID bundle was launched first, re-sign it ad-hoc
+(`codesign --force --sign - dist/Noican.app`) and relaunch. The driver's
+hardened-runtime signing is unaffected (no TCC-guarded capability).
+
 The build replaces the bundle on disk but does not touch a running
 instance: after every rebuild quit the app (`pkill -x NoicanMenuBar`),
 `open dist/Noican.app`, and confirm the PID in the Console lines has

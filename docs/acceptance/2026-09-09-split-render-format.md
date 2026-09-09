@@ -40,6 +40,13 @@ ch0: rms  -20.1 dBFS  peak 0.890  (signal)
 ch1: rms  -20.1 dBFS  peak 0.890  (signal)
 ```
 
+Container format of the two takes (`afinfo`):
+
+```
+pr29-bt-max.m4a       Data format: 2 ch, 48000 Hz, aac   estimated duration: 31.09 s
+pr29-builtin-max.m4a  Data format: 2 ch, 48000 Hz, aac   estimated duration: 30.94 s
+```
+
 Operator's note on the takes: the same sustained sound for 30 s, with a
 breath at about 20 s in both, and faint household sounds (another
 person, a child) possibly present in the background.
@@ -86,8 +93,8 @@ Native-rate checklist (docs/macos-hardware-test.md):
 | # | Check | Result |
 |---|---|---|
 | 1 | Running on a native rate (Bluetooth headset) | **Pass** — HUAWEI FreeClip, engine Running, 30 s recording taken |
-| 2 | 48 kHz output, intelligible | **Pass (operator report)** — recording made and measured; content not separately auditioned in this run beyond the operator's own listening |
-| 4 | Aggregate path unchanged | **Pass** — built-in microphone: `[0, 1]` / `[0, 1]`, ch0 = ch1 = −20.1 dBFS |
+| 2 | 48 kHz output, intelligible | **Pass** — `afinfo`: 48000 Hz, 31.1 s; intelligibility by the operator's own listening (telephony bandwidth expected on this HFP headset, not separately auditioned by a second listener) |
+| 4 | Aggregate path unchanged (behavior, quality, latency) | **Partial** — behavior: built-in microphone start, `[0, 1]` / `[0, 1]`, ch0 = ch1 = −20.1 dBFS (−0.5 dB against 2026-09-05). Quality and latency were not compared against a pre-PR build in this run (same evidence tier as the 2026-09-05 split-transport record's Partial) |
 | 5 | Strength alignment (single voice at 50%) | Not covered (Passthrough at 100% only) |
 | 10 | Split render format follows the device: `Split output routing` counts equal the device's channel count, requested = read-back, same signal on every channel | **Pass** — `virtual output channels 2, render format requested 2 ch, render format read back after initialize 2 ch`; Noican Microphone is a 2-channel device; ch0 = ch1 (identical RMS and peak) |
 | 3, 6–9 | Drift/endurance, rate-change recovery, UI truthfulness, real-time audit, split-path underruns | Not covered — outside this regression check; the code paths for the callback are unchanged by PR #29 and the earlier split-transport records stand |
@@ -96,9 +103,11 @@ Level-integrity checklist:
 
 | # | Check | Result |
 |---|---|---|
-| 6 | Split path level: Bluetooth recording unchanged (both channels, same level as before) | **Pass (operator/agent judgement)** — ch0 = ch1 = −23.5 dBFS against the 2026-09-05 `04-bt-max` reference of −21.0 dBFS: −2.5 dB, outside the ±1.5 dB speech-variance band. Judged a level-of-speech difference, not a routing one: the two channels are identical to the sample (the only thing PR #29 changes is the channel count of the client format, not the sample values or any gain), the same headset's two 2026-09-05 takes were already 2.2 dB apart under nominally equal settings, and this take contains a breath pause and background sounds. A same-session A/B against `main` was not run (see "Not covered") |
-| 1 | Aggregate path level (built-in microphone) | **Pass** — −20.1 dBFS against −19.6 dBFS on 2026-09-05 (−0.5 dB, within ±1 dB); ch0 = ch1 |
-| 5 | Preview, model switching as before | **Pass (operator report)** — Preview audible on the headset, one model switch clean, on the split path |
+| 6 | Split path level: Bluetooth recording unchanged (every channel fed, same level as before) | **Pass (operator/agent judgement)** — ch0 = ch1 = −23.5 dBFS against the 2026-09-05 `04-bt-max` reference of −21.0 dBFS: −2.5 dB, outside the ±1.5 dB speech-variance band. Judged a level-of-speech difference, not a routing one: the two channels are identical to the sample (the only thing PR #29 changes is the channel count of the client format, not the sample values or any gain), the same headset's two 2026-09-05 takes were already 2.2 dB apart under nominally equal settings, and this take contains a breath pause and background sounds. A same-session A/B against `main` was not run (see "Not covered") |
+| 6 | Split path: does the headset's system input slider apply? (middle / maximum pair) | **Not covered** — only the maximum-slider take was recorded; the 2026-09-05 pair (+2.2 dB, judged "not applied") remains the only evidence, and the Level integrity section's second bullet is unchanged |
+| 1 | Aggregate path level (built-in microphone): same signal on every channel, channel 0 within ±1 dB of the previous build | **Pass** — ch0 = ch1 = −20.1 dBFS against −19.6 dBFS on 2026-09-05 (−0.5 dB) |
+| 5 | Preview, model switching, underrun diagnostics as before | **Partial** — Preview audible on the headset and one model switch clean on the split path (operator report). The underrun clause (zero on a light model over 60 s) was not run; no underrun line appeared in the captured windows, but those were not a timed light-model session |
+| 2, 3, 4 | Dual mono on a composite device; both ears; turned-down / muted notice | Not covered — no composite device was connected (the MV7i was not part of this run) and the level notice was not exercised; both stand on the 2026-09-05 record |
 
 ### Not covered
 
@@ -110,7 +119,11 @@ Level-integrity checklist:
   Noican driver stayed installed throughout.
 - **44.1 kHz-family microphone** on the split path: only the 16 kHz
   HFP headset was used.
-- Native-rate criteria 3, 5, 6, 7, 8, 9 (see table).
+- **Headset system-slider pair** (level-integrity criterion 6, second
+  row): not repeated; still one measured pair (2026-09-05).
+- Native-rate criteria 3, 5, 6, 7, 8, 9; quality/latency halves of 4;
+  level-integrity criteria 2, 3, 4 and the underrun clause of 5 (see
+  tables).
 
 ### Observations
 
