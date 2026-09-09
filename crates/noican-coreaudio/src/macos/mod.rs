@@ -725,7 +725,7 @@ impl Runtime {
 
     /// Diagnostic: whether the inference worker's mach time-constraint
     /// (real-time) promotion succeeded at loop start (see
-    /// [`promote_current_thread_to_realtime`]). False means the worker
+    /// `promote_current_thread_to_realtime`). False means the worker
     /// runs at default priority, so budget misses on hardware may be
     /// scheduling, not model cost. This reports the start-time result,
     /// not live membership: XNU may later demote a persistently
@@ -798,8 +798,8 @@ impl Runtime {
     /// not documented, which is why the read-back is recorded rather
     /// than assumed). On the split transport: the output channel count
     /// AUHAL reports for the virtual output device, the render format
-    /// set from it, and that format read back after initialize (see
-    /// [`split`]). Meant for the one-time start log on hardware, where
+    /// set from it, and that format read back after initialize (see the
+    /// `split` module). Meant for the one-time start log on hardware, where
     /// neither the map's effect nor the format negotiation can otherwise
     /// be observed. The two transports' descriptions start differently
     /// (`aggregate output channels …` / `virtual output channels …`).
