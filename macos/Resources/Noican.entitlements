@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for Noican.app. Applied by scripts/build-macos-app.sh to
+  both the Developer ID and the ad-hoc signature.
+
+  The Developer ID build is signed with the hardened runtime (the
+  codesign "runtime" option). Under the hardened runtime, tccd only
+  grants kTCCServiceMicrophone to processes that carry
+  com.apple.security.device.audio-input; without it, capture is denied
+  silently (no prompt), the engine runs, and the meters never move.
+  NSMicrophoneUsageDescription in Info.plist is still required for the
+  prompt text but does not substitute for the entitlement.
+
+  Keep this list minimal. The app is a Swift menu bar UI over a
+  statically linked Rust engine (tract inference, no JIT) and loads no
+  third-party dynamic libraries, reads no DYLD_* variables, sends no
+  Apple Events, and is not sandboxed (App Sandbox is out of scope), so
+  no other hardened-runtime exception applies. Outbound HTTPS for model
+  downloads is unrestricted outside the App Sandbox and needs no key.
+
+  XML comments must not contain a double hyphen: AMFI's plist parser
+  (the one codesign uses) rejects the file with "syntax error".
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+</dict>
+</plist>
