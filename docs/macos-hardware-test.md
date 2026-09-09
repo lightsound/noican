@@ -82,6 +82,23 @@ NOICAN_CODESIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
 
 Expected artifact: `dist/Noican.app`.
 
+**Known issue (2026-09-09): the Developer ID app build cannot capture
+the microphone.** `scripts/build-macos-app.sh` signs that variant with
+`--options runtime` (hardened runtime) and no entitlements, and the
+repository has no entitlements plist; under the hardened runtime
+`kTCCServiceMicrophone` requires `com.apple.security.device.audio-input`,
+so `tccd` denies capture *without a prompt* (`Prompting policy for
+hardened runtime; service: kTCCServiceMicrophone requires entitlement
+com.apple.security.device.audio-input but it is missing`). The engine
+starts and logs normally; only the meters stay flat — "Noican does not
+react to my voice". Use the ad-hoc build for hardware runs until the
+signing step carries the entitlement (tracked for a separate change;
+first seen in
+[acceptance/2026-09-09-split-render-format.md](acceptance/2026-09-09-split-render-format.md)).
+If a Developer ID bundle was launched first, re-sign it ad-hoc
+(`codesign --force --sign - dist/Noican.app`) and relaunch. The driver's
+hardened-runtime signing is unaffected (no TCC-guarded capability).
+
 The build replaces the bundle on disk but does not touch a running
 instance: after every rebuild quit the app (`pkill -x NoicanMenuBar`),
 `open dist/Noican.app`, and confirm the PID in the Console lines has
@@ -338,7 +355,20 @@ microphone list must show the same value.
    reach `Running` (green indicator). No Aggregate Device appears in
    Audio MIDI Setup for this path (two AUHAL instances instead). The
    one-time transport diagnostics line in Console must show
-   `worker realtime scheduling true`.
+   `worker realtime scheduling true`, and it is followed by the split
+   transport's routing line — `Split output routing: virtual output
+   channels N, render format requested N ch, render format read back
+   after initialize N ch` — where N is the virtual output's output
+   channel count as AUHAL reports it for the output-only unit (2 for
+   the current Noican driver and for stock BlackHole 2ch; 1 for a
+   1-channel driver). The render format is sized from that count
+   rather than fixed at two channels, so all three numbers must agree
+   and match the device's channel count in Audio MIDI Setup; record the
+   line verbatim. A start refusal reading `virtual output routing
+   failed: the virtual output device reports no output channels (split
+   transport)` means AUHAL reported zero channels for the device — the
+   transport refuses rather than guessing a width; record the device's
+   Audio MIDI Setup channel counts.
 4. Record 30+ seconds from the virtual device in QuickTime: the
    recording must be 48 kHz, non-silent, and intelligible. On a
    telephony profile expect telephony bandwidth (the source is 8–16 kHz
@@ -1138,6 +1168,17 @@ Run the non-48 kHz microphone procedure above; the build passes when:
 9. **Split-path underruns**: with FastEnhancer-B the split transport
    logs zero underruns over 60+ s of continuous speech (this also
    closes criterion 4 of the output-underrun checklist below).
+10. **Split render format follows the device**: the `Split output
+    routing` line (procedure step 3) reports a virtual-output channel
+    count equal to the device's output channel count in Audio MIDI
+    Setup, and the requested and read-back render formats both equal
+    it; the recording carries the same signal on every channel of that
+    width. Record the line verbatim. This scores the one Core Audio
+    behaviour the render-format decision record
+    (`noican_coreaudio::routing`, "The split transport's render
+    format") rests on without prior hardware evidence: that the
+    device-side stream-format read behaves on an output-only AUHAL as
+    it does on the aggregate unit.
 
 ## Acceptance checklist (composite input/output microphone)
 

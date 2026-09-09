@@ -484,7 +484,7 @@ extension AppState {
             lastFrameCount = frames
             stalledTicks = 0
         }
-        diagnostics.sample(engine, activeModelID: model.selectedModelID)
+        diagnostics.sample(engine, activeModelID: model.selectedModelID, splitTransport: activeCaptureRate != nil)
     }
 }
 
