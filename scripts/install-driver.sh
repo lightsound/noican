@@ -35,4 +35,4 @@ chmod -R go-w "$DRIVER_DST"
 killall coreaudiod 2>/dev/null || true
 
 echo "Installed $DRIVER_DST and restarted coreaudiod."
-echo "Verify in Audio MIDI Setup: 'Noican Microphone' (2 ch, 48 kHz)."
+echo "Verify in Audio MIDI Setup: 'Noican Microphone' (1 ch, 48 kHz)."
