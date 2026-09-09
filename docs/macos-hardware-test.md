@@ -82,22 +82,49 @@ NOICAN_CODESIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
 
 Expected artifact: `dist/Noican.app`.
 
-**Known issue (2026-09-09): the Developer ID app build cannot capture
-the microphone.** `scripts/build-macos-app.sh` signs that variant with
-`--options runtime` (hardened runtime) and no entitlements, and the
-repository has no entitlements plist; under the hardened runtime
-`kTCCServiceMicrophone` requires `com.apple.security.device.audio-input`,
-so `tccd` denies capture *without a prompt* (`Prompting policy for
-hardened runtime; service: kTCCServiceMicrophone requires entitlement
-com.apple.security.device.audio-input but it is missing`). The engine
-starts and logs normally; only the meters stay flat — "Noican does not
-react to my voice". Use the ad-hoc build for hardware runs until the
-signing step carries the entitlement (tracked for a separate change;
-first seen in
-[acceptance/2026-09-09-split-render-format.md](acceptance/2026-09-09-split-render-format.md)).
-If a Developer ID bundle was launched first, re-sign it ad-hoc
-(`codesign --force --sign - dist/Noican.app`) and relaunch. The driver's
+Both variants are signed with `macos/Resources/Noican.entitlements`
+(`com.apple.security.device.audio-input`), and the script fails if the
+entitlement is missing from the finished signature. The Developer ID
+variant additionally runs under the hardened runtime (`--options
+runtime`), where `tccd` grants `kTCCServiceMicrophone` only to a
+signature that carries that entitlement — a Developer ID bundle signed
+without it (the state before 2026-09-09; see
+[acceptance/2026-09-09-split-render-format.md](acceptance/2026-09-09-split-render-format.md))
+launches, logs a healthy engine, and never captures a sample: no prompt,
+flat meters, "Noican does not react to my voice". The driver's
 hardened-runtime signing is unaffected (no TCC-guarded capability).
+
+Expected on a Developer ID build: the first start of the engine on a
+Mac (or after a TCC reset) shows the **microphone permission prompt**.
+No prompt *and* flat meters means the entitlement is missing; confirm
+with `codesign --display --entitlements - dist/Noican.app` (the key must
+be listed) and with the `tccd` log, which then contains `Prompting
+policy for hardened runtime; service: kTCCServiceMicrophone requires
+entitlement com.apple.security.device.audio-input but it is missing`:
+
+```bash
+/usr/bin/log show --last 5m --predicate 'process == "tccd"' \
+  | grep -i noican | grep -E "requires entitlement|AUTHREQ_PROMPTING"
+```
+
+Read the `service:` field. A healthy Developer ID build logs one
+`requires entitlement` line for **`kTCCServiceAppleEvents`** at launch
+(`appleeventsd`'s launch handshake; the app sends no Apple Events and
+nothing depends on it — recorded in
+[acceptance/2026-09-09-developer-id-microphone.md](acceptance/2026-09-09-developer-id-microphone.md))
+and an `AUTHREQ_PROMPTING … service=kTCCServiceMicrophone` line when
+the prompt is shown. Only a `requires entitlement` line for
+**`kTCCServiceMicrophone`** is the regression.
+
+TCC remembers the decision per bundle identifier, so a Mac that already
+granted the microphone to an ad-hoc build will not prompt again for the
+Developer ID build. To exercise the prompt, reset the record first:
+
+```bash
+pkill -x NoicanMenuBar
+tccutil reset Microphone com.lightsound.noican
+open dist/Noican.app
+```
 
 The build replaces the bundle on disk but does not touch a running
 instance: after every rebuild quit the app (`pkill -x NoicanMenuBar`),
@@ -113,7 +140,12 @@ Validate it:
 ```bash
 codesign --verify --deep --strict --verbose=2 dist/Noican.app
 codesign --display --verbose=4 dist/Noican.app
+codesign --display --entitlements - dist/Noican.app
 ```
+
+The last command must list `com.apple.security.device.audio-input` with
+value `true` on both variants; on the Developer ID variant
+`--verbose=4` must also show `flags=0x10000(runtime)`.
 
 The app is a UI agent (`LSUIElement`) and therefore has no Dock icon.
 

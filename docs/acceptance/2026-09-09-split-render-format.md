@@ -147,6 +147,13 @@ Level-integrity checklist:
   the Developer ID signing step, or drop `--options runtime` for the
   app (the driver's hardened-runtime signing is unaffected — it has no
   TCC-guarded capability).
+
+  *Forward pointer (2026-09-09):* fixed by the first candidate.
+  `scripts/build-macos-app.sh` now signs both variants with
+  `macos/Resources/Noican.entitlements` and fails if the entitlement is
+  absent from the signature; the Build section of
+  [docs/macos-hardware-test.md](../macos-hardware-test.md) documents
+  the expected prompt and the `tccd` line that identifies a recurrence.
 - **Unified-log retention.** Info-level lines from a session that ended
   about ten minutes earlier were no longer returned by `log show`; the
   `Split output routing` evidence for the recording session had to be
