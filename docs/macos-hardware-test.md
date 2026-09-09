@@ -103,8 +103,18 @@ policy for hardened runtime; service: kTCCServiceMicrophone requires
 entitlement com.apple.security.device.audio-input but it is missing`:
 
 ```bash
-/usr/bin/log show --last 5m --predicate 'process == "tccd"' | grep -i noican
+/usr/bin/log show --last 5m --predicate 'process == "tccd"' \
+  | grep -i noican | grep -E "requires entitlement|AUTHREQ_PROMPTING"
 ```
+
+Read the `service:` field. A healthy Developer ID build logs one
+`requires entitlement` line for **`kTCCServiceAppleEvents`** at launch
+(`appleeventsd`'s launch handshake; the app sends no Apple Events and
+nothing depends on it — recorded in
+[acceptance/2026-09-09-developer-id-microphone.md](acceptance/2026-09-09-developer-id-microphone.md))
+and an `AUTHREQ_PROMPTING … service=kTCCServiceMicrophone` line when
+the prompt is shown. Only a `requires entitlement` line for
+**`kTCCServiceMicrophone`** is the regression.
 
 TCC remembers the decision per bundle identifier, so a Mac that already
 granted the microphone to an ad-hoc build will not prompt again for the
