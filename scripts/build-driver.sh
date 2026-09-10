@@ -42,6 +42,16 @@ BUNDLE_ID="com.lightsound.noican.driver"
 # kDriver_Name: the UID base ("<base>_UID"), not a user-visible string.
 # Keep the "com.lightsound.noican." prefix (see the header comment).
 DEVICE_UID_BASE="com.lightsound.noican.mic"
+# Guard the prefix both app-side matchers test (AudioDeviceCatalog
+# .isNoicanVirtualDevice, is_noican_loopback_uid). A base outside it would
+# build and load fine and ship a device the app cannot see as its own.
+case "$DEVICE_UID_BASE" in
+  com.lightsound.noican.?*) ;;
+  *)
+    echo "DEVICE_UID_BASE must start with 'com.lightsound.noican.' and name a segment after the dot, got '$DEVICE_UID_BASE'" >&2
+    exit 1
+    ;;
+esac
 DEVICE_NAME="Noican Microphone"
 DEVICE2_NAME="Noican Microphone Mirror"
 MANUFACTURER_NAME="lightsound"

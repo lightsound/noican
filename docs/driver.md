@@ -102,8 +102,10 @@ radius, and the cost of a future rename:
 - **Drop the segment (`com.lightsound.noican`)** — yields
   `com.lightsound.noican_UID`, which the trailing-dot prefix does not
   match, so both matchers, their tests, and this document would change
-  for no gain over a dotted segment. Rejected; the negative case is
-  pinned by a unit test so the build cannot drift there unnoticed.
+  for no gain over a dotted segment. Rejected; the matcher's side of the
+  negative case is pinned by a unit test, and `scripts/build-driver.sh`
+  refuses a `DEVICE_UID_BASE` outside the `com.lightsound.noican.`
+  prefix, so neither side can drift there unnoticed.
 - **Ship both shapes** (a 2-channel visible device plus a 1-channel one)
   — `kNumber_Of_Channels` is one build-wide constant in upstream
   BlackHole, so this needs two driver bundles and a selection policy in
