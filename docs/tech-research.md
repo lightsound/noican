@@ -155,7 +155,7 @@ DeepFilterNet-class models learn speech-vs-noise separation: vacuum cleaners and
 | Model | Approach | Sample rate | Status | Assessment |
 |---|---|---|---|---|
 | **Hush** (Weya AI, Apache-2.0) | DFN3 architecture retrained with 60% of samples containing competing speakers (12–24 dB SIR below primary); auxiliary separation head at training time only | 16 k | [pulp-vision/Hush](https://github.com/pulp-vision/Hush): PyTorch + prebuilt `libweya_nc.dylib` (Apple Silicon) with a 10 ms-frame C API; ONNX bundle on HF; "louder background speech" retrain announced | **Tested and adopted** (2026-08-31, §6.4 decision record). No enrollment: suppresses the *background* (quieter) speaker, so it can fail if the interferer is louder than the user. Same inference cost as DFN3. 16 kHz output is the main quality concession. Already used in production-ish OSS (Krasp) |
-| **tse-conv-tasnet-48k** | Causal streaming Conv-TasNet TSE conditioned on a frozen 192-dim ECAPA-TDNN enrollment embedding (FiLM) | **48 k native** | [HF: penta2himajin/tse-conv-tasnet-48k](https://huggingface.co/penta2himajin/tse-conv-tasnet-48k): per-chunk (10 ms, 480-sample) streaming ONNX with explicit state tensors; Rust wrapper (`TseSession`) in the mellonella project | **Second candidate.** True voiceprint enrollment at the native rate — exactly what design1 wanted but believed unavailable. Caveats: trained only on VCTK + DEMAND, v3 after two broken releases, solo-dev PoC parent project — quality unproven, must be validated by listening test |
+| **tse-conv-tasnet-48k** | Causal streaming Conv-TasNet TSE conditioned on a frozen 192-dim ECAPA-TDNN enrollment embedding (FiLM) | **48 k native** | [HF: penta2himajin/tse-conv-tasnet-48k](https://huggingface.co/penta2himajin/tse-conv-tasnet-48k): per-chunk (10 ms, 480-sample) streaming ONNX with explicit state tensors; Rust wrapper (`TseSession`) in the mellonella project | **Second candidate — not planned** (§6.4 decision record; weights private). True voiceprint enrollment at the native rate — exactly what design1 wanted but believed unavailable. Caveats: trained only on VCTK + DEMAND, v3 after two broken releases, solo-dev PoC parent project — quality unproven, must be validated by listening test |
 
 ### 6.2 DIY hard gate (fallback; validated design)
 
@@ -489,10 +489,10 @@ Everything the former Phase -1 needed, built as the product itself:
   happens during real use.
 
 Exit criteria: converge on a preferred NS model and speaker-suppression
-approach from real-world use (speaker-suppression half decided 2026-08-31 —
-Hush, see the §6.4 decision record) (the selector stays — it is also the escape hatch
-when a model misbehaves in a specific room); or conclude quality is
-insufficient and fall back to buying JoyCast.
+approach from real-world use (the selector stays — it is also the escape
+hatch when a model misbehaves in a specific room); or conclude quality is
+insufficient and fall back to buying JoyCast. The speaker-suppression half
+was decided on 2026-08-31 — Hush, see the §6.4 decision record.
 
 ### Phase 1 — Own the device + differentiator
 
@@ -520,7 +520,7 @@ Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level 
 
 1. Listening-test outcomes (§12 Phase 0, CLI comparison + live switching) — the entire stack pivots on these. *Speaker-suppression half answered 2026-08-31* (§6.4 decision record): Hush suppresses background speech sufficiently; no dedicated stage needed. The preferred denoise model remains a matter of daily use (default `fastenhancer-b`).
 2. Hush's behavior when the background speaker is *louder* than the user (trained at 12–24 dB SIR below primary). Not tested; stays open as a known limit rather than a blocker (upstream's retrain for louder background speech is still unreleased as of 2026-09-11).
-3. tse-conv-tasnet-48k real-world quality given its small training set (VCTK + DEMAND).
+3. tse-conv-tasnet-48k real-world quality given its small training set (VCTK + DEMAND). Moot for now: not planned (§6.4 decision record) and the weights are private.
 4. Long-session (2 h+) stability of aggregate-device drift compensation. Owner report of 2026-09-10 ([acceptance/2026-09-10-long-session-owner-report.md](acceptance/2026-09-10-long-session-owner-report.md)): a meeting of about two hours with a Shure MV7i and FastEnhancer-B ran without the participants noticing anything; no reference tone, recording, or memory measurement was taken and the microphone's rate (hence the transport — aggregate path presumed, as in every earlier MV7i record) was not read, so the measurement-based verification of the Clock drift and endurance procedure is still outstanding and the question stays open.
 5. DIY gate fade time constant (if the DIY route is needed): onset clipping vs. interferer leakage.
 6. How meeting apps treat the virtual device's reported latency/safety offsets (BlackHole reports zero).

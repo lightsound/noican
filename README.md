@@ -19,14 +19,13 @@ hardened runtime. Both are recorded on Apple hardware
 ([docs/acceptance/2026-09-11-1ch-driver.md](docs/acceptance/2026-09-11-1ch-driver.md)).
 The rest of Phase 1 was re-scoped by the owner listening test of
 2026-08-31 (recorded 2026-09-11): the `Hush 16k` model already removes
-background speech well enough, so no dedicated speaker-suppression stage is planned; the
-remaining item is delivering Hush's suppression at 48 kHz output quality
-so it can become the default model (decision record in
-[docs/tech-research.md](docs/tech-research.md) §6.4). That work has not
-started. The hardware acceptance procedures and
-checklists live in
-[docs/macos-hardware-test.md](docs/macos-hardware-test.md); each run is
-recorded under `docs/acceptance/`.
+background speech well enough, so no dedicated speaker-suppression
+stage is planned; the remaining item is delivering Hush's suppression at
+48 kHz output quality so it can become the default model (decision
+record in [docs/tech-research.md](docs/tech-research.md) §6.4). That
+work has not started. The hardware acceptance procedures and checklists
+live in [docs/macos-hardware-test.md](docs/macos-hardware-test.md); each
+run is recorded under `docs/acceptance/`.
 
 - [docs/tech-research.md](docs/tech-research.md) — consolidated technology research: candidate evaluation for every layer, final recommended stack, roadmap, and open questions.
 - [docs/models.md](docs/models.md) — supported models, weight download, and verification status.
