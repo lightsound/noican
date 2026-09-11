@@ -76,6 +76,16 @@ are accepted; processing runs in realtime-sized blocks through the same
 stage code the live engine uses, and each stage's buffering latency is
 compensated so outputs are time-aligned with the reference.
 
+## Speaker-suppression evaluation (`noican eval`)
+
+`noican eval` mixes a clean recording of your own voice with a public
+interfering-speaker recording at several SIRs, runs the candidate models
+under the same conditions as `process`, and reports high-band retention,
+own-voice SI-SDR, interferer residual (full band and ≥ 8 kHz), latency
+and block time per model — plus a blind listening set. Procedure,
+metric definitions and material licensing:
+[hush-48k-eval.md](hush-48k-eval.md).
+
 ## Verification status (2026-08-25, Linux x86_64)
 
 - All denoise models produce finite, time-aligned, plausibly denoised

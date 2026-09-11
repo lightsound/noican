@@ -2,6 +2,7 @@
 //! outputs for side-by-side comparison.
 
 use std::path::Path;
+use std::time::Instant;
 
 use anyhow::Context as _;
 use noican_core::Stage;
@@ -19,20 +20,39 @@ pub(crate) const BLOCK_LEN: usize = 480;
 ///
 /// Propagates stage processing failures.
 pub(crate) fn run_stage_aligned(stage: &mut dyn Stage, input: &[f32]) -> anyhow::Result<Vec<f32>> {
+    run_stage_aligned_timed(stage, input).map(|(output, _)| output)
+}
+
+/// [`run_stage_aligned`] that also returns the wall-clock time of every
+/// `process_block` call in nanoseconds (one entry per [`BLOCK_LEN`]
+/// block, in order). This is the same measurement `block_bench` makes,
+/// taken on real audio instead of noise, so the evaluation table can
+/// show whether a candidate fits the live worker's budget.
+///
+/// # Errors
+///
+/// Propagates stage processing failures.
+pub(crate) fn run_stage_aligned_timed(
+    stage: &mut dyn Stage,
+    input: &[f32],
+) -> anyhow::Result<(Vec<f32>, Vec<u128>)> {
     let latency = stage.latency_samples();
     let padded_len = input.len() + latency;
     let mut output = vec![0.0_f32; padded_len.next_multiple_of(BLOCK_LEN)];
     let mut padded = vec![0.0_f32; output.len()];
     padded[..input.len()].copy_from_slice(input);
+    let mut block_times_ns = Vec::with_capacity(output.len() / BLOCK_LEN);
 
     for (in_block, out_block) in padded.chunks(BLOCK_LEN).zip(output.chunks_mut(BLOCK_LEN)) {
+        let start = Instant::now();
         stage
             .process_block(in_block, out_block)
             .with_context(|| format!("stage {} failed", stage.id()))?;
+        block_times_ns.push(start.elapsed().as_nanos());
     }
     output.drain(..latency);
     output.truncate(input.len());
-    Ok(output)
+    Ok((output, block_times_ns))
 }
 
 /// Processes `input_path` through every model in `model_ids`, writing

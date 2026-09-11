@@ -29,6 +29,7 @@ run is recorded under `docs/acceptance/`.
 
 - [docs/tech-research.md](docs/tech-research.md) — consolidated technology research: candidate evaluation for every layer, final recommended stack, roadmap, and open questions.
 - [docs/models.md](docs/models.md) — supported models, weight download, and verification status.
+- [docs/hush-48k-eval.md](docs/hush-48k-eval.md) — objective evaluation of "Hush at 48 kHz" candidates (`noican eval`): metrics, material, owner recording procedure.
 
 ## Building
 
@@ -42,12 +43,16 @@ cargo run -p noican-cli --release -- fetch
 
 # Compare all models on a recording (outputs under out/<stem>/<model>.wav)
 cargo run -p noican-cli --release -- process my_recording.wav
+
+# Score speaker-suppression candidates on voice + interferer mixtures
+# (see docs/hush-48k-eval.md for the material)
+cargo run -p noican-cli --release -- eval --target my_voice.wav --interferer other/*.flac
 ```
 
 ### CLI input formats
 
-`process` accepts WAV, AIFF/AIFC, CAF, and M4A (AAC or Apple Lossless)
-inputs; outputs are always mono 48 kHz 16-bit WAV. Compressed AIFC
+`process` and `eval` accept WAV, AIFF/AIFC, CAF, FLAC, and M4A (AAC or
+Apple Lossless) inputs; outputs are always mono 48 kHz 16-bit WAV. Compressed AIFC
 variants outside the PCM/µ-law/A-law family (e.g. IMA4) and other exotic
 encodings are not decodable here — convert them once with macOS's built-in
 `afconvert`:
@@ -105,7 +110,8 @@ SwiftLint in strict mode and `swift build -Xswiftc -warnings-as-errors`.
 - `crates/noican-models` — model registry, SHA-256-verified weight
   fetching, and stage implementations (ONNX Runtime + tract backends).
 - `crates/noican-cli` — `noican` binary: `models` / `fetch` / `process`
-  (batch audio comparison under strictly identical conditions).
+  (batch audio comparison under strictly identical conditions) / `eval`
+  (objective speaker-suppression metrics and a blind listening set).
 - `crates/noican-coreaudio` — AUHAL real-time transport on a private
   Aggregate Device (macOS; portable stub elsewhere).
 - `crates/noican-ffi` — C ABI consumed by the Swift control plane
