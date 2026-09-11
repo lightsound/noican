@@ -17,9 +17,9 @@ this repository, Developer-ID-signed, and preferred over stock BlackHole
 entitlement so the Developer ID build captures the microphone under the
 hardened runtime. Both are recorded on Apple hardware
 ([docs/acceptance/2026-09-11-1ch-driver.md](docs/acceptance/2026-09-11-1ch-driver.md)).
-The rest of Phase 1 was re-scoped on 2026-09-11: the `Hush 16k` model
-already removes background speech well enough (owner listening test of
-2026-08-31), so no dedicated speaker-suppression stage is planned; the
+The rest of Phase 1 was re-scoped by the owner listening test of
+2026-08-31 (recorded 2026-09-11): the `Hush 16k` model already removes
+background speech well enough, so no dedicated speaker-suppression stage is planned; the
 remaining item is delivering Hush's suppression at 48 kHz output quality
 so it can become the default model (decision record in
 [docs/tech-research.md](docs/tech-research.md) §6.4). That work has not
