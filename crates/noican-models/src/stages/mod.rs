@@ -3,5 +3,6 @@
 pub mod dfn_tract;
 pub mod dpdfnet;
 pub mod fastenhancer;
+pub mod hush_wideband;
 pub mod tse;
 pub mod ulunas;
