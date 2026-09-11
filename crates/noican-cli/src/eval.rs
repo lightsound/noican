@@ -25,10 +25,13 @@
 //!   [`HIGH_BAND_HZ`] in the output relative to the clean voice, in dB.
 //!   A 16 kHz model scores around −60 dB here; a transparent 48 kHz path
 //!   scores 0 dB.
+//! - **Own-voice level** (you only): output RMS relative to the clean
+//!   voice, the loudness-parity figure `HUSH_MAKEUP_GAIN_DB` was set
+//!   from (±1 dB is the acceptance band there).
 //! - **Own-voice SI-SDR** (you only): scale-invariant SDR of the output
 //!   against the clean voice. Artefacts, band limits and pumping all
 //!   lower it; the metric is scale-invariant on purpose because gain
-//!   parity is tracked separately (`HUSH_MAKEUP_GAIN_DB`).
+//!   parity is the previous figure.
 //! - **Both-talking SI-SDR** (you + other): the same against the clean
 //!   voice while the interferer is present. The mixture itself scores
 //!   about the SIR; a suppressor should score above it.
@@ -329,6 +332,8 @@ pub(crate) fn si_sdr_db(estimate: &[f32], reference: &[f32]) -> f64 {
 pub(crate) struct Metrics {
     /// Output high-band energy relative to the clean voice (you only).
     pub(crate) high_band_retention: f64,
+    /// Output RMS relative to the clean voice (you only).
+    pub(crate) own_voice_level: f64,
     /// SI-SDR against the clean voice (you only).
     pub(crate) own_voice_si_sdr: f64,
     /// SI-SDR against the clean voice while the interferer talks.
@@ -356,6 +361,8 @@ pub(crate) fn evaluate(output: &[f32], mixture: &Mixture) -> Metrics {
     let high_band_retention = power_db(
         high_band_energy(&output[you.clone()]) / high_band_energy(&mixture.target[you.clone()]),
     );
+    let own_voice_level =
+        amplitude_db(rms(&output[you.clone()]) / rms(&mixture.target[you.clone()]));
     let own_voice_si_sdr = si_sdr_db(&output[you.clone()], &mixture.target[you]);
     let both_si_sdr = si_sdr_db(&output[both.clone()], &mixture.target[both]);
     let interferer_residual =
@@ -365,6 +372,7 @@ pub(crate) fn evaluate(output: &[f32], mixture: &Mixture) -> Metrics {
     );
     Metrics {
         high_band_retention,
+        own_voice_level,
         own_voice_si_sdr,
         both_si_sdr,
         interferer_residual,
@@ -630,6 +638,7 @@ mod tests {
 
         let identity = evaluate(&mixture.input, &mixture);
         assert!(identity.high_band_retention.abs() < 0.01);
+        assert!(identity.own_voice_level.abs() < 0.01);
         assert_close(identity.own_voice_si_sdr, SI_SDR_CEILING_DB, 0.0);
         assert!((identity.both_si_sdr - 6.0).abs() < 0.3, "{identity:?}");
         assert!(identity.interferer_residual.abs() < 0.01);
@@ -655,6 +664,8 @@ mod tests {
         low_only.resize(3 * l, 0.0);
         let metrics = evaluate(&low_only, &mixture);
         assert!(metrics.high_band_retention < -60.0, "{metrics:?}");
+        // Dropping the −9.5 dB component costs 10·log10(0.9) ≈ −0.46 dB.
+        assert!((metrics.own_voice_level + 0.46).abs() < 0.05, "{metrics:?}");
         // The 10 kHz component (−9.5 dB relative) becomes the error term.
         assert!((metrics.own_voice_si_sdr - 9.54).abs() < 0.2, "{metrics:?}");
     }

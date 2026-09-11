@@ -56,21 +56,22 @@ model's reaction to a new condition is not scored.
 | Column | Region | Meaning | Better |
 |---|---|---|---|
 | HF keep | you only | Energy of the output at or above 8 kHz relative to the clean voice. A 16 kHz model reads about −80 dB; a transparent 48 kHz path reads 0 dB | closer to 0 |
-| SI-SDR you | you only | Scale-invariant SDR of the output against the clean voice. Band limits, artefacts and pumping all lower it; a pure gain change does not (gain parity is a separate question, see `HUSH_MAKEUP_GAIN_DB`) | higher |
+| level | you only | Output RMS relative to the clean voice RMS: loudness parity of your own voice. This is the number `HUSH_MAKEUP_GAIN_DB` compensates; a band-limited path reads slightly negative even when nothing else changes | closer to 0 |
+| SI-SDR you | you only | Scale-invariant SDR of the output against the clean voice. Band limits, artefacts and pumping all lower it; a pure gain change does not (that is what `level` is for) | higher |
 | SI-SDR both | you + other | The same while the interferer talks. The untouched mixture reads about the SIR; a suppressor should read above it | higher |
 | resid all | other only | Output RMS relative to the mixture RMS: how much of the interferer is left when only the other person talks | more negative |
 | resid HF | other only | The same, energy at or above 8 kHz only: the leak a band-split design shows if its upper band is not gated by Hush | more negative |
 | latency | — | `Stage::latency_samples` in ms (the value the dry/wet mixer and the switch fade rely on) | — |
 | p50 / p99 | — | Processing time of a 10 ms block, on the machine running the command (a `--release` build; the live budget is 5 ms of computation per block) | — |
 
-Reading the table: `passthrough` is the anchor (0 dB, 100 dB, SIR, 0 dB,
-0 dB). `hush` shows what is being preserved (its `resid` columns) and
-what is being fixed (`HF keep` near −80 dB). A candidate is good when
-its `HF keep` is near 0 dB **and** its `resid` columns are no worse than
-Hush's — the high-band residual in particular must not rise.
+Reading the table: `passthrough` is the anchor (0 dB, 0 dB, 100 dB, SIR,
+0 dB, 0 dB). `hush` shows what is being preserved (its `resid` columns)
+and what is being fixed (`HF keep` near −80 dB). A candidate is good
+when its `HF keep` is near 0 dB **and** its `resid` columns are no worse
+than Hush's — the high-band residual in particular must not rise.
 
-The same first segment is used for every SIR, so `HF keep` and `SI-SDR
-you` repeat across the SIR rows of one model.
+The same first segment is used for every SIR, so `HF keep`, `level` and
+`SI-SDR you` repeat across the SIR rows of one model.
 
 ## Material
 

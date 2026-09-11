@@ -297,15 +297,17 @@ fn render_table(rows: &[Row]) -> Vec<String> {
     let mut lines = vec![
         String::new(),
         "columns: HF keep = high band (≥ 8 kHz) of your voice kept, you only (0 dB = all); \
+         level = your voice's level vs. the clean recording, you only (0 dB = same loudness); \
          SI-SDR you / both = own-voice fidelity alone / while the other talks (higher = better); \
          resid all / HF = interferer left when only the other talks, full band / ≥ 8 kHz \
          (more negative = better); p50 / p99 = 10 ms block processing time"
             .to_owned(),
         format!(
-            "{:<18} {:>5} {:>8} {:>10} {:>11} {:>9} {:>9} {:>8} {:>11}",
+            "{:<18} {:>5} {:>8} {:>8} {:>10} {:>11} {:>9} {:>9} {:>8} {:>11}",
             "model",
             "SIR",
             "HF keep",
+            "level",
             "SI-SDR you",
             "SI-SDR both",
             "resid all",
@@ -317,10 +319,11 @@ fn render_table(rows: &[Row]) -> Vec<String> {
     for row in rows {
         let m = &row.metrics;
         lines.push(format!(
-            "{:<18} {:>+5.0} {:>6.1} dB {:>7.1} dB {:>8.1} dB {:>6.1} dB {:>6.1} dB {:>5.1} ms {:>5.2}/{:<5.2}",
+            "{:<18} {:>+5.0} {:>6.1} dB {:>+5.1} dB {:>7.1} dB {:>8.1} dB {:>6.1} dB {:>6.1} dB {:>5.1} ms {:>5.2}/{:<5.2}",
             row.model_id,
             row.sir_db,
             m.high_band_retention,
+            m.own_voice_level,
             m.own_voice_si_sdr,
             m.both_si_sdr,
             m.interferer_residual,
@@ -336,7 +339,7 @@ fn render_table(rows: &[Row]) -> Vec<String> {
 /// The same rows as CSV (header + one line per row).
 fn render_csv(rows: &[Row]) -> String {
     let mut csv = String::from(
-        "model,sir_db,high_band_retention_db,own_voice_si_sdr_db,both_si_sdr_db,\
+        "model,sir_db,high_band_retention_db,own_voice_level_db,own_voice_si_sdr_db,both_si_sdr_db,\
          interferer_residual_db,interferer_residual_high_db,latency_ms,block_p50_ms,block_p99_ms\n",
     );
     for row in rows {
@@ -344,10 +347,11 @@ fn render_csv(rows: &[Row]) -> String {
         // Writing to a String cannot fail.
         let _ = writeln!(
             csv,
-            "{},{},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.3},{:.3}",
+            "{},{},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.3},{:.3}",
             row.model_id,
             row.sir_db,
             m.high_band_retention,
+            m.own_voice_level,
             m.own_voice_si_sdr,
             m.both_si_sdr,
             m.interferer_residual,
@@ -379,6 +383,7 @@ mod tests {
             sir_db: 6.0,
             metrics: Metrics {
                 high_band_retention: 0.0,
+                own_voice_level: 0.0,
                 own_voice_si_sdr: 100.0,
                 both_si_sdr: 6.0,
                 interferer_residual: 0.0,
@@ -392,7 +397,7 @@ mod tests {
         let lines: Vec<&str> = csv.lines().collect();
         assert_eq!(lines.len(), 2);
         assert!(lines[0].starts_with("model,sir_db,"));
-        assert!(lines[1].starts_with("passthrough,6,0.00,100.00,6.00,"));
+        assert!(lines[1].starts_with("passthrough,6,0.00,0.00,100.00,6.00,"));
         assert_eq!(render_table(&rows).len(), 4);
     }
 }
