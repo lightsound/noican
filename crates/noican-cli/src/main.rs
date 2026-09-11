@@ -75,14 +75,19 @@ enum Command {
         interferer: Vec<PathBuf>,
         /// Signal-to-interference ratios in dB for the overlap segment
         /// (voice RMS over interferer RMS).
-        #[arg(long, value_delimiter = ',', default_value = "12,6,0")]
+        #[arg(
+            long,
+            value_delimiter = ',',
+            allow_negative_numbers = true,
+            default_value = "12,6,0"
+        )]
         sir: Vec<f64>,
         /// Normalize the voice recording to this RMS level (dBFS) before
         /// mixing. Default: keep the recorded level. Hush's behavior
         /// depends on the absolute input level, so compare candidates at
         /// the level your microphone actually delivers (see
         /// docs/hush-48k-eval.md).
-        #[arg(long)]
+        #[arg(long, allow_negative_numbers = true)]
         target_level_dbfs: Option<f64>,
         /// Segment length in seconds; each mixture is three segments
         /// (you / you + other / other). Clamped to the material.
