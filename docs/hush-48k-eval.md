@@ -10,7 +10,7 @@ ears on a blind listening set. Both come out of one CLI command:
 cargo run -p noican-cli --release -- eval \
   --target  ~/Desktop/noican-eval/voice-builtin.wav \
   --interferer ~/Desktop/noican-eval/interferer/*.flac \
-  --models passthrough,hush,fastenhancer-b \
+  --models passthrough,hush,hush-48k,fastenhancer-b \
   --out-dir ~/Desktop/noican-eval/out-builtin
 ```
 
@@ -155,6 +155,37 @@ acceptance record) the voice passes at parity. Two consequences:
   — lower the level or the SIR range before listening in that case.
 - The VCTK stand-in numbers in this document are not a statement about
   the owner's voice; the owner's recording is what counts.
+
+## Candidate `hush-48k` (stand-in numbers, 2026-09-11)
+
+`hush-48k` (registry entry; design record in
+`crates/noican-models/src/stages/hush_wideband.rs` and
+[tech-research.md §6.4](tech-research.md)) adds the input's band above
+8 kHz back to Hush's output, scaled by the gain Hush applied in
+4–7 kHz. On VCTK stand-ins (Linux x86_64, `--release`; p228 as the
+voice at −37 dBFS, p226 as the interferer):
+
+| model | SIR | HF keep | level | SI-SDR you | SI-SDR both | resid all | resid HF | latency | p50/p99 |
+|---|---|---|---|---|---|---|---|---|---|
+| hush | +12 | −81.3 | +0.4 | 14.4 | 9.5 | −1.4 | −77.8 | 22.5 ms | 0.71/0.79 |
+| hush-48k | +12 | −4.5 | +0.4 | 14.6 | 9.6 | −1.4 | −5.4 | 22.5 ms | 0.76/0.83 |
+| hush | 0 | −81.3 | +0.4 | 14.4 | −3.7 | 0.1 | −78.6 | 22.5 ms | 0.71/0.78 |
+| hush-48k | 0 | −4.5 | +0.4 | 14.6 | −3.7 | 0.1 | −6.6 | 22.5 ms | 0.76/0.85 |
+
+Reading: the restored band follows Hush's own spectral tilt (Hush
+leaves a passed voice at ≈ −6 dB in 6–7 kHz, so `HF keep` lands near
+−5 dB rather than 0), latency and cost are unchanged, and the
+interferer's high band is attenuated at least as much as its full band
+(no high-band leak beyond what Hush itself lets through).
+
+Caveat on the material: with two dry, close-miked studio voices Hush
+barely separates them — `resid all` near 0 dB means it passed the lone
+interferer as if it were the primary speaker. Hush's suppression was
+established on the owner's live test (a real second person across the
+room); the studio stand-in is diagnostic for the *high-band* columns
+(does the added band follow Hush's decisions?), not for suppression
+strength. The owner's own recordings, ideally with a real third
+person, are the decisive test for both.
 
 ## Blind listening
 

@@ -82,7 +82,7 @@ working.
 While recording one continuous file:
 
 1. Switch among `fastenhancer-t/b/s/m/l`, `dpdfnet2`, `dpdfnet8`, `dfn3`,
-   `ul-unas`, and `hush`.
+   `ul-unas`, `hush`, and `hush-48k`.
 2. Place markers immediately before each change.
 3. Inspect the waveform around each marker at sample level.
 4. Pass criteria:

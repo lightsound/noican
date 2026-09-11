@@ -23,7 +23,11 @@ background speech well enough, so no dedicated speaker-suppression
 stage is planned; the remaining item is delivering Hush's suppression at
 48 kHz output quality so it can become the default model (decision
 record in [docs/tech-research.md](docs/tech-research.md) §6.4). That
-work has not started. The hardware acceptance procedures and checklists
+work is in progress: the evaluation harness (`noican eval`,
+[docs/hush-48k-eval.md](docs/hush-48k-eval.md)) and the candidate model
+`Hush 48k` (`hush-48k`, selectable in the model picker; default
+unchanged) are in the tree, awaiting the owner's listening test before
+any default switch. The hardware acceptance procedures and checklists
 live in [docs/macos-hardware-test.md](docs/macos-hardware-test.md); each
 run is recorded under `docs/acceptance/`.
 
