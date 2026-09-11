@@ -9,7 +9,8 @@ current 2-channel driver (0.1.0)**: the render format must come out at
 the aggregate path must be unaffected. It scores native-rate checklist
 criterion 10 (added by PR #29) and level-integrity criterion 6 of
 [docs/macos-hardware-test.md](../macos-hardware-test.md). The 1-channel
-driver (PR #32) is a separate, later run.
+driver (PR #32) is a separate, later run
+([2026-09-11-1ch-driver.md](2026-09-11-1ch-driver.md)).
 
 ## Environment
 

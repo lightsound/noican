@@ -1351,6 +1351,16 @@ passes when:
    records dual mono as before; with stock BlackHole and the Noican
    driver both present the Noican device is preferred as before.
 
+Scored on 2026-09-11
+([record](acceptance/2026-09-11-1ch-driver.md)): 1–4 and 6 pass, 5
+recorded as "not needed" for QuickTime; stock BlackHole coexistence,
+Driver check steps 4, 6 and 8 not covered. The level clause of
+criterion 3 was evidenced by recording the Noican virtual microphone
+and the raw physical microphone at the same moment under Passthrough
+(difference ≤ 0.1 dB on every path and on both drivers), which removes
+the operator's speech level from the comparison; that paired method is
+acceptable evidence for the clause in later runs too.
+
 ## Acceptance checklist (output-underrun diagnostics)
 
 Run the Output-underrun diagnostics procedure above; the build passes

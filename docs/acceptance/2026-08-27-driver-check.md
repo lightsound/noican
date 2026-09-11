@@ -6,8 +6,9 @@
 > UID `com.lightsound.noican.mic_UID` (docs/driver.md, "History"); the
 > Driver check now expects a one-channel device, and the "Acceptance
 > checklist (1-channel driver)" in docs/macos-hardware-test.md covers the
-> swap. The app recognizes both UIDs. The results table is left as
-> recorded.
+> swap; it was run on 2026-09-11
+> ([2026-09-11-1ch-driver.md](2026-09-11-1ch-driver.md)). The app
+> recognizes both UIDs. The results table is left as recorded.
 
 Result record for the Driver check and coexistence acceptance of the
 Noican virtual driver (PR #11), per the "Result record" section of

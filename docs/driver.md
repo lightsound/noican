@@ -67,7 +67,7 @@ Rust unit tests pin that negative case too).
 | Driver version | Channels | Device UID | Mirror UID | Shipped in |
 |---|---|---|---|---|
 | `0.1.0` | 2 | `com.lightsound.noican.2ch_UID` | `com.lightsound.noican.2ch_2_UID` | PR #11 (2026-08-27 driver check) |
-| `0.2.0` | 1 | `com.lightsound.noican.mic_UID` | `com.lightsound.noican.mic_2_UID` | this change |
+| `0.2.0` | 1 | `com.lightsound.noican.mic_UID` | `com.lightsound.noican.mic_2_UID` | PR #32 ([2026-09-11 hardware record](acceptance/2026-09-11-1ch-driver.md)) |
 
 Tell an installed bundle's shape from its version string (the signature
 display does not carry it):
@@ -172,9 +172,11 @@ single channel `Left` (`kAudioChannelLabel_Left + index`), the
 `PreferredChannelsForStereo` property still answers `[1, 2]` although
 channel 2 does not exist, and the master volume/mute control is
 independent of the channel count (the level notice in the app keeps
-working). How QuickTime records from a 1-channel device (mono file, or a
-2-channel file with both channels identical) is settled by the hardware
-check, not assumed.
+working). How a consumer records from a 1-channel device (mono file, or a
+2-channel file with both channels identical) was settled on hardware, not
+assumed: an AVFoundation capture produced `1 ch, 48000 Hz` files on all
+three microphone paths, and QuickTime kept the device selected across the
+UID change (2026-09-11 record).
 
 ## Coexistence with stock BlackHole
 
