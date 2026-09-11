@@ -1,4 +1,4 @@
-# Clock drift and endurance
+# Hardware test: Clock drift and endurance
 
 Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
 

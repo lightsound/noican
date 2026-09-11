@@ -1,4 +1,4 @@
-# Non-48 kHz microphone (native-rate capture)
+# Hardware test: Non-48 kHz microphone (native-rate capture)
 
 Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
 

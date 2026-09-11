@@ -1,4 +1,4 @@
-# Level integrity
+# Hardware test: Level integrity
 
 Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
 

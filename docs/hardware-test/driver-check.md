@@ -1,4 +1,4 @@
-# Driver check
+# Hardware test: Driver check
 
 Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
 

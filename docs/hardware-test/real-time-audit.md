@@ -1,4 +1,4 @@
-# Real-time audit
+# Hardware test: Real-time audit
 
 Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
 

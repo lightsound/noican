@@ -1,4 +1,4 @@
-# Functional test, model switching, microphone switching
+# Hardware test: Functional test, model switching, microphone switching
 
 Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
 

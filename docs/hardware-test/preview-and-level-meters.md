@@ -1,4 +1,4 @@
-# Preview (self-monitor) and level meters
+# Hardware test: Preview (self-monitor) and level meters
 
 Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
 

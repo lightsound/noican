@@ -1,4 +1,4 @@
-# Composite input/output microphone
+# Hardware test: Composite input/output microphone
 
 Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
 

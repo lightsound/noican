@@ -1,4 +1,4 @@
-# Output-underrun diagnostics (real-time budget)
+# Hardware test: Output-underrun diagnostics (real-time budget)
 
 Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
 

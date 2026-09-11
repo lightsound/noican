@@ -1,4 +1,4 @@
-# Phase 2 controls: settings persistence, launch at login, strength
+# Hardware test: Phase 2 controls — settings persistence, launch at login, strength
 
 Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
 

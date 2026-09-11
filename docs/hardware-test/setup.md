@@ -1,4 +1,4 @@
-# Setup: prerequisites, build, model weights
+# Hardware test: Setup — prerequisites, build, model weights
 
 Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
 
