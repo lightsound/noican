@@ -11,6 +11,8 @@
 )]
 
 mod audio;
+mod eval;
+mod eval_run;
 mod process;
 
 use std::path::PathBuf;
@@ -56,6 +58,61 @@ enum Command {
         #[arg(long)]
         enroll: Option<PathBuf>,
     },
+    /// Score speaker-suppression candidates on synthetic mixtures of your
+    /// clean voice and an interfering speaker: high-band retention,
+    /// own-voice SI-SDR, interferer residual (full band and ≥ 8 kHz),
+    /// latency and block time per model and SIR. Also writes a blind
+    /// listening set (docs/hush-48k-eval.md).
+    Eval {
+        /// Clean recording(s) of your own voice (48 kHz); several files
+        /// are trimmed and concatenated in order, and the first two
+        /// segments are taken from the result.
+        #[arg(long, required = true, num_args = 1..)]
+        target: Vec<PathBuf>,
+        /// Recording(s) of the interfering speaker; several files are
+        /// trimmed and concatenated in order.
+        #[arg(long, required = true, num_args = 1..)]
+        interferer: Vec<PathBuf>,
+        /// Signal-to-interference ratios in dB for the overlap segment
+        /// (voice RMS over interferer RMS).
+        #[arg(long, value_delimiter = ',', default_value = "12,6,0")]
+        sir: Vec<f64>,
+        /// Normalize the voice recording to this RMS level (dBFS) before
+        /// mixing. Default: keep the recorded level. Hush's behavior
+        /// depends on the absolute input level, so compare candidates at
+        /// the level your microphone actually delivers (see
+        /// docs/hush-48k-eval.md).
+        #[arg(long)]
+        target_level_dbfs: Option<f64>,
+        /// Segment length in seconds; each mixture is three segments
+        /// (you / you + other / other). Clamped to the material.
+        #[arg(long, default_value_t = 20.0)]
+        segment_seconds: f64,
+        /// Model ids to score (default: passthrough + all fetched models
+        /// that need no enrollment).
+        #[arg(long, value_delimiter = ',')]
+        models: Vec<String>,
+        /// Output directory for mixtures, outputs, metrics.csv and the
+        /// blind set.
+        #[arg(long, default_value = "out/eval")]
+        out_dir: PathBuf,
+        /// Seed for lettering the blind listening set.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+    },
+}
+
+/// The default model list for `process` and `eval`: the bypass plus every
+/// fetched stage (enrollment models only when an enrollment is given).
+fn default_model_ids(models_dir: &std::path::Path, has_enrollment: bool) -> Vec<String> {
+    std::iter::once(PASSTHROUGH_ID.to_owned())
+        .chain(
+            ModelSpec::stages()
+                .filter(|m| noican_models::fetch::is_fetched(models_dir, m))
+                .filter(|m| !m.needs_enrollment || has_enrollment)
+                .map(|m| m.id.to_owned()),
+        )
+        .collect()
 }
 
 /// Computes the 192-dim ECAPA-TDNN enrollment embedding from a WAV of the
@@ -96,62 +153,10 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Models => {
-            println!(
-                "ID                 NAME                   FAMILY      RATE  FETCHED  LICENSE"
-            );
-            println!(
-                "{PASSTHROUGH_ID:<18} {:<22} {:<9} {:>6}  {:<8} -",
-                "Passthrough (bypass)", "-", 48_000, "builtin"
-            );
-            for model in ALL_MODELS {
-                let fetched = noican_models::fetch::is_fetched(&cli.models_dir, model);
-                println!(
-                    "{:<18} {:<22} {:<9?} {:>6}  {:<8} {}",
-                    model.id,
-                    model.display_name,
-                    model.family,
-                    model.sample_rate,
-                    if fetched { "yes" } else { "no" },
-                    model.license
-                );
-            }
+            list_models(&cli.models_dir);
             Ok(())
         }
-        Command::Fetch { ids } => {
-            let explicit = !ids.is_empty();
-            let targets: Vec<&ModelSpec> = if explicit {
-                ids.iter()
-                    .map(|id| {
-                        ModelSpec::find(id).ok_or_else(|| anyhow::anyhow!("unknown model id: {id}"))
-                    })
-                    .collect::<Result<_, _>>()?
-            } else {
-                ALL_MODELS.iter().collect()
-            };
-            let mut failures = Vec::new();
-            for model in targets {
-                if let Some(note) = model.fetch_note
-                    && !explicit
-                {
-                    println!("{}: skipped — {note}", model.id);
-                    continue;
-                }
-                if let Err(e) = noican_models::fetch::fetch_model(&cli.models_dir, model, |line| {
-                    println!("{line}");
-                }) {
-                    eprintln!("{}: FAILED — {e}", model.id);
-                    if let Some(note) = model.fetch_note {
-                        eprintln!("{}: note — {note}", model.id);
-                    }
-                    failures.push(model.id);
-                }
-            }
-            if failures.is_empty() {
-                Ok(())
-            } else {
-                anyhow::bail!("failed to fetch: {}", failures.join(", "))
-            }
-        }
+        Command::Fetch { ids } => fetch(&cli.models_dir, &ids),
         Command::Process {
             inputs,
             out_dir,
@@ -165,14 +170,7 @@ fn main() -> anyhow::Result<()> {
                     .transpose()?,
             };
             let model_ids: Vec<String> = if models.is_empty() {
-                std::iter::once(PASSTHROUGH_ID.to_owned())
-                    .chain(
-                        ModelSpec::stages()
-                            .filter(|m| noican_models::fetch::is_fetched(&cli.models_dir, m))
-                            .filter(|m| !m.needs_enrollment || options.enrollment.is_some())
-                            .map(|m| m.id.to_owned()),
-                    )
-                    .collect()
+                default_model_ids(&cli.models_dir, options.enrollment.is_some())
             } else {
                 models
             };
@@ -191,5 +189,97 @@ fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        Command::Eval {
+            target,
+            interferer,
+            sir,
+            target_level_dbfs,
+            segment_seconds,
+            models,
+            out_dir,
+            seed,
+        } => {
+            let model_ids = if models.is_empty() {
+                default_model_ids(&cli.models_dir, false)
+            } else {
+                models
+            };
+            println!("models: {}", model_ids.join(", "));
+            let options = noican_models::StageOptions::default();
+            eval_run::run(
+                &eval_run::EvalRequest {
+                    targets: target,
+                    interferers: interferer,
+                    sirs_db: sir,
+                    target_level_dbfs,
+                    segment_seconds,
+                    model_ids,
+                    out_dir,
+                    seed,
+                },
+                |id| {
+                    noican_models::create_stage(id, &cli.models_dir, &options)
+                        .map_err(|e| anyhow::anyhow!("cannot create stage {id}: {e}"))
+                },
+                |line| println!("{line}"),
+            )
+        }
+    }
+}
+
+/// `noican models`: the registry with per-model fetch status.
+fn list_models(models_dir: &std::path::Path) {
+    println!("ID                 NAME                   FAMILY      RATE  FETCHED  LICENSE");
+    println!(
+        "{PASSTHROUGH_ID:<18} {:<22} {:<9} {:>6}  {:<8} -",
+        "Passthrough (bypass)", "-", 48_000, "builtin"
+    );
+    for model in ALL_MODELS {
+        let fetched = noican_models::fetch::is_fetched(models_dir, model);
+        println!(
+            "{:<18} {:<22} {:<9?} {:>6}  {:<8} {}",
+            model.id,
+            model.display_name,
+            model.family,
+            model.sample_rate,
+            if fetched { "yes" } else { "no" },
+            model.license
+        );
+    }
+}
+
+/// `noican fetch [ids…]`: downloads weights (all freely fetchable models
+/// when no id is given).
+fn fetch(models_dir: &std::path::Path, ids: &[String]) -> anyhow::Result<()> {
+    let explicit = !ids.is_empty();
+    let targets: Vec<&ModelSpec> = if explicit {
+        ids.iter()
+            .map(|id| ModelSpec::find(id).ok_or_else(|| anyhow::anyhow!("unknown model id: {id}")))
+            .collect::<Result<_, _>>()?
+    } else {
+        ALL_MODELS.iter().collect()
+    };
+    let mut failures = Vec::new();
+    for model in targets {
+        if let Some(note) = model.fetch_note
+            && !explicit
+        {
+            println!("{}: skipped — {note}", model.id);
+            continue;
+        }
+        if let Err(e) = noican_models::fetch::fetch_model(models_dir, model, |line| {
+            println!("{line}");
+        }) {
+            eprintln!("{}: FAILED — {e}", model.id);
+            if let Some(note) = model.fetch_note {
+                eprintln!("{}: note — {note}", model.id);
+            }
+            failures.push(model.id);
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!("failed to fetch: {}", failures.join(", "))
     }
 }

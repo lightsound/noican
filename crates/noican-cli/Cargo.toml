@@ -19,6 +19,7 @@ hound = { workspace = true }
 rubato = { workspace = true }
 audioadapter-buffers = { workspace = true }
 symphonia = { workspace = true }
+realfft = { workspace = true }
 
 [lints]
 workspace = true
