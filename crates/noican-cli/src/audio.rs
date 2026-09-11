@@ -2,8 +2,8 @@
 //!
 //! Input files of any rate/channel count are converted to mono 48 kHz f32
 //! (channel average + FFT resampling). WAV is read with `hound` (the
-//! long-verified path); AIFF/AIFC, CAF, and M4A (AAC/ALAC) are read with
-//! `symphonia`. Output is always 16-bit WAV. This is the offline path;
+//! long-verified path); AIFF/AIFC, CAF, FLAC, and M4A (AAC/ALAC) are read
+//! with `symphonia`. Output is always 16-bit WAV. This is the offline path;
 //! quality matters more than allocation behavior here.
 //!
 //! Some compressed AIFC variants (e.g. IMA4) are not decodable here;
@@ -24,8 +24,8 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
-/// Reads an audio file (WAV, AIFF/AIFC, CAF, or M4A) and converts it to
-/// mono 48 kHz f32.
+/// Reads an audio file (WAV, AIFF/AIFC, CAF, FLAC, or M4A) and converts
+/// it to mono 48 kHz f32.
 ///
 /// # Errors
 ///
@@ -83,7 +83,7 @@ fn read_wav(path: &Path) -> anyhow::Result<(Vec<f32>, u32)> {
     Ok((mix_to_mono(&interleaved, channels), spec.sample_rate))
 }
 
-/// Reads AIFF/AIFC, CAF, or M4A via `symphonia`, returning
+/// Reads AIFF/AIFC, CAF, FLAC, or M4A via `symphonia`, returning
 /// interleaved-averaged mono samples at the file's native rate.
 fn read_symphonia(path: &Path, extension: Option<&str>) -> anyhow::Result<(Vec<f32>, u32)> {
     let file = File::open(path).with_context(|| format!("cannot open audio {}", path.display()))?;
@@ -313,6 +313,14 @@ mod tests {
         let reference = read_mono_48k(&fixture("tone.wav")).expect("wav reads");
         let samples = read_mono_48k(&fixture("tone.caf")).expect("caf reads");
         assert_tone(&samples, 0, "caf");
+        assert!(correlation_at_best_lag(&reference, &samples, 0) > 0.999);
+    }
+
+    #[test]
+    fn flac_matches_wav_reference() {
+        let reference = read_mono_48k(&fixture("tone.wav")).expect("wav reads");
+        let samples = read_mono_48k(&fixture("tone.flac")).expect("flac reads");
+        assert_tone(&samples, 0, "flac");
         assert!(correlation_at_best_lag(&reference, &samples, 0) > 0.999);
     }
 
