@@ -46,16 +46,22 @@ pub fn model_dir(models_dir: &Path, model: &ModelSpec) -> PathBuf {
     models_dir.join(model.id)
 }
 
-/// True when every file of `model` is already present under `models_dir`.
+/// True when every file of `model` — and of every entry it
+/// [depends on](ModelSpec::depends_on) — is already present under
+/// `models_dir`.
 #[must_use]
 pub fn is_fetched(models_dir: &Path, model: &ModelSpec) -> bool {
     let dir = model_dir(models_dir, model);
     model.files.iter().all(|f| dir.join(f.name).is_file())
+        && model.dependencies().all(|dep| is_fetched(models_dir, dep))
 }
 
 /// Downloads any missing files of `model` into `models_dir`, verifying
-/// pinned SHA-256 digests. Calls `progress` with a human-readable line per
-/// file event.
+/// pinned SHA-256 digests.
+///
+/// Entries the model [depends on](ModelSpec::depends_on) are fetched
+/// first, into their own directories. Calls `progress` with a
+/// human-readable line per file event.
 ///
 /// # Errors
 ///
@@ -65,6 +71,22 @@ pub fn fetch_model(
     model: &ModelSpec,
     mut progress: impl FnMut(&str),
 ) -> Result<(), FetchError> {
+    fetch_model_dyn(models_dir, model, &mut progress)
+}
+
+/// Type-erased body of [`fetch_model`] (recursion over dependencies must
+/// not re-instantiate the generic closure parameter).
+fn fetch_model_dyn(
+    models_dir: &Path,
+    model: &ModelSpec,
+    progress: &mut dyn FnMut(&str),
+) -> Result<(), FetchError> {
+    for dep in model.dependencies() {
+        fetch_model_dyn(models_dir, dep, progress)?;
+    }
+    if model.files.is_empty() {
+        return Ok(());
+    }
     let dir = model_dir(models_dir, model);
     std::fs::create_dir_all(&dir).map_err(|source| FetchError::Io {
         path: dir.clone(),
@@ -160,5 +182,34 @@ mod tests {
             hex_sha256(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn fetch_status_follows_dependencies() {
+        let models_dir = std::env::temp_dir().join(format!(
+            "noican-fetch-test-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let hush = ModelSpec::find("hush").expect("registered");
+        let wideband = ModelSpec::find("hush-48k").expect("registered");
+        // No files of its own, but not fetched until its dependency is.
+        assert!(!is_fetched(&models_dir, wideband));
+        let dir = model_dir(&models_dir, hush);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        std::fs::write(dir.join(hush.files[0].name), b"stub").expect("stub file");
+        assert!(is_fetched(&models_dir, hush));
+        assert!(is_fetched(&models_dir, wideband));
+        // Fetching the composite touches nothing when the dependency is
+        // present (no network access needed for this assertion).
+        let mut lines = Vec::new();
+        fetch_model(&models_dir, wideband, |line| lines.push(line.to_owned()))
+            .expect("nothing to download");
+        assert_eq!(
+            lines,
+            [format!("hush/{}: already present", hush.files[0].name)]
+        );
+        assert!(!model_dir(&models_dir, wideband).exists());
+        std::fs::remove_dir_all(&models_dir).expect("cleanup");
     }
 }

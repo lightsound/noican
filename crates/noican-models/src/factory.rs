@@ -9,6 +9,7 @@ use crate::manifest::ModelSpec;
 use crate::stages::dfn_tract::DfTractStage;
 use crate::stages::dpdfnet::DpdfnetStage;
 use crate::stages::fastenhancer::FastEnhancerStage;
+use crate::stages::hush_wideband::HushWidebandStage;
 use crate::stages::tse::TseStage;
 use crate::stages::ulunas::UlunasStage;
 
@@ -66,6 +67,27 @@ fn file_path(models_dir: &Path, spec: &ModelSpec, index: usize) -> std::path::Pa
     model_dir(models_dir, spec).join(spec.files[index].name)
 }
 
+/// Path of file `index` of the registry entry `spec` depends on
+/// ([`ModelSpec::depends_on`], one level), for composite stages that
+/// run another entry's weights.
+fn dependency_file_path(
+    models_dir: &Path,
+    spec: &ModelSpec,
+    dependency: &str,
+    index: usize,
+) -> Result<std::path::PathBuf, StageError> {
+    let dep = spec
+        .dependencies()
+        .find(|dep| dep.id == dependency)
+        .ok_or_else(|| {
+            StageError::Unsupported(format!(
+                "{} does not depend on {dependency} (registry inconsistency)",
+                spec.id
+            ))
+        })?;
+    Ok(file_path(models_dir, dep, index))
+}
+
 /// Instantiates the stage for `id`, loading weights from `models_dir`
 /// (fetch them first with [`crate::fetch::fetch_model`]).
 ///
@@ -103,6 +125,11 @@ pub fn create_stage(
         }
         "hush" => {
             let stage = DfTractStage::hush(spec.id, &file_path(models_dir, spec, 0))?;
+            Ok(Box::new(FramedStage::new(stage, MAX_BLOCK_LEN)?))
+        }
+        "hush-48k" => {
+            let tarball = dependency_file_path(models_dir, spec, "hush", 0)?;
+            let stage = HushWidebandStage::new(spec.id, &tarball)?;
             Ok(Box::new(FramedStage::new(stage, MAX_BLOCK_LEN)?))
         }
         "tse-48k" => {
