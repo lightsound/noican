@@ -68,12 +68,13 @@
 //!   the left-ear-only and −6 dB consumer behaviour in place. Rejected.
 //!
 //! The design assumes nothing about the virtual output's channel count
-//! beyond "at least one": with a 1-channel virtual output (a possible
-//! future driver, like Krisp's or `JoyCast`'s) the client format is
-//! mono, the map ends in a single `0`, and the callback's per-frame
-//! loop writes one sample — the behaviour is identical to the previous
-//! release. Nor does it depend on the virtual output having input
-//! channels; an output-only device changes nothing here.
+//! beyond "at least one": with a 1-channel virtual output (the Noican
+//! driver from 0.2.0 on — docs/driver.md, "History" — shaped like
+//! Krisp's or `JoyCast`'s) the client format is mono, the map ends in a
+//! single `0`, and the callback's per-frame loop writes one sample; with
+//! a 2-channel one (stock `BlackHole` 2ch, the 0.1.0 driver) it is dual
+//! mono. Nor does it depend on the virtual output having input channels;
+//! an output-only device changes nothing here.
 //!
 //! The virtual output's position is computed by the control plane, which
 //! composes the subdevice list and therefore knows the layout by
@@ -110,14 +111,15 @@
 //! aggregate and no map: its output-only AUHAL sits on the virtual
 //! output device alone, so AUHAL's identity map is already right. What
 //! it does share with the aggregate path is the dual-mono contract — one
-//! client channel per virtual-output channel — and until this change its
-//! render format was hard-wired to two channels, i.e. to the current
+//! client channel per virtual-output channel — and until PR #29 its
+//! render format was hard-wired to two channels, i.e. to the 0.1.0
 //! driver. [`split_render_channels`] replaces that constant with the
-//! channel count read from the device, so a 1-channel virtual output (a
-//! future driver, like Krisp's or `JoyCast`'s) gets a mono client format
-//! and stock `BlackHole` 2ch keeps its stereo one; whether AUHAL would
-//! even accept a 2-channel client format on a 1-channel device is
-//! unverified, and matching the device removes the question.
+//! channel count read from the device, so a 1-channel virtual output
+//! (the Noican driver from 0.2.0 on, shaped like Krisp's or `JoyCast`'s)
+//! gets a mono client format and a 2-channel one (stock `BlackHole` 2ch,
+//! the 0.1.0 driver) keeps its stereo one; whether AUHAL would even
+//! accept a 2-channel client format on a 1-channel device is unverified,
+//! and matching the device removes the question.
 //!
 //! Where the count comes from was decided against these criteria: no FFI
 //! change (the `noican_engine_start_native` signature is a three-file
@@ -329,10 +331,10 @@ mod tests {
 
     #[test]
     fn split_render_format_follows_the_virtual_output_width() {
-        // Stock BlackHole 2ch and the current Noican driver: stereo client
+        // Stock BlackHole 2ch and the 0.1.0 Noican driver: stereo client
         // stream, as the old constant produced.
         assert_eq!(split_render_channels(2).expect("stereo"), 2);
-        // A 1-channel virtual output (future driver): mono client stream.
+        // The 1-channel Noican driver (0.2.0 on): mono client stream.
         assert_eq!(split_render_channels(1).expect("mono"), 1);
         // Wider loopbacks are served the same way (BlackHole 16ch).
         assert_eq!(split_render_channels(16).expect("wide"), 16);
@@ -356,7 +358,8 @@ mod tests {
 
     #[test]
     fn built_in_microphone_layout_feeds_both_virtual_output_channels() {
-        // No microphone outputs: the virtual output is channels 0..2 and
+        // No microphone outputs, 2-channel virtual output (stock BlackHole
+        // 2ch, the 0.1.0 driver): the virtual output is channels 0..2 and
         // the two-channel client stream lands on it one-to-one.
         let target = VirtualOutputChannels::new(0, 2).expect("valid range");
         assert_eq!(render_channel_map(2, target).expect("map"), vec![0, 1]);
@@ -384,8 +387,10 @@ mod tests {
 
     #[test]
     fn single_channel_virtual_output_keeps_the_mono_shape() {
-        // A 1-channel virtual output (future driver): mono client stream,
-        // map ends in a single 0 — identical to the pre-dual-mono release.
+        // The 1-channel Noican driver (0.2.0 on): mono client stream, map
+        // ends in a single 0 — the shape the pre-dual-mono release had on
+        // a 2-channel device. Built-in microphone: [0]; MV7i (stereo
+        // headphone jack ahead of the virtual output): [-1, -1, 0].
         let target = VirtualOutputChannels::new(0, 1).expect("valid range");
         assert_eq!(render_channel_map(1, target).expect("map"), vec![0]);
         let target = VirtualOutputChannels::new(2, 1).expect("valid range");
