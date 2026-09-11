@@ -50,7 +50,7 @@ Two AI-generated design documents were used as the starting point (Japanese, kep
 | Clock drift | Aggregate Device with drift compensation (mandatory) | Not mentioned | design1 correct; this is mandatory (§4) |
 | Real-time constraints | No malloc/locks/ARC on the audio thread | Not mentioned | design1 correct (§9) |
 | Capture API | AUHAL direct | AVAudioEngine first, Core Audio later | design1 correct — AVAudioEngine cannot target arbitrary HAL devices at all (§4) |
-| Background speakers | DIY speaker gate (embedding + fade) | Not addressed | Pretrained models now exist (Hush, tse-conv-tasnet-48k); DIY gate becomes the fallback (§6) |
+| Background speakers | DIY speaker gate (embedding + fade) | Not addressed | Pretrained models now exist (Hush, tse-conv-tasnet-48k); DIY gate was the fallback — decided 2026-08-31, Hush suffices and neither the gate nor TSE is planned (§6.4 decision record) |
 | AEC | Headphones-only; VoiceProcessingIO "needs testing" | Barely addressed | Headphones for v0 confirmed; a real solution exists now: process tap + WebRTC AEC3 (§7) |
 | "Sidon" model (design2) | — | Proposed as high-quality option | Real but offline-only (dataset cleansing); not usable live (§8) |
 | "NNA Virtual Audio" (design2) | — | Proposed as BlackHole upgrade | Real (free, renamable, closed-source); superseded by the signed BlackHole fork |
@@ -154,8 +154,8 @@ DeepFilterNet-class models learn speech-vs-noise separation: vacuum cleaners and
 
 | Model | Approach | Sample rate | Status | Assessment |
 |---|---|---|---|---|
-| **Hush** (Weya AI, Apache-2.0) | DFN3 architecture retrained with 60% of samples containing competing speakers (12–24 dB SIR below primary); auxiliary separation head at training time only | 16 k | [pulp-vision/Hush](https://github.com/pulp-vision/Hush): PyTorch + prebuilt `libweya_nc.dylib` (Apple Silicon) with a 10 ms-frame C API; ONNX bundle on HF; "louder background speech" retrain announced | **First candidate to test.** No enrollment: suppresses the *background* (quieter) speaker, so it can fail if the interferer is louder than the user. Same inference cost as DFN3. 16 kHz output is the main quality concession. Already used in production-ish OSS (Krasp) |
-| **tse-conv-tasnet-48k** | Causal streaming Conv-TasNet TSE conditioned on a frozen 192-dim ECAPA-TDNN enrollment embedding (FiLM) | **48 k native** | [HF: penta2himajin/tse-conv-tasnet-48k](https://huggingface.co/penta2himajin/tse-conv-tasnet-48k): per-chunk (10 ms, 480-sample) streaming ONNX with explicit state tensors; Rust wrapper (`TseSession`) in the mellonella project | **Second candidate.** True voiceprint enrollment at the native rate — exactly what design1 wanted but believed unavailable. Caveats: trained only on VCTK + DEMAND, v3 after two broken releases, solo-dev PoC parent project — quality unproven, must be validated by listening test |
+| **Hush** (Weya AI, Apache-2.0) | DFN3 architecture retrained with 60% of samples containing competing speakers (12–24 dB SIR below primary); auxiliary separation head at training time only | 16 k | [pulp-vision/Hush](https://github.com/pulp-vision/Hush): PyTorch + prebuilt `libweya_nc.dylib` (Apple Silicon) with a 10 ms-frame C API; ONNX bundle on HF; "louder background speech" retrain announced | **Tested and adopted** (2026-08-31, §6.4 decision record). No enrollment: suppresses the *background* (quieter) speaker, so it can fail if the interferer is louder than the user. Same inference cost as DFN3. 16 kHz output is the main quality concession. Already used in production-ish OSS (Krasp) |
+| **tse-conv-tasnet-48k** | Causal streaming Conv-TasNet TSE conditioned on a frozen 192-dim ECAPA-TDNN enrollment embedding (FiLM) | **48 k native** | [HF: penta2himajin/tse-conv-tasnet-48k](https://huggingface.co/penta2himajin/tse-conv-tasnet-48k): per-chunk (10 ms, 480-sample) streaming ONNX with explicit state tensors; Rust wrapper (`TseSession`) in the mellonella project | **Second candidate — not planned** (§6.4 decision record; weights private). True voiceprint enrollment at the native rate — exactly what design1 wanted but believed unavailable. Caveats: trained only on VCTK + DEMAND, v3 after two broken releases, solo-dev PoC parent project — quality unproven, must be validated by listening test |
 
 ### 6.2 DIY hard gate (fallback; validated design)
 
@@ -184,7 +184,45 @@ Known tuning risk (from design1): gate fade time constant — too short clips th
 
 ### 6.4 Decision
 
-Listening-test **Hush (16 k, no enrollment)** vs. **tse-conv-tasnet-48k (48 k, enrollment)** on recordings that include real family/background speech. If neither satisfies, build the DIY gate (§6.2) on sherpa-onnx primitives. Combining is also possible (e.g., FastEnhancer 48 k for NS + gate for speakers).
+*Original plan (superseded by the decision record below):* listening-test **Hush (16 k, no enrollment)** vs. **tse-conv-tasnet-48k (48 k, enrollment)** on recordings that include real family/background speech; if neither satisfies, build the DIY gate (§6.2) on sherpa-onnx primitives; combining is also possible (e.g., FastEnhancer 48 k for NS + gate for speakers).
+
+> **Decision record (2026-08-31, written down 2026-09-11): no dedicated
+> speaker-suppression feature; the remaining gap is Hush's bandwidth.**
+> The owner's live listening test with the menu-bar app (Hush 16k
+> selected) found that Hush already removes background speech well
+> enough in the tested conditions — "more than enough" — so neither the
+> DIY gate (§6.2) nor the TSE enrollment path (§6.1, `tse-48k`; weights
+> still private, see [models.md](models.md)) is worth building for this
+> product. The only complaint was quality: Hush runs at 16 kHz, so the
+> user's own voice comes out band-limited to 8 kHz while every denoise
+> model in the app is 48 kHz. The follow-up work (PR #21, merged
+> 2026-09-02) was therefore loudness parity for Hush, not speaker
+> suppression.
+>
+> Competitive check of 2026-09-11 that confirms the direction:
+> [JoyCast](https://joycast.ai/) (v26.5.17) still sells noise suppression
+> plus a "subtle studio-grade enhancement" at native 48 kHz and does not
+> claim to remove other people's voices; Krisp's Background Voice
+> Cancellation removes nearby voices without enrollment but its model
+> works at 32 kHz and is designed around headsets (built-in MacBook mics
+> "might demonstrate acceptable performance"); Hush upstream is still
+> 16 kHz-only and the announced "louder background speech" retrain is
+> unreleased. So Hush's suppression strength is competitive; its
+> bandwidth is the one place it trails both products.
+>
+> **Direction:** Phase 1's remaining item is re-scoped from "a
+> speaker-suppression stage tuned and on by default" to **"Hush's
+> suppression at 48 kHz output quality"** — deliver the background-speaker
+> removal Hush already provides without the 16 kHz bandwidth cost, so it
+> can become the default model. Candidate designs to arbitrate when that
+> work starts: (a) band-split — Hush processes the 0–8 kHz band, a 48 kHz
+> denoise stage or the dry signal supplies the 8–24 kHz band, gated by
+> Hush's own attenuation so background speech does not leak through the
+> upper band; (b) Hush as a sidechain — run Hush at 16 kHz only to derive
+> a time–frequency (or per-frame) gain, and apply that gain to the 48 kHz
+> signal; (c) wait for or adopt a 48 kHz / retrained upstream release.
+> Whichever wins, the existing `hush` entry stays available as the
+> escape hatch. Open Questions 1, 2, and 8 are updated accordingly.
 
 ---
 
@@ -321,6 +359,8 @@ Research dead ends worth recording: the Microsoft **DNS Challenge** series (the 
 
 As of 2026, **Microsoft Teams ships personalized voice isolation** (30-second voice-profile enrollment, personalized on-device model) and **Zoom ships personalized audio isolation** (locally stored voiceprint, optional scripted enrollment). Google Meet still uses a global, non-personalized model. Implication for positioning: "suppress other people's voices" is becoming a built-in feature *inside* Teams and Zoom, so this product's differentiation is being the **universal, system-wide layer** — one clean microphone that works identically in Google Meet, Discord, OBS, FaceTime, Slack huddles, recording apps, and anything else, with the user's own choice of model quality (48 kHz path vs. the platforms' internal processing) and full local privacy. NoNoise-Mac also demonstrates a feature worth borrowing later: cleaning **incoming** audio (what you hear) via a Core Audio process tap — the same tap machinery already planned for AEC (§7.2).
 
+Status of the two direct competitors as checked on 2026-09-11 (see also the §6.4 decision record): **JoyCast** v26.5.17 ($8/mo or $199 one-time) is noise suppression plus a "subtle studio-grade enhancement" at native 48 kHz, ~20 ms, 75 MB RAM, on a BlackHole-fork driver; it does not claim background-voice removal, and its roadmap is sideways (virtual camera, soundboard, recorder, Windows/Linux). **Krisp** ($8/mo) ships Background Voice Cancellation — no enrollment, keeps the speaker closest to the microphone, model at 32 kHz, designed for headsets (built-in MacBook microphones "might demonstrate acceptable performance") — plus two-way noise cancellation, echo removal, accent conversion (beta), and an AI note taker. Hush upstream remains 16 kHz-only with the "louder background speech" retrain unreleased. Newer OSS peers (Krasp, NoNoise-Mac, [HushMic](https://github.com/Fovty/HushMic)'s `hushmic-denoiser` crate for DPDFNet 48 kHz) do not go beyond Hush for speaker suppression.
+
 ---
 
 ## 11. Final Recommended Stack
@@ -332,7 +372,7 @@ As of 2026, **Microsoft Teams ships personalized voice isolation** (30-second vo
 | Drift | Private Aggregate Device with drift compensation | DIY adaptive resampler |
 | NS model (quality) | FastEnhancer 48 k **or** DPDFNet 48 k HR — decided by listening test | DeepFilterNet3 (`df` crate); CoreML DFN3 route |
 | NS model (low-latency mode) | UL-UNAS | GTCRN (easier integration via sherpa-onnx) |
-| Background speakers | Hush 16 k vs. tse-conv-tasnet-48k — decided by listening test | DIY VAD + ECAPA gate (mellonella/voce design) |
+| Background speakers | **Hush 16 k** (decided 2026-08-31, §6.4 decision record); next step is Hush's suppression at 48 kHz output quality | tse-conv-tasnet-48k (weights private) / DIY VAD + ECAPA gate (mellonella/voce design) — not planned |
 | AEC | None in v0 (headphones) | Process tap + `aec3` (WebRTC AEC3) with macOS 26 watchdog |
 | Inference runtime | ONNX Runtime (FastEnhancer, TSE); sherpa-onnx (DPDFNet/GTCRN, VAD, speaker embeddings) | tract via `df` crate |
 | Core language | Rust (audio engine, inference, gating) | — |
@@ -449,15 +489,19 @@ Everything the former Phase -1 needed, built as the product itself:
   happens during real use.
 
 Exit criteria: converge on a preferred NS model and speaker-suppression
-approach from real-world use (the selector stays — it is also the escape hatch
-when a model misbehaves in a specific room); or conclude quality is
-insufficient and fall back to buying JoyCast.
+approach from real-world use (the selector stays — it is also the escape
+hatch when a model misbehaves in a specific room); or conclude quality is
+insufficient and fall back to buying JoyCast. The speaker-suppression half
+was decided on 2026-08-31 — Hush, see the §6.4 decision record.
 
 ### Phase 1 — Own the device + differentiator
 
-- Build, sign, and install the renamed BlackHole fork (joycast.driver pattern).
-- Promote the best speaker-suppression stage (Hush / TSE / DIY gate per
-  Phase 0 findings) to a default-on, tuned feature.
+- Build, sign, and install the renamed BlackHole fork (joycast.driver pattern). *Done* (driver 0.2.0, [acceptance/2026-09-11-1ch-driver.md](acceptance/2026-09-11-1ch-driver.md)).
+- ~~Promote the best speaker-suppression stage (Hush / TSE / DIY gate per
+  Phase 0 findings) to a default-on, tuned feature.~~ Re-scoped by the
+  §6.4 decision record (2026-08-31 / 2026-09-11): Hush's suppression is
+  already sufficient, so the remaining item is **Hush's suppression at
+  48 kHz output quality**, good enough to become the default model.
 
 ### Phase 2 — Menu bar app, full version
 
@@ -474,14 +518,14 @@ Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level 
 
 ## 13. Open Questions
 
-1. Listening-test outcomes (§12 Phase 0, CLI comparison + live switching) — the entire stack pivots on these.
-2. Hush's behavior when the background speaker is *louder* than the user (trained at 12–24 dB SIR below primary).
-3. tse-conv-tasnet-48k real-world quality given its small training set (VCTK + DEMAND).
+1. Listening-test outcomes (§12 Phase 0, CLI comparison + live switching) — the entire stack pivots on these. *Speaker-suppression half answered 2026-08-31* (§6.4 decision record): Hush suppresses background speech sufficiently; no dedicated stage needed. The preferred denoise model remains a matter of daily use (default `fastenhancer-b`).
+2. Hush's behavior when the background speaker is *louder* than the user (trained at 12–24 dB SIR below primary). Not tested; stays open as a known limit rather than a blocker (upstream's retrain for louder background speech is still unreleased as of 2026-09-11).
+3. tse-conv-tasnet-48k real-world quality given its small training set (VCTK + DEMAND). Moot for now: not planned (§6.4 decision record) and the weights are private.
 4. Long-session (2 h+) stability of aggregate-device drift compensation. Owner report of 2026-09-10 ([acceptance/2026-09-10-long-session-owner-report.md](acceptance/2026-09-10-long-session-owner-report.md)): a meeting of about two hours with a Shure MV7i and FastEnhancer-B ran without the participants noticing anything; no reference tone, recording, or memory measurement was taken and the microphone's rate (hence the transport — aggregate path presumed, as in every earlier MV7i record) was not read, so the measurement-based verification of the Clock drift and endurance procedure is still outstanding and the question stays open.
 5. DIY gate fade time constant (if the DIY route is needed): onset clipping vs. interferer leakage.
 6. How meeting apps treat the virtual device's reported latency/safety offsets (BlackHole reports zero).
 7. AEC engine choice, only relevant if AEC is built: `aec3` crate maturity vs. C++ `webrtc-audio-processing` vs. neural LocalVQE v1.4-AEC (16 kHz constraint).
-8. Whether 16 kHz output (Hush path) is subjectively acceptable in meetings vs. the 48 kHz paths.
+8. Whether 16 kHz output (Hush path) is subjectively acceptable in meetings vs. the 48 kHz paths. *Answered 2026-08-31*: acceptable as an opt-in model, not as the default — the owner wants Hush's suppression with better quality. This is what the re-scoped Phase 1 item (§6.4 decision record, §12) addresses.
 
 ---
 
@@ -535,3 +579,4 @@ Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level 
 - JoyCast: https://joycast.ai/
 - Krasp: https://github.com/pilshchikov/krasp
 - NoNoise-Mac: https://github.com/ivalsaraj/NoNoise-Mac / MetalVoice: https://github.com/Ghostkwebb/MetalVoice
+- HushMic (DPDFNet 48 kHz, `hushmic-denoiser` crate): https://github.com/Fovty/HushMic
