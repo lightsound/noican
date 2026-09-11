@@ -2,7 +2,7 @@
 
 A personal, fully on-device noise-cancelling virtual microphone for macOS, in the spirit of [JoyCast](https://joycast.ai/).
 
-The physical microphone signal is captured, cleaned in real time (noise suppression and, eventually, background-speaker suppression), and re-exposed to the system as a virtual input device that any app (Zoom, Meet, Teams, OBS, Discord, ...) can select as its microphone. Everything runs locally on Apple Silicon; no audio ever leaves the machine.
+The physical microphone signal is captured, cleaned in real time (noise suppression and, with the Hush model, background-speaker suppression), and re-exposed to the system as a virtual input device that any app (Zoom, Meet, Teams, OBS, Discord, ...) can select as its microphone. Everything runs locally on Apple Silicon; no audio ever leaves the machine.
 
 ## Status
 
@@ -17,8 +17,13 @@ this repository, Developer-ID-signed, and preferred over stock BlackHole
 entitlement so the Developer ID build captures the microphone under the
 hardened runtime. Both are recorded on Apple hardware
 ([docs/acceptance/2026-09-11-1ch-driver.md](docs/acceptance/2026-09-11-1ch-driver.md)).
-The rest of Phase 1 — a speaker-suppression stage tuned and on by
-default — has not started. The hardware acceptance procedures and
+The rest of Phase 1 was re-scoped on 2026-09-11: the `Hush 16k` model
+already removes background speech well enough (owner listening test of
+2026-08-31), so no dedicated speaker-suppression stage is planned; the
+remaining item is delivering Hush's suppression at 48 kHz output quality
+so it can become the default model (decision record in
+[docs/tech-research.md](docs/tech-research.md) §6.4). That work has not
+started. The hardware acceptance procedures and
 checklists live in
 [docs/macos-hardware-test.md](docs/macos-hardware-test.md); each run is
 recorded under `docs/acceptance/`.
