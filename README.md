@@ -6,15 +6,22 @@ The physical microphone signal is captured, cleaned in real time (noise suppress
 
 ## Status
 
-Phase 0 code-complete: switchable audio engine (Rust) with a CLI
+Phase 0 is complete: switchable audio engine (Rust) with a CLI
 batch-comparison mode, plus the real-time macOS pipeline (AUHAL on a private
 Aggregate Device, routed into a loopback device) and a SwiftUI menu-bar app.
-Phase 1 driver work has started: the Noican-branded virtual device
-([docs/driver.md](docs/driver.md)) builds from this repository and takes
-priority over stock BlackHole 2ch when both are installed. Hardware
-acceptance (audio output, TCC, model switching, driver loading on a real
-Mac) is tracked in
-[docs/macos-hardware-test.md](docs/macos-hardware-test.md).
+Phase 1's driver half is done: the Noican-branded virtual device
+([docs/driver.md](docs/driver.md)) is a one-channel 48 kHz
+`Noican.driver` 0.2.0 (UID `com.lightsound.noican.mic_UID`) built from
+this repository, Developer-ID-signed, and preferred over stock BlackHole
+2ch when both are installed; the app is signed with the audio-input
+entitlement so the Developer ID build captures the microphone under the
+hardened runtime. Both are recorded on Apple hardware
+([docs/acceptance/2026-09-11-1ch-driver.md](docs/acceptance/2026-09-11-1ch-driver.md)).
+The rest of Phase 1 — a speaker-suppression stage tuned and on by
+default — has not started. The hardware acceptance procedures and
+checklists live in
+[docs/macos-hardware-test.md](docs/macos-hardware-test.md); each run is
+recorded under `docs/acceptance/`.
 
 - [docs/tech-research.md](docs/tech-research.md) — consolidated technology research: candidate evaluation for every layer, final recommended stack, roadmap, and open questions.
 - [docs/models.md](docs/models.md) — supported models, weight download, and verification status.
@@ -58,7 +65,7 @@ build details and the on-hardware acceptance checklist.
 
 ### Noican virtual driver (BlackHole fork)
 
-The Noican-branded loopback device ("Noican Microphone", 2 ch / 48 kHz) is
+The Noican-branded loopback device ("Noican Microphone", 1 ch / 48 kHz) is
 built from the `external/blackhole` submodule without patching upstream —
 all customization is injected at build time ([docs/driver.md](docs/driver.md)):
 
