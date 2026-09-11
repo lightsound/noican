@@ -52,9 +52,19 @@ for row in json.load(sys.stdin)["rows"]:
     urllib.request.urlretrieve(r["audio"][0]["src"], target)
     print("  ", name, "-", r["text"])
 ' "$DEST" "$speaker"
+  # The row offsets are pinned to the mirror's current ordering; if it
+  # drifts, the speaker filter matches nothing and the loop above is a
+  # silent no-op — turn that into an error the owner can act on.
+  count=$(find "$DEST" -maxdepth 1 -name "${speaker}_*_mic1.flac" | wc -l | tr -d ' ')
+  if [ "$count" -eq 0 ]; then
+    echo "error: no ${speaker} files in $DEST — the mirror's row ordering has changed;" >&2
+    echo "       update the row offsets in SPEAKERS (see the comment above it)" >&2
+    exit 1
+  fi
+  echo "$speaker: $count files present"
 done
 
 echo
-echo "Interferer material in $DEST ($(ls "$DEST"/*.flac | wc -l | tr -d ' ') files)."
+echo "Interferer material in $DEST ($(find "$DEST" -maxdepth 1 -name '*.flac' | wc -l | tr -d ' ') files)."
 echo "Attribution: VCTK Corpus 0.92, CSTR, University of Edinburgh — CC BY 4.0."
 echo "Pass them to noican eval as: --interferer $DEST/*.flac"

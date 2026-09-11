@@ -81,6 +81,47 @@ fn sir_dir_name(sir_db: f64) -> String {
     format!("sir{rounded:+03}")
 }
 
+/// Rejects SIR lists whose directory names collide (the name rounds to
+/// whole dB, so `6` and `6.4` would silently overwrite each other's
+/// mixtures and blind set) and non-finite values.
+fn validate_sirs(sirs_db: &[f64]) -> anyhow::Result<()> {
+    if sirs_db.is_empty() {
+        anyhow::bail!("--sir needs at least one value");
+    }
+    let mut seen: Vec<(String, f64)> = Vec::with_capacity(sirs_db.len());
+    for &sir_db in sirs_db {
+        if !sir_db.is_finite() {
+            anyhow::bail!("--sir {sir_db} is not a finite number of dB");
+        }
+        let name = sir_dir_name(sir_db);
+        if let Some((_, other)) = seen.iter().find(|(seen_name, _)| *seen_name == name) {
+            anyhow::bail!(
+                "--sir {other} and {sir_db} would both be written to {name}/ \
+                 (directory names are whole dB); pass values at least 1 dB apart"
+            );
+        }
+        seen.push((name, sir_db));
+    }
+    Ok(())
+}
+
+/// A warning line when `samples` exceed full scale: every written WAV is
+/// clamped to ±1.0 on the way to 16-bit, so the listening set would be
+/// clipped while the metrics (computed on the unclamped floats) stay
+/// clean. Nothing is rescaled here — Hush's behaviour depends on the
+/// absolute level, so the level the user chose must reach the model.
+fn clipping_warning(label: &str, samples: &[f32]) -> Option<String> {
+    let peak = samples.iter().fold(0.0_f32, |m, s| m.max(s.abs()));
+    (peak > 1.0).then(|| {
+        format!(
+            "{label}: WARNING — peak {:+.1} dBFS exceeds full scale; the written WAVs are \
+             clipped (the metrics are not). Lower --target-level-dbfs or the SIR range \
+             before listening",
+            eval::amplitude_db(f64::from(peak))
+        )
+    })
+}
+
 /// Loads, trims and concatenates the recordings at `paths`.
 fn load_material(paths: &[PathBuf]) -> anyhow::Result<Vec<f32>> {
     let mut samples = Vec::new();
@@ -180,6 +221,7 @@ pub(crate) fn run(
     mut make_stage: impl FnMut(&str) -> anyhow::Result<Box<dyn Stage>>,
     mut progress: impl FnMut(&str),
 ) -> anyhow::Result<()> {
+    validate_sirs(&request.sirs_db)?;
     let Material {
         target,
         interferer,
@@ -207,6 +249,11 @@ pub(crate) fn run(
             eval::amplitude_db(f64::from(mixture.interferer_gain)),
             sir_dir.display()
         ));
+        if let Some(warning) =
+            clipping_warning(&format!("SIR {sir_db:+.0} dB: mixture"), &mixture.input)
+        {
+            progress(&warning);
+        }
 
         let mut outputs = Vec::with_capacity(request.model_ids.len());
         for model_id in &request.model_ids {
@@ -226,6 +273,11 @@ pub(crate) fn run(
             });
             audio::write_mono_48k(&sir_dir.join(format!("{model_id}.wav")), &output)?;
             progress(&format!("SIR {sir_db:+.0} dB: {model_id} done"));
+            if let Some(warning) =
+                clipping_warning(&format!("SIR {sir_db:+.0} dB: {model_id}"), &output)
+            {
+                progress(&warning);
+            }
             outputs.push(output);
         }
         write_blind_set(
@@ -374,6 +426,199 @@ mod tests {
         assert_eq!(sir_dir_name(6.0), "sir+06");
         assert_eq!(sir_dir_name(0.0), "sir+00");
         assert_eq!(sir_dir_name(-6.0), "sir-06");
+    }
+
+    #[test]
+    fn sirs_that_share_a_directory_name_are_rejected() {
+        validate_sirs(&[12.0, 6.0, 0.0, -6.0]).expect("distinct whole-dB values");
+        let err = validate_sirs(&[6.0, 6.4]).expect_err("6 and 6.4 both round to sir+06");
+        assert!(err.to_string().contains("sir+06"), "{err}");
+        assert!(validate_sirs(&[]).is_err());
+        assert!(validate_sirs(&[f64::NAN]).is_err());
+        assert!(validate_sirs(&[f64::INFINITY]).is_err());
+    }
+
+    #[test]
+    fn clipping_is_reported_only_above_full_scale() {
+        assert!(clipping_warning("x", &[0.0, 1.0, -1.0]).is_none());
+        let warning = clipping_warning("SIR +0 dB: mixture", &[0.2, -1.5]).expect("clips");
+        assert!(
+            warning.starts_with("SIR +0 dB: mixture: WARNING"),
+            "{warning}"
+        );
+        assert!(warning.contains("+3.5 dBFS"), "{warning}");
+    }
+
+    /// A fresh directory under the system temp dir, removed on drop.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "noican-eval-{tag}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_nanos())
+            ));
+            std::fs::create_dir_all(&dir).expect("temp dir");
+            Self(dir)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            // Best effort: a leftover temp dir is not a test failure.
+            drop(std::fs::remove_dir_all(&self.0));
+        }
+    }
+
+    fn synthetic(seconds: usize, freq: f32, amplitude: f32, seed: u32) -> Vec<f32> {
+        let mut state = seed;
+        (0..seconds * ENGINE_SAMPLE_RATE as usize)
+            .map(|n| {
+                #[expect(
+                    clippy::cast_precision_loss,
+                    reason = "sample indices fit f32 for a few seconds"
+                )]
+                let t = n as f32 / 48_000.0;
+                // A tone plus a little deterministic noise so trimming
+                // and the band metrics have something to work with.
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                #[expect(
+                    clippy::cast_precision_loss,
+                    reason = "uniform noise from the top bits; precision is irrelevant"
+                )]
+                let noise = (state >> 8) as f32 / 16_777_216.0 - 0.5;
+                0.02f32.mul_add(
+                    noise,
+                    amplitude * (2.0 * std::f32::consts::PI * freq * t).sin(),
+                )
+            })
+            .collect()
+    }
+
+    /// The whole command path with synthetic material and a passthrough
+    /// stage: files land where the docs say, one row per (model, SIR),
+    /// and every `blind-key.txt` line names a file whose samples equal
+    /// the model output it claims to be.
+    #[test]
+    fn run_writes_mixtures_rows_and_a_consistent_blind_key() {
+        let tmp = TempDir::new("run");
+        let target_path = tmp.0.join("voice.wav");
+        let interferer_path = tmp.0.join("other.wav");
+        audio::write_mono_48k(&target_path, &synthetic(5, 220.0, 0.3, 1)).expect("write");
+        audio::write_mono_48k(&interferer_path, &synthetic(5, 3_000.0, 0.3, 2)).expect("write");
+        let out_dir = tmp.0.join("out");
+        let request = EvalRequest {
+            targets: vec![target_path],
+            interferers: vec![interferer_path],
+            sirs_db: vec![6.0, -6.0],
+            target_level_dbfs: None,
+            segment_seconds: 1.5,
+            model_ids: vec!["passthrough".to_owned(), "twice".to_owned()],
+            out_dir: out_dir.clone(),
+            seed: 7,
+        };
+        let mut lines = Vec::new();
+        run(
+            &request,
+            |id| -> anyhow::Result<Box<dyn Stage>> {
+                Ok(match id {
+                    "passthrough" => Box::new(noican_core::Passthrough),
+                    _ => Box::new(Twice),
+                })
+            },
+            |line| lines.push(line.to_owned()),
+        )
+        .expect("run succeeds");
+
+        // Segment length clamps to the material (5 s → 1.5 s requested).
+        assert!(
+            lines.iter().any(|l| l.starts_with("segments: 0–1.5 s")),
+            "{lines:#?}"
+        );
+        assert!(out_dir.join("target.wav").is_file());
+        for dir in ["sir+06", "sir-06"] {
+            for file in [
+                "input.wav",
+                "passthrough.wav",
+                "twice.wav",
+                "blind/A.wav",
+                "blind/B.wav",
+            ] {
+                assert!(
+                    out_dir.join(dir).join(file).is_file(),
+                    "{dir}/{file} missing"
+                );
+            }
+        }
+        let csv = std::fs::read_to_string(out_dir.join("metrics.csv")).expect("csv");
+        assert_eq!(csv.lines().count(), 1 + 2 * 2, "{csv}");
+
+        // The passthrough row is the anchor: HF keep 0, level 0, SI-SDR
+        // 100, residual 0.
+        let anchor = csv
+            .lines()
+            .find(|l| l.starts_with("passthrough,6,"))
+            .expect("anchor row");
+        assert!(
+            anchor.starts_with("passthrough,6,0.00,0.00,100.00,"),
+            "{anchor}"
+        );
+
+        let key = std::fs::read_to_string(out_dir.join("blind-key.txt")).expect("key");
+        let key_lines: Vec<&str> = key.lines().collect();
+        assert_eq!(key_lines.len(), 4, "{key}");
+        let mut seen_models = Vec::new();
+        for line in key_lines {
+            let (blind, model) = line.split_once(" = ").expect("`path = model`");
+            let blind_samples = audio::read_mono_48k(&out_dir.join(blind)).expect("blind wav");
+            let dir = blind.split('/').next().expect("sir dir");
+            let model_samples =
+                audio::read_mono_48k(&out_dir.join(dir).join(format!("{model}.wav")))
+                    .expect("model wav");
+            assert_eq!(blind_samples, model_samples, "{line}: blind copy differs");
+            seen_models.push(model.to_owned());
+        }
+        seen_models.sort_unstable();
+        assert_eq!(
+            seen_models,
+            ["passthrough", "passthrough", "twice", "twice"]
+        );
+
+        // The "twice" stage doubles a 0.3-amplitude mixture past full
+        // scale at SIR −6 dB, which the run must report.
+        assert!(
+            lines.iter().any(|l| l.contains("twice: WARNING")),
+            "no clipping warning in {lines:#?}"
+        );
+    }
+
+    /// A stage that doubles the signal (level +6 dB, no delay).
+    struct Twice;
+
+    impl Stage for Twice {
+        fn id(&self) -> &'static str {
+            "twice"
+        }
+
+        fn process_block(
+            &mut self,
+            input: &[f32],
+            output: &mut [f32],
+        ) -> Result<(), noican_core::StageError> {
+            for (o, i) in output.iter_mut().zip(input) {
+                *o = 2.0 * i;
+            }
+            Ok(())
+        }
+
+        fn latency_samples(&self) -> usize {
+            0
+        }
+
+        fn reset(&mut self) {}
     }
 
     #[test]

@@ -148,7 +148,11 @@ acceptance record) the voice passes at parity. Two consequences:
 - Compare candidates at the level the microphone actually delivers.
   `--target-level-dbfs` exists to test the same voice at several
   levels; the recorded level is used when it is omitted, and the
-  command prints the RMS of both recordings.
+  command prints the RMS of both recordings. Nothing is rescaled
+  automatically: when a mixture or a model output exceeds full scale
+  the command warns that the written WAVs (the listening set) are
+  clipped while the metrics, computed on the unclamped floats, are not
+  — lower the level or the SIR range before listening in that case.
 - The VCTK stand-in numbers in this document are not a statement about
   the owner's voice; the owner's recording is what counts.
 

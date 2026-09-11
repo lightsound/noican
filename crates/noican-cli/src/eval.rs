@@ -23,8 +23,8 @@
 //!
 //! - **High-band retention** (you only): energy at or above
 //!   [`HIGH_BAND_HZ`] in the output relative to the clean voice, in dB.
-//!   A 16 kHz model scores around −60 dB here; a transparent 48 kHz path
-//!   scores 0 dB.
+//!   A 16 kHz model scores about −80 dB here (the resampler's stopband;
+//!   −83.6 dB measured for `hush`); a transparent 48 kHz path scores 0 dB.
 //! - **Own-voice level** (you only): output RMS relative to the clean
 //!   voice, the loudness-parity figure `HUSH_MAKEUP_GAIN_DB` was set
 //!   from (±1 dB is the acceptance band there).
