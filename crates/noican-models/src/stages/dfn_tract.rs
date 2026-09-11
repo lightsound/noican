@@ -51,6 +51,10 @@ pub(crate) const HUSH_MAKEUP_GAIN_DB: f32 = 2.45;
 /// the variable is named `rms` upstream but holds the mean square).
 /// Mirrored here so [`DfTractStage::band_gain`] can report 0 for such a
 /// frame instead of reading the previous frame's spectra.
+///
+/// Pinned against `deep_filter` **v0.5.6** (the workspace `Cargo.toml`
+/// git tag). This is a silent coupling — no test can compare it with
+/// upstream — so re-read `DfTract::process` when that tag moves.
 const SILENT_FRAME_MEAN_SQUARE: f32 = 1e-7;
 
 /// Converts a dB gain into the linear factor applied per sample.

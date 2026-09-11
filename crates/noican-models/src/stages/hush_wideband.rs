@@ -128,6 +128,15 @@ const HOP: usize = 160;
 /// this stage.
 const BAND_GAIN_BINS: Range<usize> = 80..141;
 
+/// A delay line holding `len` zeros with room for `capacity` samples, so
+/// the first frame's pushes (which precede the pops) never reallocate on
+/// the inference thread.
+fn primed_deque(len: usize, capacity: usize) -> VecDeque<f32> {
+    let mut deque = VecDeque::with_capacity(capacity);
+    deque.extend(std::iter::repeat_n(0.0, len));
+    deque
+}
+
 /// Splits the engine-rate input into Hush's band and the remainder, and
 /// recombines Hush's output with the (gated) remainder.
 ///
@@ -167,8 +176,8 @@ impl BandRecombiner {
             decimator,
             reference,
             enhanced,
-            input_delay: std::iter::repeat_n(0.0, filter_delay).collect(),
-            high_delay: std::iter::repeat_n(0.0, core_delay).collect(),
+            input_delay: primed_deque(filter_delay, filter_delay + frame_len),
+            high_delay: primed_deque(core_delay, core_delay + frame_len),
             low: Vec::with_capacity(HOP),
             low_ref: Vec::with_capacity(frame_len),
             up: Vec::with_capacity(frame_len),
@@ -511,10 +520,32 @@ mod tests {
     /// input they must agree up to the makeup gain placement — which is
     /// identical).
     #[test]
-    #[ignore = "requires downloaded model weights (run: noican fetch hush-48k)"]
-    fn wideband_matches_hush_on_band_limited_input() {
-        use noican_core::{FramedStage, Stage as _};
+    fn delay_lines_never_reallocate_after_construction() {
+        let input = wideband_signal(3);
+        let mut rec = BandRecombiner::new(480);
+        let (input_cap, high_cap) = (rec.input_delay.capacity(), rec.high_delay.capacity());
+        let mut out = vec![0.0_f32; FRAME];
+        for frame in input.chunks(FRAME) {
+            let low = rec.split(frame).to_vec();
+            assert_eq!(
+                rec.input_delay.capacity(),
+                input_cap,
+                "input delay grew in split"
+            );
+            assert_eq!(
+                rec.high_delay.capacity(),
+                high_cap,
+                "high delay grew in split"
+            );
+            rec.merge(&low, 1.0, &mut out);
+        }
+        assert_eq!(rec.input_delay.capacity(), input_cap);
+        assert_eq!(rec.high_delay.capacity(), high_cap);
+    }
 
+    /// The Hush tarball when the weights are fetched, else `None` after
+    /// printing a skip notice.
+    fn hush_tarball() -> Option<std::path::PathBuf> {
         let models_dir = std::env::var_os("NOICAN_MODELS_DIR").map_or_else(
             || {
                 std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -535,9 +566,122 @@ mod tests {
                     models_dir.display()
                 );
             }
-            return;
+            return None;
         }
-        let tarball = crate::fetch::model_dir(&models_dir, spec).join(spec.files[0].name);
+        Some(crate::fetch::model_dir(&models_dir, spec).join(spec.files[0].name))
+    }
+
+    /// With real weights: the gate closes. A 12 kHz tone lies entirely
+    /// in the band the core never sees, so the core's input is below its
+    /// silence threshold, `band_gain` is 0, and the tone must not reach
+    /// the output — an ungated band-split (option A in the module docs)
+    /// would pass it at full level.
+    #[test]
+    #[ignore = "requires downloaded model weights (run: noican fetch hush-48k)"]
+    fn gate_closes_when_the_core_hears_nothing() {
+        use noican_core::{FramedStage, Stage as _};
+
+        let Some(tarball) = hush_tarball() else {
+            return;
+        };
+        let mut stage = HushWidebandStage::new("hush-48k", &tarball).expect("stage should load");
+        let tone: Vec<f32> = (0..60 * FRAME)
+            .map(|n| {
+                #[expect(
+                    clippy::cast_precision_loss,
+                    reason = "sample indices fit f32 for a short test signal"
+                )]
+                let t = n as f32 / 48_000.0;
+                0.3 * (2.0 * std::f32::consts::PI * 12_000.0 * t).sin()
+            })
+            .collect();
+        let mut out = vec![0.0_f32; FRAME];
+        for (i, frame) in tone.chunks(FRAME).enumerate() {
+            stage
+                .process_frame(frame, &mut out)
+                .expect("processing should succeed");
+            // The tone's abrupt onset is broadband and leaks through the
+            // decimator for the first frame; the gate must be shut from the
+            // second frame on.
+            if i >= 1 {
+                assert!(
+                    stage.core.band_gain(BAND_GAIN_BINS).abs() < f32::EPSILON,
+                    "the core saw nothing yet reported a gain at frame {i}"
+                );
+            }
+        }
+        // Steady state through the Stage interface: output RMS must sit
+        // at least 40 dB under the input's.
+        let mut framed = FramedStage::new(stage, crate::factory::MAX_BLOCK_LEN)
+            .expect("48 kHz divides the engine rate");
+        let mut output = vec![0.0_f32; tone.len()];
+        for (i, o) in tone.chunks(FRAME).zip(output.chunks_mut(FRAME)) {
+            framed
+                .process_block(i, o)
+                .expect("processing should succeed");
+        }
+        let rms = |s: &[f32]| {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "sample counts of a short test signal fit f32"
+            )]
+            let len = s.len() as f32;
+            (s.iter().map(|x| x * x).sum::<f32>() / len).sqrt()
+        };
+        let (in_rms, out_rms) = (rms(&tone[10 * FRAME..]), rms(&output[10 * FRAME..]));
+        assert!(
+            out_rms < in_rms * 0.01,
+            "gate leaked: output RMS {out_rms} vs input {in_rms}"
+        );
+    }
+
+    /// With real weights: on speech-like material the gate is open but
+    /// never amplifies, and a silent frame reads 0 even right after a
+    /// loud one.
+    #[test]
+    #[ignore = "requires downloaded model weights (run: noican fetch hush-48k)"]
+    fn band_gain_is_bounded_and_zero_on_silence() {
+        let Some(tarball) = hush_tarball() else {
+            return;
+        };
+        let mut core = DfTractStage::hush_unity_gain("hush", &tarball).expect("stage should load");
+        let mut out = vec![0.0_f32; HOP];
+        let mut opened = false;
+        for block in 0..50 {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "sample indices fit f32 for a short test signal"
+            )]
+            let frame: Vec<f32> = (0..HOP)
+                .map(|n| {
+                    let t = (block * HOP + n) as f32 / 16_000.0;
+                    0.02f32.mul_add(
+                        (2.0 * std::f32::consts::PI * 5_000.0 * t).sin(),
+                        0.05 * (2.0 * std::f32::consts::PI * 220.0 * t).sin(),
+                    )
+                })
+                .collect();
+            core.process_frame(&frame, &mut out)
+                .expect("processing should succeed");
+            let gain = core.band_gain(BAND_GAIN_BINS);
+            assert!((0.0..=1.0).contains(&gain), "gain {gain} out of range");
+            opened |= gain > 0.0;
+        }
+        assert!(opened, "the gate never opened on a steady tone pair");
+        core.process_frame(&vec![0.0; HOP], &mut out)
+            .expect("processing should succeed");
+        assert!(core.band_gain(BAND_GAIN_BINS).abs() < f32::EPSILON);
+        assert!(out.iter().all(|s| *s == 0.0));
+    }
+
+    #[test]
+    #[ignore = "requires downloaded model weights (run: noican fetch hush-48k)"]
+    fn wideband_matches_hush_on_band_limited_input() {
+        use noican_core::{FramedStage, Stage as _};
+
+        let Some(tarball) = hush_tarball() else {
+            return;
+        };
         let mut wide = FramedStage::new(
             HushWidebandStage::new("hush-48k", &tarball).expect("stage should load"),
             crate::factory::MAX_BLOCK_LEN,

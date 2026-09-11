@@ -416,7 +416,7 @@ Status of the two direct competitors as checked on 2026-09-11 (see also the §6.
 | Drift | Private Aggregate Device with drift compensation | DIY adaptive resampler |
 | NS model (quality) | FastEnhancer 48 k **or** DPDFNet 48 k HR — decided by listening test | DeepFilterNet3 (`df` crate); CoreML DFN3 route |
 | NS model (low-latency mode) | UL-UNAS | GTCRN (easier integration via sherpa-onnx) |
-| Background speakers | **Hush 16 k** (decided 2026-08-31, §6.4 decision record); next step is Hush's suppression at 48 kHz output quality | tse-conv-tasnet-48k (weights private) / DIY VAD + ECAPA gate (mellonella/voce design) — not planned |
+| Background speakers | **Hush 16 k** (decided 2026-08-31, §6.4 decision record); the 48 kHz-output candidate `hush-48k` is in the tree (2026-09-11 decision record), default unchanged pending the owner's listening test | tse-conv-tasnet-48k (weights private) / DIY VAD + ECAPA gate (mellonella/voce design) — not planned |
 | AEC | None in v0 (headphones) | Process tap + `aec3` (WebRTC AEC3) with macOS 26 watchdog |
 | Inference runtime | ONNX Runtime (FastEnhancer, TSE); sherpa-onnx (DPDFNet/GTCRN, VAD, speaker embeddings) | tract via `df` crate |
 | Core language | Rust (audio engine, inference, gating) | — |
@@ -546,6 +546,9 @@ was decided on 2026-08-31 — Hush, see the §6.4 decision record.
   §6.4 decision record (2026-08-31 / 2026-09-11): Hush's suppression is
   already sufficient, so the remaining item is **Hush's suppression at
   48 kHz output quality**, good enough to become the default model.
+  *Candidate in the tree (2026-09-11)*: `hush-48k` (§6.4 second
+  decision record, [hush-48k-eval.md](hush-48k-eval.md)); the default
+  switch waits for the owner's listening result.
 
 ### Phase 2 — Menu bar app, full version
 
