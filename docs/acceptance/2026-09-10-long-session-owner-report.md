@@ -9,10 +9,13 @@ and it is an **observation record, not a scored run**: the procedure's
 measurements were not made. No reference tone was played, no recording
 was kept or inspected, and the sleep/wake, disconnect/reconnect and
 quit/relaunch repetitions of step 6 were not performed. What the report
-establishes is that a session of roughly the checklist's duration, on
-the aggregate path, ran to the end without the other participants
-remarking on anything — and the criteria below are scored no further
-than that evidence carries.
+establishes is that a session of roughly the checklist's duration ran
+to the end without the other participants remarking on anything — and
+the criteria below are scored no further than that evidence carries.
+Which transport carried it is itself unconfirmed: the MV7i takes the
+aggregate path at 48 kHz, as it did in every earlier record, but its
+rate was not read for this session (see the Microphone row and step 5,
+bullet 5).
 
 ## Environment
 
@@ -23,7 +26,7 @@ than that evidence carries.
 | App commit | Not recorded — the build installed on the owner's Mac on 2026-09-10, i.e. between PR #33 (`8635283`, merged 2026-09-09) and the 2026-09-11 driver run |
 | App signature | Not recorded |
 | Driver | Not recorded. Inference, not observation: the [2026-09-11 record](2026-09-11-1ch-driver.md) found `Noican.driver` 0.1.0 (2 channels) installed before its run, so 0.1.0 is the likely driver of this session |
-| Microphone | Shure MV7i (composite USB microphone; at 48 kHz it takes the aggregate path, as in the 2026-09-05 and 2026-09-11 records — the rate was not re-read for this session) |
+| Microphone | Shure MV7i (composite USB microphone). Transport: not recorded. Inference, not observation: at 48 kHz the MV7i takes the aggregate path, as it did in the 2026-09-05 and 2026-09-11 records; a 44.1 kHz setting would have taken the split transport instead, and the rate was not read for this session |
 | Model / strength | `FastEnhancer-B 48k`; strength not recorded |
 | Duration | About 2 hours, one continuous meeting |
 | Recording | None kept |
@@ -46,7 +49,7 @@ Clock drift and endurance, step 5 pass criteria:
 | 5, bullet 2 | No increasing timing error | **Not covered** — no reference tone (step 3), no spacing measured (step 4) |
 | 5, bullet 3 | No engine fault | **Pass (owner observation)** — the virtual microphone carried the owner's voice for the whole meeting; an engine fault silences it, which the participants would have reported. The popover was not inspected for a fault line |
 | 5, bullet 4 | Bounded memory use | **Not covered** — not observed |
-| 5, bullet 5 | Aggregate Device remains alive | **Pass (owner observation)** — same evidence as the previous row: audio kept flowing through the private aggregate for about two hours. Audio MIDI Setup was not checked for a stale aggregate afterwards |
+| 5, bullet 5 | Aggregate Device remains alive | **Not covered** — the observation (audio kept flowing for about two hours) would carry this criterion only if the session ran on the aggregate path, and the MV7i's rate was not read (Microphone row); on the split transport there is no aggregate to keep alive. Audio MIDI Setup was not checked for a stale aggregate afterwards either |
 
 Other steps:
 
@@ -66,21 +69,25 @@ Other steps:
   check. The first measured long session is still outstanding; when it
   is run, this record is superseded by it, not amended.
 - Step 6 (sleep/wake, disconnect/reconnect, quit/relaunch).
-- The split (native-rate) transport: the MV7i runs at 48 kHz on the
-  aggregate path, so this says nothing about the split transport's own
-  drift servo (native-rate checklist criterion 3 covers that, at 30
-  minutes).
-- Environment details (Mac, macOS, app commit, driver version) — see
-  the table; nothing here should be read as tying the observation to a
-  particular build.
+- Which transport ran: the MV7i's rate was not read, so the session is
+  not attributed to the aggregate path or to the split transport, and
+  it scores neither transport's drift servo (native-rate checklist
+  criterion 3 covers the split transport's, at 30 minutes).
+- Environment details (Mac, macOS, app commit, driver version,
+  transport) — see the table; nothing here should be read as tying the
+  observation to a particular build or path.
 
 ## Observations
 
 - The owner's evidence is the absence of complaints from the meeting's
   other participants. That is sensitive to a dead microphone and to
   gross, sustained artefacts, and insensitive to single dropped blocks,
-  a slow timing drift, and memory growth — which is why the click/block, timing-error and memory
-  criteria stay Not covered rather than passing on the same observation.
+  a slow timing drift, and memory growth — which is why the click/block,
+  timing-error and memory criteria stay Not covered rather than passing
+  on the same observation. "Aggregate Device remains alive" would have
+  been supported by the same observation on the aggregate path, but the
+  path is an inference here, so it stays Not covered too; "no engine
+  fault" holds on either transport and is the one Pass.
 - The report answers §13 Open Question 4 of
   [docs/tech-research.md](../tech-research.md) ("Long-session (2 h+)
   stability of aggregate-device drift compensation") only to the extent
