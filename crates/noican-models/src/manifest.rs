@@ -41,8 +41,14 @@ pub struct ModelSpec {
     /// License of the weights (informational; see `THIRD_PARTY_NOTICES.md`).
     pub license: &'static str,
     /// Files required at runtime (empty when the model is embedded in the
-    /// binary).
+    /// binary or when everything comes from [`ModelSpec::depends_on`]).
     pub files: &'static [FileSpec],
+    /// Ids of registry models whose files this model also needs at
+    /// runtime (a composite stage built around another entry's weights).
+    /// Fetching and fetch-status checks follow these transitively; the
+    /// stage factory resolves their file paths through the dependency's
+    /// own spec, so the weights live in one place on disk.
+    pub depends_on: &'static [&'static str],
     /// True when the model needs a speaker-enrollment embedding.
     pub needs_enrollment: bool,
     /// Set when the distribution point currently requires authentication
@@ -64,6 +70,13 @@ impl ModelSpec {
             .iter()
             .filter(|m| m.family != ModelFamily::SpeakerEmbedding)
     }
+
+    /// The registry entries named in [`ModelSpec::depends_on`] (direct
+    /// dependencies only; the registry keeps dependency chains one level
+    /// deep, which a unit test pins).
+    pub fn dependencies(&self) -> impl Iterator<Item = &'static Self> {
+        self.depends_on.iter().filter_map(|id| Self::find(id))
+    }
 }
 
 macro_rules! fastenhancer {
@@ -79,6 +92,7 @@ macro_rules! fastenhancer {
                 url: $url,
                 sha256: Some($sha),
             }],
+            depends_on: &[],
             needs_enrollment: false,
             fetch_note: None,
         }
@@ -133,6 +147,7 @@ pub static ALL_MODELS: &[ModelSpec] = &[
             url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/speech-enhancement-models/dpdfnet2_48khz_hr.onnx",
             sha256: Some("0b399f8a58dc4d70d8cd97541f5c39869406145193b957d00a03b66070944928"),
         }],
+        depends_on: &[],
         needs_enrollment: false,
         fetch_note: None,
     },
@@ -149,6 +164,7 @@ pub static ALL_MODELS: &[ModelSpec] = &[
             url: "https://huggingface.co/Ceva-IP/DPDFNet/resolve/main/onnx/dpdfnet8_48khz_hr.onnx",
             sha256: Some("7b3afbb260a08fe9af3d16e3bda992971be1e7e951d1dee7c2d235f5c43f5631"),
         }],
+        depends_on: &[],
         needs_enrollment: false,
         fetch_note: None,
     },
@@ -160,6 +176,7 @@ pub static ALL_MODELS: &[ModelSpec] = &[
         license: "MIT OR Apache-2.0",
         // Embedded in the deep_filter crate (default-model feature).
         files: &[],
+        depends_on: &[],
         needs_enrollment: false,
         fetch_note: None,
     },
@@ -175,6 +192,7 @@ pub static ALL_MODELS: &[ModelSpec] = &[
             url: "https://raw.githubusercontent.com/Xiaobin-Rong/ul-unas/00f7c700da43d38347f30a6ccebd86fcbc798e07/ulunas_onnx/onnx_models/ulunas_stream_simple.onnx",
             sha256: Some("f2e804d54d6a88f4f82f44d86c9f1cf646db2509bfca935cfbfc5fcd8cbfac3b"),
         }],
+        depends_on: &[],
         needs_enrollment: false,
         fetch_note: None,
     },
@@ -189,6 +207,20 @@ pub static ALL_MODELS: &[ModelSpec] = &[
             url: "https://huggingface.co/weya-ai/hush/resolve/main/onnx/advanced_dfnet16k_model_best_onnx.tar.gz",
             sha256: Some("45632ccaa82b71bb743d6caa7c78e983fe2f2790a3af7f6ec48e6ed7ba085df6"),
         }],
+        depends_on: &[],
+        needs_enrollment: false,
+        fetch_note: None,
+    },
+    ModelSpec {
+        id: "hush-48k",
+        display_name: "Hush 48k",
+        family: ModelFamily::SpeakerSuppression,
+        sample_rate: 48_000,
+        license: "Apache-2.0",
+        // Runs the `hush` weights inside a 48 kHz band-split wrapper (see
+        // `stages::hush_wideband`); no files of its own.
+        files: &[],
+        depends_on: &["hush"],
         needs_enrollment: false,
         fetch_note: None,
     },
@@ -210,6 +242,7 @@ pub static ALL_MODELS: &[ModelSpec] = &[
                 sha256: None,
             },
         ],
+        depends_on: &[],
         needs_enrollment: true,
         fetch_note: Some(
             "the Hugging Face repo penta2himajin/tse-conv-tasnet-48k currently returns \
@@ -228,7 +261,56 @@ pub static ALL_MODELS: &[ModelSpec] = &[
             url: "https://huggingface.co/penta2himajin/ecapa-tdnn-onnx/resolve/main/ecapa_tdnn.onnx",
             sha256: Some("75f5f36d23879c5b2dd73b09221e8727e8e6e6a7cbd1a0655992d7ae81195698"),
         }],
+        depends_on: &[],
         needs_enrollment: false,
         fetch_note: None,
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ids_are_unique() {
+        let mut ids: Vec<&str> = ALL_MODELS.iter().map(|m| m.id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), ALL_MODELS.len(), "duplicate model id");
+    }
+
+    #[test]
+    fn dependencies_resolve_and_are_one_level_deep() {
+        for model in ALL_MODELS {
+            assert_eq!(
+                model.dependencies().count(),
+                model.depends_on.len(),
+                "{}: a depends_on id is not in the registry",
+                model.id
+            );
+            for dep in model.dependencies() {
+                assert!(
+                    dep.depends_on.is_empty(),
+                    "{}: dependency {} has dependencies of its own",
+                    model.id,
+                    dep.id
+                );
+                assert!(
+                    !dep.files.is_empty(),
+                    "{}: dependency {} has no files, so depending on it is pointless",
+                    model.id,
+                    dep.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hush_48k_reuses_the_hush_weights() {
+        let spec = ModelSpec::find("hush-48k").expect("registered");
+        assert_eq!(spec.sample_rate, 48_000);
+        assert!(spec.files.is_empty());
+        assert_eq!(spec.depends_on, ["hush"]);
+        assert_eq!(spec.family, ModelFamily::SpeakerSuppression);
+    }
+}

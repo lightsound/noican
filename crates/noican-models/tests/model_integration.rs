@@ -65,8 +65,9 @@ fn test_signal() -> Vec<f32> {
 
 fn run_model(id: &str, options: &StageOptions) {
     let dir = models_dir();
+    // `is_fetched` is true for embedded models (no files) and follows
+    // `depends_on`, so composites skip when their dependency is missing.
     if let Some(spec) = ModelSpec::find(id)
-        && !spec.files.is_empty()
         && !noican_models::fetch::is_fetched(&dir, spec)
     {
         // Treated as a skip: weights are intentionally not part of the repo.
@@ -115,6 +116,7 @@ model_test!(dpdfnet2_runs, "dpdfnet2");
 model_test!(dpdfnet8_runs, "dpdfnet8");
 model_test!(ulunas_runs, "ul-unas");
 model_test!(hush_runs, "hush");
+model_test!(hush_48k_runs, "hush-48k");
 
 /// DeepFilterNet3 is embedded in the binary — runnable even without a
 /// models directory.

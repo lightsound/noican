@@ -224,6 +224,50 @@ Known tuning risk (from design1): gate fade time constant — too short clips th
 > Whichever wins, the existing `hush` entry stays available as the
 > escape hatch. Open Questions 1, 2, and 8 are updated accordingly.
 
+> **Decision record (2026-09-11): `hush-48k` = band-split with Hush's
+> own gain as the gate, no fork, no second model.** Implemented as the
+> registry entry `hush-48k` (`crates/noican-models/src/stages/hush_wideband.rs`,
+> whose module documentation is the authoritative record; summary here).
+> The 48 kHz input is decimated for the unchanged Hush core; the part of
+> the input the core never saw (`x − interp(decim(x))`, time-aligned) is
+> added back to the interpolated Hush output, scaled per 10 ms frame by
+> the gain Hush applied in 4–7 kHz — `sqrt(Σ|Y|²/Σ|X|²)` of the model's
+> enhanced over noisy spectrum, read through the upstream `deep_filter`
+> crate's public `DfTract::get_spec_noisy` / `get_spec_enh` — with a
+> linear ramp across the frame and 0 for frames the model skipped as
+> silent. Latency is unchanged (1080 samples, 22.5 ms); the added DSP
+> cost measured 0.01 ms per 10 ms block (`block_bench`, x86_64: hush p50
+> 0.77 / p99 0.86 ms, hush-48k p50 0.78 / p99 0.87 ms).
+>
+> Options and why they lost — (a) band-split with an *ungated* upper
+> band: leaks the interferer's sibilants whenever Hush mutes, the one
+> disqualifying failure. (b) sidechain with an external STFT: duplicates
+> the model's analysis with only approximate frame alignment; superseded
+> once the core's own spectra turned out to be public. (c) sidechain via
+> a forked `deep_filter` exposing the ERB mask: unnecessary for the same
+> reason. (d) Hush at 48 kHz by configuration: the tarball's
+> `config.ini` fixes `sr`/`fft_size`/`hop`, the ERB filterbank and the
+> network input widths. (e) upstream 48 kHz Hush: as of 2026-09-11
+> `weya-ai/hush` still ships only the 16 kHz tarball ("coming soon"
+> retrain unreleased); `pulp-vision/Hush` has one release (v1.0.0) and
+> its last commit removed an embedded 48 kHz *DeepFilterNet3*, not Hush.
+> (f) neural bandwidth extension: no streaming sub-10 ms CPU model with a
+> permissive licence, and generative when the true band is in the input.
+> High-band *source*: the dry input rather than a 48 kHz denoiser
+> (FastEnhancer-B would raise latency to ≈ 31 ms and need two weight
+> files; follow-up if upper-band hiss is audible). Gate band 4–7 kHz
+> rather than 2–7 / 6–7.2 kHz / the whole band: it is the octave adjacent
+> to the restored band, so the restored band sits on Hush's own spectral
+> tilt (harness, VCTK stand-ins: Hush's own output is ≈ −6 dB at
+> 6–7 kHz on a passed voice; the restored band lands at −5 dB; a
+> whole-band gate would put it at −1.7 dB, a bump, and leak 3 dB more of
+> the interferer's high band). Makeup gain (`HUSH_MAKEUP_GAIN_DB`) is
+> applied once to the recombined output. Deferred: normalising the
+> core's input level (Hush attenuates a lone voice more the hotter it is;
+> `noican eval --target-level-dbfs` measures it). Whether `hush-48k`
+> becomes the default is the owner's listening decision (§12 Phase 1,
+> checklist in [hush-48k-eval.md](hush-48k-eval.md)).
+
 ---
 
 ## 7. Acoustic Echo Cancellation (AEC)
@@ -372,7 +416,7 @@ Status of the two direct competitors as checked on 2026-09-11 (see also the §6.
 | Drift | Private Aggregate Device with drift compensation | DIY adaptive resampler |
 | NS model (quality) | FastEnhancer 48 k **or** DPDFNet 48 k HR — decided by listening test | DeepFilterNet3 (`df` crate); CoreML DFN3 route |
 | NS model (low-latency mode) | UL-UNAS | GTCRN (easier integration via sherpa-onnx) |
-| Background speakers | **Hush 16 k** (decided 2026-08-31, §6.4 decision record); next step is Hush's suppression at 48 kHz output quality | tse-conv-tasnet-48k (weights private) / DIY VAD + ECAPA gate (mellonella/voce design) — not planned |
+| Background speakers | **Hush 16 k** (decided 2026-08-31, §6.4 decision record); the 48 kHz-output candidate `hush-48k` is in the tree (2026-09-11 decision record), default unchanged pending the owner's listening test | tse-conv-tasnet-48k (weights private) / DIY VAD + ECAPA gate (mellonella/voce design) — not planned |
 | AEC | None in v0 (headphones) | Process tap + `aec3` (WebRTC AEC3) with macOS 26 watchdog |
 | Inference runtime | ONNX Runtime (FastEnhancer, TSE); sherpa-onnx (DPDFNet/GTCRN, VAD, speaker embeddings) | tract via `df` crate |
 | Core language | Rust (audio engine, inference, gating) | — |
@@ -502,6 +546,9 @@ was decided on 2026-08-31 — Hush, see the §6.4 decision record.
   §6.4 decision record (2026-08-31 / 2026-09-11): Hush's suppression is
   already sufficient, so the remaining item is **Hush's suppression at
   48 kHz output quality**, good enough to become the default model.
+  *Candidate in the tree (2026-09-11)*: `hush-48k` (§6.4 second
+  decision record, [hush-48k-eval.md](hush-48k-eval.md)); the default
+  switch waits for the owner's listening result.
 
 ### Phase 2 — Menu bar app, full version
 

@@ -25,6 +25,7 @@ cargo run -p noican-cli --release -- fetch fastenhancer-t dpdfnet2
 | `dfn3` | DeepFilterNet3 | denoise (baseline) | 48 k | tract (embedded in the `deep_filter` crate) | — (no download) | MIT OR Apache-2.0 |
 | `ul-unas` | UL-UNAS (TASLP 2026) | denoise (low-latency) | 16 k | ONNX Runtime | [commit-pinned repo file](https://github.com/Xiaobin-Rong/ul-unas/tree/main/ulunas_onnx/onnx_models) | MIT |
 | `hush` | Hush (Weya AI) | speaker suppression | 16 k | tract (`deep_filter` crate, Hush tarball) | [HF weya-ai/hush](https://huggingface.co/weya-ai/hush) | Apache-2.0 |
+| `hush-48k` | Hush 48k (band-split wrapper around `hush`) | speaker suppression | 48 k out (16 k core) | tract + `noican-models::stages::hush_wideband` | — (depends on `hush`; no files of its own) | Apache-2.0 |
 | `tse-48k` | tse-conv-tasnet-48k | speaker extraction (enrollment) | 48 k | ONNX Runtime | [HF penta2himajin/tse-conv-tasnet-48k](https://huggingface.co/penta2himajin/tse-conv-tasnet-48k) — **currently private, see below** | unknown |
 | `ecapa-tdnn` | ECAPA-TDNN embedding (SpeechBrain export) | support (enrollment) | 16 k | ONNX Runtime | [HF penta2himajin/ecapa-tdnn-onnx](https://huggingface.co/penta2himajin/ecapa-tdnn-onnx) | Apache-2.0 |
 
@@ -32,6 +33,20 @@ Sample-rate/frame-size differences are absorbed by the engine
 (`noican-core::FramedStage`): 16 kHz models are driven through a
 fixed-ratio polyphase resampler and all models present the same 48 kHz
 streaming interface.
+
+### Composite entries (`depends_on`)
+
+A registry entry may run another entry's weights instead of shipping its
+own (`ModelSpec::depends_on`). `noican fetch <id>` then fetches the
+dependency first, `noican models` reports the entry as fetched only when
+its dependency is, and the weights live in the dependency's directory
+only. `hush-48k` is such an entry: it wraps the 16 kHz Hush core in a
+48 kHz band-split stage — the input's band above 8 kHz is added back to
+Hush's output, scaled by the gain Hush applied in 4–7 kHz, so the added
+band is muted whenever Hush mutes. Same latency as `hush` (1080
+samples, 22.5 ms), ≈ 0.01 ms added per 10 ms block; design record in
+the module documentation of `crates/noican-models/src/stages/hush_wideband.rs`
+and in [tech-research.md §6.4](tech-research.md).
 
 ## tse-48k availability (unverified with trained weights)
 

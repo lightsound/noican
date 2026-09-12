@@ -43,19 +43,70 @@ use noican_core::{FrameProcessor, StageError};
 /// already at its own clipping point, and a limiter here would distort
 /// every loud syllable to guard a corner case — so the overshoot is
 /// accepted and documented instead.
-const HUSH_MAKEUP_GAIN_DB: f32 = 2.45;
+pub(crate) const HUSH_MAKEUP_GAIN_DB: f32 = 2.45;
+
+/// Mean-square level below which `DfTract::process` skips the network,
+/// zeroes its output and leaves its spectrum buffers stale (upstream
+/// `tract.rs`, `process`: `if rms < 1e-7 { enh.fill(0.); return … }` —
+/// the variable is named `rms` upstream but holds the mean square).
+/// Mirrored here so [`DfTractStage::band_gain`] can report 0 for such a
+/// frame instead of reading the previous frame's spectra.
+///
+/// Pinned against `deep_filter` **v0.5.6** (the workspace `Cargo.toml`
+/// git tag). This is a silent coupling — no test can compare it with
+/// upstream — so re-read `DfTract::process` when that tag moves.
+const SILENT_FRAME_MEAN_SQUARE: f32 = 1e-7;
 
 /// Converts a dB gain into the linear factor applied per sample.
-fn db_to_linear(gain_db: f32) -> f32 {
+pub(crate) fn db_to_linear(gain_db: f32) -> f32 {
     10.0_f32.powf(gain_db / 20.0)
 }
 
 /// Applies a fixed linear gain in place (the Hush makeup gain hook;
 /// separated from the model call so it is testable without weights).
-fn apply_gain(samples: &mut [f32], linear_gain: f32) {
+pub(crate) fn apply_gain(samples: &mut [f32], linear_gain: f32) {
     for sample in samples {
         *sample *= linear_gain;
     }
+}
+
+/// Mean square of a frame (the quantity upstream compares against
+/// [`SILENT_FRAME_MEAN_SQUARE`]).
+fn mean_square(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "frame lengths are a few hundred samples"
+    )]
+    let len = samples.len() as f32;
+    samples.iter().map(|s| s * s).sum::<f32>() / len
+}
+
+/// Ratio of enhanced to noisy magnitude from the two band energies: the
+/// broadband gain the model applied there, `sqrt(Σ|Y|² / Σ|X|²)`,
+/// clamped to `0..=1` (the network's ERB mask and deep-filter stage
+/// attenuate; any apparent amplification is numerical). A zero (or
+/// denormal) noisy energy yields 0.
+fn magnitude_ratio(noisy_energy: f32, enhanced_energy: f32) -> f32 {
+    if noisy_energy <= f32::MIN_POSITIVE {
+        return 0.0;
+    }
+    (enhanced_energy / noisy_energy).sqrt().clamp(0.0, 1.0)
+}
+
+/// Σ|X|² over `bins` of one channel of a complex spectrum.
+fn band_energy(
+    spectrum: ndarray::ArrayView1<'_, df::Complex32>,
+    bins: &std::ops::Range<usize>,
+) -> f32 {
+    spectrum
+        .iter()
+        .skip(bins.start)
+        .take(bins.len())
+        .map(|c| c.re.mul_add(c.re, c.im * c.im))
+        .sum()
 }
 
 /// Moves a whole [`DfTract`] across threads.
@@ -92,6 +143,9 @@ pub struct DfTractStage {
     /// Kept to rebuild the model on reset (`DfTract` has no state-reset API).
     params: DfParams,
     runtime: RuntimeParams,
+    /// True when the last frame fell under [`SILENT_FRAME_MEAN_SQUARE`]
+    /// (the model produced zeros without touching its spectra).
+    last_frame_silent: bool,
 }
 
 impl std::fmt::Debug for DfTractStage {
@@ -134,10 +188,55 @@ impl DfTractStage {
     ///
     /// Returns [`StageError::Inference`] when the tarball cannot be loaded.
     pub fn hush(id: &str, tarball: &Path) -> Result<Self, StageError> {
+        Self::hush_with_gain(id, tarball, db_to_linear(HUSH_MAKEUP_GAIN_DB))
+    }
+
+    /// Hush without the makeup gain, for composite stages that apply
+    /// `HUSH_MAKEUP_GAIN_DB` themselves after mixing in other material
+    /// (see `stages::hush_wideband`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StageError::Inference`] when the tarball cannot be loaded.
+    pub fn hush_unity_gain(id: &str, tarball: &Path) -> Result<Self, StageError> {
+        Self::hush_with_gain(id, tarball, 1.0)
+    }
+
+    fn hush_with_gain(id: &str, tarball: &Path, output_gain: f32) -> Result<Self, StageError> {
         let params = DfParams::new(tarball.to_path_buf())
             .map_err(|e| StageError::Inference(format!("loading {}: {e}", tarball.display())))?;
         let runtime = RuntimeParams::new(1, 0.0, 100.0, -15.0, 35.0, 35.0, ReduceMask::MEAN);
-        Self::from_params(id, params, runtime, db_to_linear(HUSH_MAKEUP_GAIN_DB))
+        Self::from_params(id, params, runtime, output_gain)
+    }
+
+    /// Number of STFT bins of the model's spectra (`fft_size / 2 + 1`).
+    pub(crate) const fn n_freqs(&self) -> usize {
+        self.model.0.n_freqs
+    }
+
+    /// Broadband gain the model applied to the last processed frame over
+    /// `bins` (STFT bin indices, `bin × sample_rate / fft_size` Hz),
+    /// `sqrt(Σ|Y|² / Σ|X|²)` of the enhanced over the noisy spectrum,
+    /// clamped to `0..=1`.
+    ///
+    /// The upstream `DfTract` exposes both spectra publicly
+    /// (`get_spec_noisy` / `get_spec_enh`); with Hush's zero lookahead
+    /// they describe the same frame, after the ERB mask, the deep-filter
+    /// stage and the attenuation limit — i.e. exactly what the time
+    /// domain output was synthesised from. A frame the model skipped as
+    /// silent reports 0 (its output was zeroed).
+    ///
+    /// # Panics
+    ///
+    /// Panics when `bins` exceeds [`Self::n_freqs`].
+    pub(crate) fn band_gain(&self, bins: std::ops::Range<usize>) -> f32 {
+        assert!(bins.end <= self.n_freqs(), "bin range past the spectrum");
+        if self.last_frame_silent {
+            return 0.0;
+        }
+        let noisy = band_energy(self.model.0.get_spec_noisy().row(0), &bins);
+        let enhanced = band_energy(self.model.0.get_spec_enh().row(0), &bins);
+        magnitude_ratio(noisy, enhanced)
     }
 
     fn from_params(
@@ -161,6 +260,7 @@ impl DfTractStage {
             output_gain,
             params,
             runtime,
+            last_frame_silent: true,
         })
     }
 }
@@ -183,6 +283,7 @@ impl FrameProcessor for DfTractStage {
     }
 
     fn process_frame(&mut self, input: &[f32], output: &mut [f32]) -> Result<(), StageError> {
+        self.last_frame_silent = mean_square(input) < SILENT_FRAME_MEAN_SQUARE;
         let noisy = ndarray::ArrayView2::from_shape((1, self.hop), input)
             .map_err(|e| StageError::Inference(format!("bad input shape: {e}")))?;
         let enh = ndarray::ArrayViewMut2::from_shape((1, self.hop), output)
@@ -206,6 +307,7 @@ impl FrameProcessor for DfTractStage {
         if let Ok(model) = build(&self.params, &self.runtime) {
             self.model = SendModel(model);
         }
+        self.last_frame_silent = true;
     }
 }
 
@@ -257,6 +359,35 @@ mod tests {
         for (got, want) in block.iter().zip(expected) {
             assert!((got - want).abs() < 1e-6, "expected {want}, got {got}");
         }
+    }
+
+    #[test]
+    fn mean_square_matches_upstream_silence_criterion() {
+        assert!(mean_square(&[]) < SILENT_FRAME_MEAN_SQUARE);
+        assert!(mean_square(&[1e-4; 160]) < SILENT_FRAME_MEAN_SQUARE);
+        assert!(mean_square(&[1e-3; 160]) >= SILENT_FRAME_MEAN_SQUARE);
+        assert!((mean_square(&[0.5, -0.5]) - 0.25).abs() < 1e-7);
+    }
+
+    #[test]
+    fn magnitude_ratio_is_the_clamped_amplitude_ratio() {
+        assert!((magnitude_ratio(4.0, 1.0) - 0.5).abs() < 1e-6);
+        assert!((magnitude_ratio(1.0, 1.0) - 1.0).abs() < 1e-6);
+        // Numerical overshoot clamps to unity; no noisy energy reads 0.
+        assert!((magnitude_ratio(1.0, 1.5) - 1.0).abs() < 1e-6);
+        assert!(magnitude_ratio(0.0, 1.0).abs() < 1e-6);
+        assert!(magnitude_ratio(1.0, 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn band_energy_sums_only_the_requested_bins() {
+        let spectrum: Vec<df::Complex32> = (0..8)
+            .map(|k| df::Complex32::new(1.0, if k >= 4 { 1.0 } else { 0.0 }))
+            .collect();
+        let view = ndarray::ArrayView1::from(&spectrum);
+        assert!((band_energy(view, &(0..4)) - 4.0).abs() < 1e-6);
+        assert!((band_energy(view, &(4..8)) - 8.0).abs() < 1e-6);
+        assert!(band_energy(view, &(3..3)).abs() < 1e-6);
     }
 
     #[test]

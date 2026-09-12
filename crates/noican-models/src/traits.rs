@@ -14,9 +14,12 @@
 //!   DPDFNet 60 ms): 5 ≤ 25 ms, 4 ≤ 35 ms, 3 ≤ 45 ms, 2 ≤ 65 ms.
 //! - `efficiency` is derived from parameter count (weight-file size):
 //!   5 ≤ 0.25 M, 4 ≤ 1.5 M, 3 ≤ 2.5 M, 2 above.
-//! - `voice_quality` is the native rate: 48 kHz native scores 4
+//! - `voice_quality` is the output bandwidth: 48 kHz native scores 4
 //!   (processing always costs some naturalness; only the passthrough
-//!   reference scores 5), 16 kHz telephony-band models score 2.
+//!   reference scores 5), 16 kHz telephony-band models score 2. A
+//!   composite that restores the full band around a 16 kHz core
+//!   (`hush-48k`) scores as a 48 kHz model: what the listener hears is
+//!   the full band.
 //! - `noise_removal` is editorial, anchored by the 2026-08-27 hardware
 //!   run: DPDFNet8 / DeepFilterNet3 / Hush suppressed transient clicks
 //!   (trackpad, keyboard); the lighter models let them through.
@@ -165,6 +168,17 @@ static PROFILES: &[(&str, ModelTraits)] = &[
         ),
     ),
     (
+        "hush-48k",
+        ModelTraits::rated(
+            [4, 4, 5, 3],
+            "mutes background voices, full-band voice",
+            "48 kHz output: Hush's suppression with your voice's upper \
+             band kept (gated by Hush itself), ~23 ms delay, ~2.2M \
+             parameters. Also suppresses other people talking nearby \
+             and keyboard/trackpad clicks.",
+        ),
+    ),
+    (
         "tse-48k",
         ModelTraits::rated(
             [4, 4, 3, 2],
@@ -209,6 +223,8 @@ mod tests {
             assert_eq!(ModelTraits::for_id(id).voice_quality, 2, "{id}");
         }
         assert_eq!(ModelTraits::for_id("fastenhancer-b").voice_quality, 4);
+        // Full-band output around the 16 kHz core scores as 48 kHz.
+        assert_eq!(ModelTraits::for_id("hush-48k").voice_quality, 4);
     }
 
     #[test]
