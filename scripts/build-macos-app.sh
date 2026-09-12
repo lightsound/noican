@@ -23,15 +23,28 @@ ENTITLEMENTS="$ROOT/macos/Resources/Noican.entitlements"
 # silently unless the signature carries it. Checked after signing.
 AUDIO_INPUT_ENTITLEMENT="com.apple.security.device.audio-input"
 
-# Package.swift links the staticlib from a fixed relative path
-# (../target/aarch64-apple-darwin/release), so the Rust build must land
-# there regardless of the caller's environment. A CARGO_TARGET_DIR in the
-# environment (some agent sandboxes and CI setups export one) would
-# otherwise send the fresh library elsewhere and the app would silently
-# link whatever old copy sits in the repository's target directory.
+# Package.swift is the authority on where the linker looks for the
+# staticlib: its `-L` flag names a path relative to macos/. Read it back
+# here rather than repeating the literal, and refuse to build if it does
+# not point at the cargo output for $TARGET, so the two cannot drift
+# apart silently.
+PACKAGE_SWIFT="$ROOT/macos/Package.swift"
+LINK_DIR="$(sed -n 's/^[[:space:]]*"-L", *"\([^"]*\)",*[[:space:]]*$/\1/p' "$PACKAGE_SWIFT")"
+if [[ "$LINK_DIR" != "../target/$TARGET/release" ]]; then
+  echo "error: $PACKAGE_SWIFT links the staticlib from '${LINK_DIR:-<no -L flag found>}'," >&2
+  echo "       but this script builds it into '../target/$TARGET/release'" >&2
+  echo "       (keep the -L flag and TARGET in this script in step)" >&2
+  exit 1
+fi
 STATICLIB_DIR="$ROOT/target/$TARGET/release"
 STATICLIB="$STATICLIB_DIR/libnoican_ffi.a"
 
+# The Rust build must land at that path regardless of the caller's
+# environment. A CARGO_TARGET_DIR in the environment (some agent
+# sandboxes and CI setups export one) would otherwise send the fresh
+# library elsewhere and the app would silently link whatever old copy
+# sits in the repository's target directory; --target-dir takes
+# precedence over the variable.
 cargo build \
   --manifest-path "$ROOT/Cargo.toml" \
   --locked \
@@ -39,7 +52,10 @@ cargo build \
   --release \
   --target "$TARGET" \
   --target-dir "$ROOT/target"
-test -f "$STATICLIB"
+if [[ ! -f "$STATICLIB" ]]; then
+  echo "error: cargo build finished but $STATICLIB does not exist" >&2
+  exit 1
+fi
 
 SWIFT_BINARY="$ROOT/macos/.build/arm64-apple-macosx/$CONFIGURATION/NoicanMenuBar"
 
@@ -59,10 +75,19 @@ swift build \
   --arch arm64 \
   -Xswiftc -warnings-as-errors
 
-test -x "$SWIFT_BINARY"
-# The executable must be younger than the library it was linked against;
-# a stale link is exactly the failure the rm above prevents.
-test "$SWIFT_BINARY" -nt "$STATICLIB"
+if [[ ! -x "$SWIFT_BINARY" ]]; then
+  echo "error: swift build finished but $SWIFT_BINARY does not exist" >&2
+  exit 1
+fi
+# The library must not be newer than the executable linked against it; a
+# stale link is exactly the failure the rm above prevents. Phrased as
+# "not older" rather than "newer" because bash 3.2's -nt compares whole
+# seconds, and a link that lands in the same second as cargo's write is
+# fine.
+if [[ "$STATICLIB" -nt "$SWIFT_BINARY" ]]; then
+  echo "error: $SWIFT_BINARY is older than $STATICLIB — SwiftPM did not relink" >&2
+  exit 1
+fi
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
