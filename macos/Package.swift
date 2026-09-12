@@ -30,6 +30,10 @@ let package = Package(
             ],
             path: "Sources/NoicanMenuBar",
             linkerSettings: [
+                // scripts/build-macos-app.sh reads this "-L" line back to
+                // decide where cargo must put libnoican_ffi.a, and fails
+                // the build if the path does not match its TARGET. Keep
+                // the flag and its path on one line in this shape.
                 .unsafeFlags([
                     "-L", "../target/aarch64-apple-darwin/release",
                 ]),
