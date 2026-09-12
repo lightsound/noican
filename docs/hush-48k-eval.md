@@ -8,7 +8,7 @@ ears on a blind listening set. Both come out of one CLI command:
 
 ```sh
 cargo run -p noican-cli --release -- eval \
-  --target  ~/Desktop/noican-eval/voice-builtin.wav \
+  --target  ~/Desktop/noican-eval/voice-builtin.m4a \
   --interferer ~/Desktop/noican-eval/interferer/*.flac \
   --models passthrough,hush,hush-48k,fastenhancer-b \
   --out-dir ~/Desktop/noican-eval/out-builtin
@@ -110,19 +110,16 @@ inputs that can benefit from a 48 kHz path; Bluetooth HFP captures at
 16 kHz and cannot exercise the high-band columns (the command warns
 when a recording has almost no energy above 8 kHz).
 
-Record with QuickTime Player (File → New Audio Recording, quality
-**Maximum**, the physical microphone selected — not "Noican
-Microphone"), or with `afrecord`:
-
-```sh
-# 70 s from the current default input, 48 kHz 16-bit mono WAV
-afrecord -t 70 -f WAVE -d LEI16@48000 -c 1 ~/Desktop/noican-eval/voice-builtin.wav
-```
-
-(`afrecord` is part of macOS; select the input device in System
-Settings → Sound before running it. If it rejects the format flags on
-your macOS version, record with QuickTime instead.) `.m4a` from
-QuickTime is accepted directly.
+Record with QuickTime Player: File → New Audio Recording, open the
+menu next to the record button, pick the **physical microphone** (not
+"Noican Microphone") and quality **Maximum** (Apple Lossless at the
+device rate, so nothing above 8 kHz is thrown away), record about
+70 s, then File → Save as `~/Desktop/noican-eval/voice-builtin.m4a`.
+The `.m4a` is accepted directly (ALAC and AAC are both decoded); no
+conversion to WAV is needed. macOS ships no command-line recorder
+(`afrecord` does not exist; `afplay`/`afconvert` are playback and
+conversion only), so if a scripted recording is wanted, `ffmpeg -f
+avfoundation` or `sox`/`rec` from Homebrew are the options.
 
 A **real third person** speaking in the same room for 60 s, recorded
 the same way while the owner stays silent, is the best interferer. It
