@@ -23,12 +23,34 @@ ENTITLEMENTS="$ROOT/macos/Resources/Noican.entitlements"
 # silently unless the signature carries it. Checked after signing.
 AUDIO_INPUT_ENTITLEMENT="com.apple.security.device.audio-input"
 
+# Package.swift links the staticlib from a fixed relative path
+# (../target/aarch64-apple-darwin/release), so the Rust build must land
+# there regardless of the caller's environment. A CARGO_TARGET_DIR in the
+# environment (some agent sandboxes and CI setups export one) would
+# otherwise send the fresh library elsewhere and the app would silently
+# link whatever old copy sits in the repository's target directory.
+STATICLIB_DIR="$ROOT/target/$TARGET/release"
+STATICLIB="$STATICLIB_DIR/libnoican_ffi.a"
+
 cargo build \
   --manifest-path "$ROOT/Cargo.toml" \
   --locked \
   --package noican-ffi \
   --release \
-  --target "$TARGET"
+  --target "$TARGET" \
+  --target-dir "$ROOT/target"
+test -f "$STATICLIB"
+
+SWIFT_BINARY="$ROOT/macos/.build/arm64-apple-macosx/$CONFIGURATION/NoicanMenuBar"
+
+# SwiftPM does not track the staticlib as an input of the link step: when
+# only the Rust side changed, `swift build` reports "Build complete" and
+# keeps the previously linked executable, so the app ships stale engine
+# code (observed 2026-09-12: a rebuilt library without a relink left the
+# model picker without the newly registered entry). Removing the linked
+# product forces the link; the object files stay cached, so this costs a
+# link (~1 s), not a rebuild.
+rm -f "$SWIFT_BINARY"
 
 # Warnings are errors, matching the Rust side of the quality gates.
 swift build \
@@ -37,8 +59,10 @@ swift build \
   --arch arm64 \
   -Xswiftc -warnings-as-errors
 
-SWIFT_BINARY="$ROOT/macos/.build/arm64-apple-macosx/$CONFIGURATION/NoicanMenuBar"
 test -x "$SWIFT_BINARY"
+# The executable must be younger than the library it was linked against;
+# a stale link is exactly the failure the rm above prevents.
+test "$SWIFT_BINARY" -nt "$STATICLIB"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
