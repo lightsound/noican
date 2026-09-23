@@ -108,7 +108,8 @@ public final class LicenseController {
         guard let lastRejection else {
             return true
         }
-        return now().timeIntervalSince(lastRejection) >= policy.revalidationInterval
+        let elapsed = now().timeIntervalSince(lastRejection)
+        return elapsed < 0 || elapsed >= policy.revalidationInterval
     }
 
     /// The "Verify now" button.
