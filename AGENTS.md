@@ -38,3 +38,19 @@ How this repository's owner works with agents. Portable: nothing here depends on
 - When the work is done, open the PR as ready for review, not as a draft, and address review-bot findings.
 - Do not create or update `README.md` unless the user explicitly asks.
 <!-- agent-rules:end -->
+
+# Noican
+
+Fully on-device noise-cancelling virtual microphone for macOS: a Rust audio engine (`crates/`), a SwiftUI menu-bar app (`macos/`), and the separate GPL-3.0 driver consumed as the `external/noican-driver` submodule.
+
+## Where things are documented
+
+This repository has no `README.md` by owner decision: it is developed only by agents, and `AGENTS.md` plus `docs/` are the documentation. Each fact has one owner; link to it instead of restating it.
+
+- Architecture, roadmap, and phase status: `docs/tech-research.md` (§12).
+- Quality gates: `.github/workflows/ci.yml` is the source of truth; the policy behind it is `docs/tech-research.md` §12 "Cross-cutting: quality gates".
+- Crate responsibilities: the `//!` docs at the top of each crate's `lib.rs` or `main.rs`; workspace members are listed in `Cargo.toml`.
+- CLI (`noican models` / `fetch` / `process`) and supported models: `docs/models.md`; `noican eval`: `docs/hush-48k-eval.md`; accepted input formats: `crates/noican-cli/src/audio.rs`.
+- macOS app build, prerequisites, and hardware acceptance: `docs/hardware-test/setup.md` and `docs/macos-hardware-test.md`; each run is recorded under `docs/acceptance/`.
+- Driver: `docs/driver.md`. License activation: `docs/licensing.md`. Release checklist: `docs/release.md`.
+- Testing on a Mac VM: `.agents/skills/testing-noican/SKILL.md`.
