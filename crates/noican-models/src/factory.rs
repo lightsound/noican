@@ -8,7 +8,6 @@ use crate::fetch::model_dir;
 use crate::manifest::{ALL_MODELS, ModelSpec};
 use crate::stages::dfn_tract::DfTractStage;
 use crate::stages::dpdfnet::DpdfnetStage;
-use crate::stages::fastenhancer::FastEnhancerStage;
 use crate::stages::hush_wideband::HushWidebandStage;
 use crate::stages::ulunas::UlunasStage;
 
@@ -87,11 +86,6 @@ pub fn create_stage(id: &str, models_dir: &Path) -> Result<Box<dyn Stage>, Stage
     let spec = ModelSpec::find(id)
         .ok_or_else(|| StageError::Unsupported(format!("unknown model id: {id}")))?;
     match spec.id {
-        "fastenhancer-t" | "fastenhancer-b" | "fastenhancer-s" | "fastenhancer-m"
-        | "fastenhancer-l" => {
-            let stage = FastEnhancerStage::new(spec.id, &file_path(models_dir, spec, 0))?;
-            Ok(Box::new(FramedStage::new(stage, MAX_BLOCK_LEN)?))
-        }
         "dpdfnet2" | "dpdfnet8" => {
             let stage = DpdfnetStage::new(spec.id, &file_path(models_dir, spec, 0))?;
             Ok(Box::new(FramedStage::new(stage, MAX_BLOCK_LEN)?))

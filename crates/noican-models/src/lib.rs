@@ -5,8 +5,8 @@
 //! [`noican_core::Stage`] by [`factory::create_stage`] so the engine and
 //! CLI can treat all models uniformly (docs/tech-research.md §12).
 //!
-//! Inference backends: ONNX Runtime (`ort`) for FastEnhancer, DPDFNet,
-//! and UL-UNAS; tract (via the upstream `deep_filter` crate) for the
+//! Inference backends: ONNX Runtime (`ort`) for DPDFNet and UL-UNAS;
+//! tract (via the upstream `deep_filter` crate) for the
 //! DeepFilterNet-architecture models (DeepFilterNet3, Hush), whose
 //! three-graph exports are only streamable through tract-pulse.
 

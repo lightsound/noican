@@ -1263,9 +1263,9 @@ const WORKER_CONSTRAINT_NS: u64 = 10_000_000;
 /// workgroup: joining alone conveys the deadline but does not lift the
 /// thread out of its default priority, so the scheduler may still park it on
 /// efficiency cores or preempt it for tens of milliseconds — observed on
-/// hardware (2026-09-02) as chronic 10 ms-budget misses for
-/// FastEnhancer-L (max 80.5 ms) and one-shot 40 ms stalls even on light
-/// models, on a machine where the same models measure well inside the
+/// hardware (2026-09-02) as chronic 10 ms-budget misses for the heaviest
+/// model then registered (max 80.5 ms) and one-shot 40 ms stalls even on
+/// light models, on a machine where the same models measure well inside the
 /// budget when scheduled.
 ///
 /// Returns whether the promotion succeeded; a failure is survivable

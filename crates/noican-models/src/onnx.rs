@@ -11,9 +11,10 @@ use ort::value::{DynValue, Tensor};
 /// single-threaded (frames are small; thread wakeups cost more than they
 /// save) with full graph optimization.
 ///
-/// Single-threading is a measured decision, not a guess — it holds even
-/// for the largest streaming model. A/B on 2026-09-02 (x86-64, 4 cores,
-/// `examples/block_bench.rs`, 6000 blocks of FastEnhancer-L):
+/// Single-threading is a measured decision, not a guess. A/B on
+/// 2026-09-02 (x86-64, 4 cores, `examples/block_bench.rs`, 6000 blocks
+/// of the heaviest ONNX stage then registered;
+/// docs/acceptance/2026-09-02-underrun-baseline.md):
 /// p50 4.16 ms / p95 6.23 ms with 1 intra-op thread, 6.30 / 9.53 ms with
 /// 2 threads, and 5.77 / 8.72 ms with 4 — synchronization overhead
 /// dominates these small per-frame ops, so extra threads make every
@@ -100,46 +101,6 @@ pub struct StateBank {
 }
 
 impl StateBank {
-    /// Builds slots for every session input whose name starts with
-    /// `input_prefix` followed by an index, pairing it with
-    /// `output_prefix` + the same index (e.g. `cache_in_0` → `cache_out_0`).
-    /// All states initialize to zeros.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StageError::Inference`] when a paired input has a dynamic
-    /// shape.
-    pub fn from_indexed_prefix(
-        session: &Session,
-        input_prefix: &str,
-        output_prefix: &str,
-    ) -> Result<Self, StageError> {
-        let mut indexed: Vec<(usize, String)> = session
-            .inputs()
-            .iter()
-            .filter_map(|i| {
-                i.name()
-                    .strip_prefix(input_prefix)
-                    .and_then(|suffix| suffix.parse::<usize>().ok())
-                    .map(|idx| (idx, i.name().to_owned()))
-            })
-            .collect();
-        indexed.sort_unstable_by_key(|(idx, _)| *idx);
-        let mut slots = Vec::with_capacity(indexed.len());
-        for (idx, name) in indexed {
-            let shape = input_shape(session, &name)?;
-            let len = shape.iter().product();
-            slots.push(StateSlot {
-                input_name: name,
-                output_name: format!("{output_prefix}{idx}"),
-                shape,
-                data: vec![0.0; len],
-                init: vec![0.0; len],
-            });
-        }
-        Ok(Self { slots })
-    }
-
     /// Builds slots from explicit `(input_name, output_name)` pairs, all
     /// initialized to zeros.
     ///
@@ -161,42 +122,6 @@ impl StateBank {
             });
         }
         Ok(Self { slots })
-    }
-
-    /// Overrides the initial (and current) value of the slot whose input is
-    /// `input_name`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StageError::Inference`] on unknown names or length
-    /// mismatch.
-    pub fn set_init(&mut self, input_name: &str, init: &[f32]) -> Result<(), StageError> {
-        let slot = self
-            .slots
-            .iter_mut()
-            .find(|s| s.input_name == input_name)
-            .ok_or_else(|| StageError::Inference(format!("unknown state slot: {input_name}")))?;
-        if init.len() != slot.init.len() {
-            return Err(StageError::BufferLen {
-                expected: slot.init.len(),
-                got: init.len(),
-            });
-        }
-        slot.init.copy_from_slice(init);
-        slot.data.copy_from_slice(init);
-        Ok(())
-    }
-
-    /// Number of slots.
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.slots.len()
-    }
-
-    /// True when the bank has no slots.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.slots.is_empty()
     }
 
     /// Appends the current state values as named tensors to `inputs`.

@@ -7,7 +7,6 @@ doc-valid-idents = [
     "DPDFNet8",
     "DeepFilterNet",
     "DeepFilterNet3",
-    "FastEnhancer",
     "BlackHole",
     "JoyCast",
     "AUHAL",

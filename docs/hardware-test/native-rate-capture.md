@@ -83,9 +83,10 @@ microphone list must show the same value.
 9. **Underrun diagnostics on the split path**: while recording, watch
    Console for the underrun line (see
    [output-underrun-diagnostics.md](output-underrun-diagnostics.md)).
-   With a light model (FastEnhancer-B) the split transport must log
-   zero underruns over 60+ s of continuous speech; record any line
-   verbatim.
+   With a control model (DeepFilterNet3 48k, the default, which has
+   zero underruns on the aggregate path in both dated records) the
+   split transport must log zero underruns over 60+ s of continuous
+   speech; record any line verbatim.
 10. **Profile flip (A2DP ↔ HFP)**: while running, force a rate
     renegotiation (e.g. play music to the headset before/while starting,
     or toggle the headset's own transparency/ANC features if they
@@ -141,7 +142,7 @@ Run the non-48 kHz microphone procedure above; the build passes when:
    allocation- and lock-free; resampling runs on the inference worker
    with buffers preallocated at start (no growth in the worker after
    the first second).
-9. **Split-path underruns**: with FastEnhancer-B the split transport
+9. **Split-path underruns**: with DeepFilterNet3 48k the split transport
    logs zero underruns over 60+ s of continuous speech (this also
    closes criterion 4 of the
    [output-underrun checklist](output-underrun-diagnostics.md)).

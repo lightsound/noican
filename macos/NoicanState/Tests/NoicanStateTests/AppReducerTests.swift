@@ -13,7 +13,7 @@ struct StartStopTests {
     func startClaim() {
         let (state, effects) = step(readyModel(), tap(.on))
         let attempt = StartAttempt(
-            modelID: "fastenhancer-b", inputUID: builtInMic.uid, monitor: false
+            modelID: "dfn3", inputUID: builtInMic.uid, monitor: false
         )
         #expect(state.mode == .on)
         #expect(state.machine == .busy(.starting(attempt), rendering: .off))
@@ -28,7 +28,7 @@ struct StartStopTests {
     func startSuccess() {
         let state = drive(readyModel(), [tap(.on), .startCompleted(error: nil)])
         #expect(state.machine == .settled(.running(
-            EngineSession(modelID: "fastenhancer-b", inputUID: builtInMic.uid)
+            EngineSession(modelID: "dfn3", inputUID: builtInMic.uid)
         )))
         #expect(state.statusText == "Running")
         #expect(state.showsMonitoring)
@@ -92,7 +92,7 @@ struct StartStopTests {
     func busySerialization() {
         let busy = drive(readyModel(), [tap(.on)])
         for event in [
-            tap(.off), tap(.preview), .modelSelected("dfn3"),
+            tap(.off), tap(.preview), .modelSelected("dpdfnet2"),
             .microphoneSelected(usbMic.uid), .monitorTripped, .engineFaulted
         ] as [AppEvent] {
             let (state, effects) = step(busy, event)
@@ -112,7 +112,7 @@ struct RetryTests {
         let (retry, effects) = step(failed, tap(.on))
         #expect(retry.isBusy)
         #expect(effects.contains(.startEngine(
-            StartAttempt(modelID: "fastenhancer-b", inputUID: builtInMic.uid, monitor: false)
+            StartAttempt(modelID: "dfn3", inputUID: builtInMic.uid, monitor: false)
         )))
         // Settled-state rendering: the old failure stays visible while
         // the retry is in flight and clears only on settled success.
@@ -139,7 +139,7 @@ struct RetryTests {
         let (state, effects) = step(running, tap(.preview, isEngineRunning: false))
         #expect(effects.first == .stopEngine)
         #expect(effects.contains(.startEngine(
-            StartAttempt(modelID: "fastenhancer-b", inputUID: builtInMic.uid, monitor: true)
+            StartAttempt(modelID: "dfn3", inputUID: builtInMic.uid, monitor: true)
         )))
         #expect(state.isBusy)
     }
@@ -153,7 +153,7 @@ struct PreviewTests {
     func previewStart() {
         let (claimed, claimEffects) = step(readyModel(), tap(.preview))
         #expect(claimEffects.contains(.startEngine(
-            StartAttempt(modelID: "fastenhancer-b", inputUID: builtInMic.uid, monitor: true)
+            StartAttempt(modelID: "dfn3", inputUID: builtInMic.uid, monitor: true)
         )))
         let (armed, armEffects) = step(claimed, .startCompleted(error: nil))
         #expect(armed.isBusy, "the monitor half keeps the machine busy")
@@ -320,14 +320,14 @@ struct MicrophoneTests {
     func liveSwitchCarriesRevert() {
         let (state, effects) = step(runningModel(), .microphoneSelected(usbMic.uid))
         let attempt = StartAttempt(
-            modelID: "fastenhancer-b",
+            modelID: "dfn3",
             inputUID: usbMic.uid,
             monitor: false,
             revertInputUID: builtInMic.uid
         )
         #expect(effects == [.stopEngine, .startEngine(attempt)])
         #expect(state.machine == .busy(.starting(attempt), rendering: .running(
-            EngineSession(modelID: "fastenhancer-b", inputUID: builtInMic.uid)
+            EngineSession(modelID: "dfn3", inputUID: builtInMic.uid)
         )))
     }
 
@@ -337,7 +337,7 @@ struct MicrophoneTests {
         let (fallback, effects) = step(switching, .startCompleted(error: "usb start failed"))
         // Explicit failure-event → restart-effect transition.
         let fallbackAttempt = StartAttempt(
-            modelID: "fastenhancer-b", inputUID: builtInMic.uid, monitor: false
+            modelID: "dfn3", inputUID: builtInMic.uid, monitor: false
         )
         #expect(effects == [.stopEngine, .startEngine(fallbackAttempt)])
         #expect(fallback.selectedInputUID == builtInMic.uid, "the checkmark returns")
@@ -396,7 +396,7 @@ struct MicrophoneTests {
         let failed = drive(readyModel(), [tap(.on), .startCompleted(error: "mic exploded")])
         let (state, effects) = step(failed, .microphoneSelected(usbMic.uid))
         #expect(effects.contains(.startEngine(
-            StartAttempt(modelID: "fastenhancer-b", inputUID: usbMic.uid, monitor: false)
+            StartAttempt(modelID: "dfn3", inputUID: usbMic.uid, monitor: false)
         )))
         #expect(state.mode == .on)
         let recovered = drive(state, [.startCompleted(error: nil)])
@@ -419,22 +419,22 @@ struct MicrophoneTests {
 struct ModelTests {
     @Test("A live pick switches behind the busy machine and settles into Running")
     func liveSwitch() {
-        let (state, effects) = step(runningModel(), .modelSelected("dfn3"))
-        #expect(effects == [.switchModel(to: "dfn3")])
+        let (state, effects) = step(runningModel(), .modelSelected("dpdfnet2"))
+        #expect(effects == [.switchModel(to: "dpdfnet2")])
         #expect(state.isBusy)
         #expect(state.statusText == "Running", "meters and status hold the settled snapshot")
         let settled = drive(state, [.modelSwitchCompleted(error: nil)])
-        #expect(settled.liveRunningSession?.modelID == "dfn3")
+        #expect(settled.liveRunningSession?.modelID == "dpdfnet2")
     }
 
     @Test("A failed switch reverts the picker and keeps the previous model running")
     func failedSwitchReverts() {
         let running = runningModel()
         let failed = drive(running, [
-            .modelSelected("dfn3"),
+            .modelSelected("dpdfnet2"),
             .modelSwitchCompleted(error: "weights download failed")
         ])
-        #expect(failed.selectedModelID == "fastenhancer-b", "the picker never lies")
+        #expect(failed.selectedModelID == "dfn3", "the picker never lies")
         #expect(failed.messages.modelError == "weights download failed")
         #expect(failed.statusText == "Running", "not an engine failure")
         #expect(failed.machine == running.machine)
@@ -444,16 +444,16 @@ struct ModelTests {
     func offPick() {
         var failed = readyModel()
         failed.machine = .settled(.failed("old failure", session: nil))
-        let (state, effects) = step(failed, .modelSelected("dfn3"))
+        let (state, effects) = step(failed, .modelSelected("dpdfnet2"))
         #expect(state.machine == .settled(.off))
-        #expect(state.selectedModelID == "dfn3")
+        #expect(state.selectedModelID == "dpdfnet2")
         #expect(effects.isEmpty)
     }
 
     @Test("Teardown clears a model-switch message (it describes the torn-down engine)")
     func teardownClearsModelError() {
         let withModelError = drive(runningModel(), [
-            .modelSelected("dfn3"),
+            .modelSelected("dpdfnet2"),
             .modelSwitchCompleted(error: "weights download failed")
         ])
         let stopped = drive(withModelError, [tap(.off, isEngineRunning: true)])
@@ -510,7 +510,7 @@ struct EnvironmentTests {
     func faultKeepsSession() {
         let (state, effects) = step(runningModel(), .engineFaulted)
         #expect(effects.isEmpty, "a fault does not tear the transport down")
-        let session = EngineSession(modelID: "fastenhancer-b", inputUID: builtInMic.uid)
+        let session = EngineSession(modelID: "dfn3", inputUID: builtInMic.uid)
         #expect(state.machine == .settled(
             .failed("Audio fault — turn noise cancellation off and on", session: session)
         ))

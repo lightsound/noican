@@ -15,9 +15,9 @@ struct PreferenceRestorationTests {
     func restoreApplies() {
         let (state, effects) = step(
             readyModel(),
-            .preferencesRestored(modelID: "dfn3", inputUID: usbMic.uid, intensity: 0.6)
+            .preferencesRestored(modelID: "dpdfnet2", inputUID: usbMic.uid, intensity: 0.6)
         )
-        #expect(state.selectedModelID == "dfn3")
+        #expect(state.selectedModelID == "dpdfnet2")
         #expect(state.selectedInputUID == usbMic.uid)
         #expect(state.intensity == 0.6)
         #expect(effects == [.setIntensity(0.6)], "the engine atomic is seeded")
@@ -31,7 +31,7 @@ struct PreferenceRestorationTests {
             readyModel(),
             .preferencesRestored(modelID: nil, inputUID: "gone-device", intensity: nil)
         )
-        #expect(state.selectedModelID == "fastenhancer-b", "nil model keeps the default")
+        #expect(state.selectedModelID == "dfn3", "nil model keeps the default")
         #expect(state.selectedInputUID == builtInMic.uid, "an absent microphone keeps the default")
         #expect(state.intensity == 1.0)
         #expect(effects.isEmpty)
@@ -42,7 +42,7 @@ struct PreferenceRestorationTests {
         let running = runningModel()
         let (state, effects) = step(
             running,
-            .preferencesRestored(modelID: "dfn3", inputUID: usbMic.uid, intensity: 0.2)
+            .preferencesRestored(modelID: "dpdfnet2", inputUID: usbMic.uid, intensity: 0.2)
         )
         #expect(state == running, "a late restore must not disturb a session")
         #expect(effects.isEmpty)
