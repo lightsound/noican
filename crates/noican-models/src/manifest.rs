@@ -67,22 +67,6 @@ impl ModelSpec {
 /// All models known to this build.
 pub static ALL_MODELS: &[ModelSpec] = &[
     ModelSpec {
-        id: "fastenhancer-b",
-        display_name: "FastEnhancer-B 48k",
-        family: ModelFamily::Denoise,
-        sample_rate: 48_000,
-        license: "MIT",
-        // The 48 kHz release's training data forbids commercial use
-        // (docs/tech-research.md §11); registered only while it is the
-        // app's default (`AppState.defaultModelID` in macos/).
-        files: &[FileSpec {
-            name: "fastenhancer_b.onnx",
-            url: "https://github.com/aask1357/fastenhancer/releases/download/onnx-48khz-v1/fastenhancer_b.onnx",
-            sha256: Some("70e23bba3d41e80d30ebc5eba39d9df64f0e0315f31c772022bb17576c4d96bf"),
-        }],
-        depends_on: &[],
-    },
-    ModelSpec {
         id: "dpdfnet2",
         display_name: "DPDFNet2 48k HR",
         family: ModelFamily::Denoise,

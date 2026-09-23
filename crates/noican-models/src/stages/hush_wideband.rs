@@ -74,11 +74,11 @@
 //! upper band; mapping the ERB mask through `erb_fb` per bin; running the
 //! tract graphs at 48 kHz) produced nothing better than C′ and stopped.
 //!
-//! **High-band source** (dry input vs. a 48 kHz denoiser such as
-//! FastEnhancer-B): the dry input adds no latency and no second weight
-//! file; a denoiser in the upper path would push the stage's latency to
-//! its own 1022 samples plus alignment (≈ 31 ms total) and roughly
-//! double the block cost. The dry route is chosen; if hiss in the upper
+//! **High-band source** (dry input vs. a light 48 kHz denoiser): the dry
+//! input adds no latency and no second weight file; a denoiser in the
+//! upper path would push the stage's latency to its own delay plus
+//! alignment (≈ 31 ms total for a ~21 ms denoiser) and roughly double
+//! the block cost. The dry route is chosen; if hiss in the upper
 //! band proves audible in listening, a denoised upper path is the
 //! documented follow-up.
 //!

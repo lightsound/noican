@@ -13,7 +13,8 @@ use ort::value::{DynValue, Tensor};
 ///
 /// Single-threading is a measured decision, not a guess. A/B on
 /// 2026-09-02 (x86-64, 4 cores, `examples/block_bench.rs`, 6000 blocks
-/// of FastEnhancer-L, no longer in the registry):
+/// of the heaviest ONNX stage then registered;
+/// docs/acceptance/2026-09-02-underrun-baseline.md):
 /// p50 4.16 ms / p95 6.23 ms with 1 intra-op thread, 6.30 / 9.53 ms with
 /// 2 threads, and 5.77 / 8.72 ms with 4 — synchronization overhead
 /// dominates these small per-frame ops, so extra threads make every

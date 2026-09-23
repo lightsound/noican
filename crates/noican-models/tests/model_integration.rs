@@ -107,7 +107,6 @@ macro_rules! model_test {
     };
 }
 
-model_test!(fastenhancer_b_runs, "fastenhancer-b");
 model_test!(dpdfnet2_runs, "dpdfnet2");
 model_test!(dpdfnet8_runs, "dpdfnet8");
 model_test!(ulunas_runs, "ul-unas");

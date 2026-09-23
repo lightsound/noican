@@ -9,9 +9,9 @@
 //!
 //! Basis, so the numbers stay honest:
 //! - `responsiveness` is derived from the *measured* engine-reported
-//!   algorithmic latency (`Stage::latency_samples`, 2026-08-27:
-//!   FastEnhancer 21.3 ms, Hush 22.5 ms, UL-UNAS 34.5 ms, DFN3 40 ms,
-//!   DPDFNet 60 ms): 5 ≤ 25 ms, 4 ≤ 35 ms, 3 ≤ 45 ms, 2 ≤ 65 ms.
+//!   algorithmic latency (`Stage::latency_samples`, 2026-08-27: Hush
+//!   22.5 ms, UL-UNAS 34.5 ms, DFN3 40 ms, DPDFNet 60 ms): 5 ≤ 25 ms,
+//!   4 ≤ 35 ms, 3 ≤ 45 ms, 2 ≤ 65 ms.
 //! - `efficiency` is derived from parameter count (weight-file size):
 //!   5 ≤ 0.25 M, 4 ≤ 1.5 M, 3 ≤ 2.5 M, 2 above.
 //! - `voice_quality` is the output bandwidth: 48 kHz native scores 4
@@ -80,14 +80,6 @@ static PROFILES: &[(&str, ModelTraits)] = &[
             [0, 5, 5, 5],
             "no cleanup, for comparison",
             "The unprocessed microphone: zero delay, zero cost, zero cleanup.",
-        ),
-    ),
-    (
-        "fastenhancer-b",
-        ModelTraits::rated(
-            [3, 4, 5, 5],
-            "balanced default",
-            "48 kHz native, ~21 ms delay, ~0.1M parameters.",
         ),
     ),
     (
@@ -181,7 +173,7 @@ mod tests {
         for id in ["ul-unas", "hush"] {
             assert_eq!(ModelTraits::for_id(id).voice_quality, 2, "{id}");
         }
-        assert_eq!(ModelTraits::for_id("fastenhancer-b").voice_quality, 4);
+        assert_eq!(ModelTraits::for_id("dfn3").voice_quality, 4);
         // Full-band output around the 16 kHz core scores as 48 kHz.
         assert_eq!(ModelTraits::for_id("hush-48k").voice_quality, 4);
     }
