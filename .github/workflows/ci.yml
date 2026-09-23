@@ -85,9 +85,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The BlackHole submodule is only needed to build the virtual
+          # The driver submodule (lightsound/noican-driver) and its nested
+          # BlackHole submodule are only needed to build the virtual
           # driver, which only the macOS job does.
-          submodules: true
+          submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.98.0
@@ -116,7 +117,15 @@ jobs:
         # Compile check only: coreaudiod loads Developer-ID-signed drivers,
         # so the installable artifact is built on a machine with the
         # identity (NOICAN_CODESIGN_IDENTITY), not in CI.
-        run: bash scripts/build-driver.sh
+        run: bash external/noican-driver/scripts/build-driver.sh
+      - name: Check the driver's device UID against the app's matchers
+        # The UID base is set in lightsound/noican-driver; the matchers
+        # that must accept it (AudioDeviceCatalog.isNoicanVirtualDevice,
+        # is_noican_loopback_uid) live here and require the
+        # "com.lightsound.noican." prefix with a segment after the dot.
+        run: >
+          strings external/noican-driver/dist/Noican.driver/Contents/MacOS/Noican
+          | grep -E '^com\.lightsound\.noican\..+_UID$'
       - uses: actions/upload-artifact@v4
         with:
           name: noican-macos-arm64
@@ -124,4 +133,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: noican-driver-universal-adhoc
-          path: dist/Noican.driver
+          path: external/noican-driver/dist/Noican.driver

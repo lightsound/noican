@@ -23,7 +23,7 @@ noican is a Rust workspace (5 crates) + SwiftPM menu-bar app. Most runtime paths
 
 ## What is NOT verifiable on a VM with zero audio devices
 
-`system_profiler SPAudioDataType` shows an empty Devices list on typical VMs. Then: engine start → "Select an input device"; the aggregate/split transports, `input_overruns` counter, monitor/preview, and DryWetMixer blend all need a live transport + the BlackHole/Noican virtual device (external/blackhole submodule, driver install needs sudo) — treat as untestable, verify graceful degradation instead.
+`system_profiler SPAudioDataType` shows an empty Devices list on typical VMs. Then: engine start → "Select an input device"; the aggregate/split transports, `input_overruns` counter, monitor/preview, and DryWetMixer blend all need a live transport + the BlackHole/Noican virtual device (external/noican-driver submodule, driver install needs sudo) — treat as untestable, verify graceful degradation instead.
 
 ## GUI testing notes
 

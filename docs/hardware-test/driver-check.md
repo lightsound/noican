@@ -13,14 +13,14 @@ Phase 1 must cover the Noican driver.
 
    ```bash
    NOICAN_CODESIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
-     bash scripts/build-driver.sh
+     bash external/noican-driver/scripts/build-driver.sh
    ```
 
 2. Install it (copies to `/Library/Audio/Plug-Ins/HAL/Noican.driver` and
    restarts the audio daemon):
 
    ```bash
-   bash scripts/install-driver.sh
+   bash external/noican-driver/scripts/install-driver.sh
    ```
 
    If restarting manually: on macOS 26, SIP rejects
@@ -29,7 +29,7 @@ Phase 1 must cover the Noican driver.
 3. Open Audio MIDI Setup and confirm **Noican Microphone** appears as a
    **one-channel** 48 kHz device (manufacturer `lightsound`). A
    two-channel device means the 0.1.0 driver is still loaded — check the
-   installed bundle's version (docs/driver.md, "History") and that
+   installed bundle's version (docs/driver.md) and that
    `coreaudiod` was restarted. Quit and relaunch the app after the
    driver swap and confirm the PID changed (see "Build" in
    [setup.md](setup.md)).
@@ -60,10 +60,10 @@ Phase 1 must cover the Noican driver.
    the 0.1.0 (2-channel) build — or use stock BlackHole 2ch — and start
    the app: it must run, with dual-mono recordings as before. Return to
    the current driver afterwards.
-8. Uninstall check (after the functional tests): `bash
-   scripts/uninstall-driver.sh`, then confirm no Noican device remains in
-   Audio MIDI Setup and `/Library/Audio/Plug-Ins/HAL/Noican.driver` is
-   gone.
+8. Uninstall check (after the functional tests):
+   `bash external/noican-driver/scripts/uninstall-driver.sh`, then confirm
+   no Noican device remains in Audio MIDI Setup and
+   `/Library/Audio/Plug-Ins/HAL/Noican.driver` is gone.
 
 Do not disable SIP or use an ad-hoc driver signature for the acceptance test.
 

@@ -12,7 +12,7 @@ Aggregate Device, routed into a loopback device) and a SwiftUI menu-bar app.
 Phase 1's driver half is done: the Noican-branded virtual device
 ([docs/driver.md](docs/driver.md)) is a one-channel 48 kHz
 `Noican.driver` 0.2.0 (UID `com.lightsound.noican.mic_UID`) built from
-this repository, Developer-ID-signed, and preferred over stock BlackHole
+the driver submodule, Developer-ID-signed, and preferred over stock BlackHole
 2ch when both are installed; the app is signed with the audio-input
 entitlement so the Developer ID build captures the microphone under the
 hardened runtime. Both are recorded on Apple hardware
@@ -78,24 +78,26 @@ build details and the on-hardware acceptance checklist.
 
 ### Noican virtual driver (BlackHole fork)
 
-The Noican-branded loopback device ("Noican Microphone", 1 ch / 48 kHz) is
-built from the `external/blackhole` submodule without patching upstream —
-all customization is injected at build time ([docs/driver.md](docs/driver.md)):
+The Noican-branded loopback device ("Noican Microphone", 1 ch / 48 kHz)
+lives in its own public GPL-3.0 repository,
+[lightsound/noican-driver](https://github.com/lightsound/noican-driver),
+consumed here as the `external/noican-driver` submodule
+([docs/driver.md](docs/driver.md)):
 
 ```sh
-git submodule update --init                       # once, after cloning
+git submodule update --init --recursive           # once, after cloning
 
-bash scripts/build-driver.sh                      # ad-hoc (compile check)
+bash external/noican-driver/scripts/build-driver.sh      # ad-hoc (compile check)
 NOICAN_CODESIGN_IDENTITY="Developer ID Application: ... (TEAMID)" \
-  bash scripts/build-driver.sh                    # installable build
+  bash external/noican-driver/scripts/build-driver.sh    # installable build
 
-bash scripts/install-driver.sh                    # sudo; restarts coreaudiod
-bash scripts/uninstall-driver.sh                  # sudo; complete removal
+bash external/noican-driver/scripts/install-driver.sh    # sudo; restarts coreaudiod
+bash external/noican-driver/scripts/uninstall-driver.sh  # sudo; complete removal
 ```
 
 macOS 15+ `coreaudiod` only loads Developer-ID-signed drivers. The driver
-is GPL-3.0 (see `LICENSE.driver`) and stays a separate program — its
-sources are never linked into the app.
+is GPL-3.0 (see the driver repository's `LICENSE`) and stays a separate
+program — its sources are never linked into the app.
 
 ### Quality gates
 
@@ -121,9 +123,10 @@ SwiftLint in strict mode and `swift build -Xswiftc -warnings-as-errors`.
 - `crates/noican-ffi` — C ABI consumed by the Swift control plane
   (engine lifecycle + registry-driven model catalog).
 - `macos/` — SwiftPM package for the `MenuBarExtra` control-plane app.
-- `external/blackhole` — upstream BlackHole submodule (GPL-3.0, pinned to
-  a release tag); built into the separate `Noican.driver` by
-  `scripts/build-driver.sh` (docs/driver.md).
+- `external/noican-driver` — the driver submodule
+  ([lightsound/noican-driver](https://github.com/lightsound/noican-driver),
+  GPL-3.0, with BlackHole pinned to a release tag inside it); builds the
+  separate `Noican.driver` (docs/driver.md).
 
 ## Scope
 

@@ -39,19 +39,22 @@ models, adapted code, and vendored assets.
 
 ## Virtual audio driver (separate GPL-3.0 program)
 
-- BlackHole (https://github.com/ExistentialAudio/BlackHole, GPL-3.0,
-  (c) Existential Audio Inc.) is vendored as the `external/blackhole`
-  git submodule, pinned to the upstream release tag `v0.7.1`, and built
-  unmodified into the separate `Noican.driver` bundle by
-  `scripts/build-driver.sh` (build-time preprocessor customization only —
+- The driver's complete corresponding source is the public GPL-3.0
+  repository https://github.com/lightsound/noican-driver, consumed here
+  as the `external/noican-driver` git submodule. It carries BlackHole
+  (https://github.com/ExistentialAudio/BlackHole, GPL-3.0,
+  (c) Existential Audio Inc.) as a nested submodule pinned to the
+  upstream release tag `v0.7.1`, built unmodified into the separate
+  `Noican.driver` bundle (build-time preprocessor customization only —
   the joycast.driver pattern; see docs/driver.md). The driver artifact is
-  GPL-3.0; `LICENSE.driver` carries the notice, the source-availability
-  statement, and the full license text, and is embedded in the bundle.
+  GPL-3.0; the driver repository's `LICENSE` carries the notice, the
+  source-availability statement, and the full license text, and is
+  embedded in the bundle.
 - The BlackHole name, logo, and branding are trademarks of Existential
   Audio Inc. and are not used by the Noican driver build.
 - The build/install/uninstall script structure follows
   https://github.com/joymacstudio/joycast.driver (GPL-3.0); the scripts
-  here are original to this repository.
+  in the driver repository are original to this project.
 
 ## Adapted code (macOS transport and control plane)
 
@@ -65,7 +68,7 @@ models, adapted code, and vendored assets.
 - GPL-licensed code (BlackHole, joycast.driver) is used **only** in the
   separate virtual-device driver and never linked into this application
   (docs/tech-research.md §11, docs/driver.md). Never add
-  `external/blackhole` sources or objects to the app or crate targets.
+  `external/noican-driver` sources or objects to the app or crate targets.
 - License status of all model weights must be re-verified at ship time if
   the app is ever sold or distributed (docs/tech-research.md §11).
   The weight licenses above do not settle commercial use on their own:
