@@ -15,6 +15,9 @@ let package = Package(
         // package so its tests run without the Rust staticlib this
         // executable links; see macos/NoicanState/Package.swift.
         .package(path: "NoicanState"),
+        // License activation against Polar (or a replacement backend);
+        // standalone for the same reason as NoicanState.
+        .package(path: "NoicanLicensing"),
     ],
     targets: [
         .target(
@@ -27,6 +30,7 @@ let package = Package(
             dependencies: [
                 "CNoican",
                 .product(name: "NoicanState", package: "NoicanState"),
+                .product(name: "NoicanLicensing", package: "NoicanLicensing"),
             ],
             path: "Sources/NoicanMenuBar",
             linkerSettings: [

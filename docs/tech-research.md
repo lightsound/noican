@@ -443,6 +443,7 @@ Status of the two direct competitors as checked on 2026-09-11 (see also the §6.
 | Core language | Rust (audio engine, inference, gating) | — |
 | UI | SwiftUI `MenuBarExtra` from the start (on/off, input device picker, status; strength/meters/mode switch and `SMAppService` login item added incrementally). Rust engine embedded as a static library behind a C ABI, or run as a separate daemon process with a small IPC control plane | CLI + config + launchd (if the UI ever blocks progress) |
 | Enhancement extras | vDSP/fundsp EQ + compressor (later) | Sidon offline cleanup; Stream.FM (watch) |
+| License activation | Polar license keys via the public customer-portal API ([licensing.md](licensing.md)) | Any `LicenseBackend` (Keygen, a small activation server for Paddle) — one app update, no key re-entry |
 
 ### Licensing notes for commercial distribution
 
@@ -680,3 +681,8 @@ Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level 
 - Krasp: https://github.com/pilshchikov/krasp
 - NoNoise-Mac: https://github.com/ivalsaraj/NoNoise-Mac / MetalVoice: https://github.com/Ghostkwebb/MetalVoice
 - HushMic (DPDFNet 48 kHz, `hushmic-denoiser` crate): https://github.com/Fovty/HushMic
+
+### Licensing / distribution
+- Polar license keys: https://polar.sh/docs/features/benefits/license-keys / customer-portal license-key API: https://polar.sh/docs/api-reference/2026-10/customer_portal/validate-license-key
+- Keygen: https://keygen.sh/
+- Paddle Billing: https://developer.paddle.com/

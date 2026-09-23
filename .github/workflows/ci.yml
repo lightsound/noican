@@ -105,6 +105,8 @@ jobs:
         # NoicanState is a standalone pure-Swift package, so its tests
         # need neither the Rust staticlib nor an app build.
         run: swift test --package-path macos/NoicanState
+      - name: Test the license logic (mock backend, no network)
+        run: swift test --package-path macos/NoicanLicensing
       - name: Lint the workspace on the Apple Silicon target
         run: >
           cargo clippy --workspace --all-targets --all-features --locked

@@ -63,6 +63,8 @@ public enum AppReducer {
             return virtualOutputLevelObserved(state, level)
         case let .deviceQueryFailed(message):
             return deviceQueryFailed(state, message)
+        case let .processingAllowanceChanged(isAllowed):
+            return processingAllowanceChanged(state, isAllowed)
         }
     }
 }
@@ -95,6 +97,7 @@ extension AppReducer {
             state.messages.previewError = nil
         }
         state.messages.previewUnavailableReason = nil
+        guard !refusesWithoutLicense(&state, newMode) else { return (state, []) }
         if newMode == .preview, let reason = monitorTargetError {
             // Refuse in place and explain: neither the mode nor the
             // engine changes, and `monitorTargetErrorChanged` clears the
@@ -637,6 +640,7 @@ extension AppReducer {
         revertInputUID: String?
     ) -> (state: AppModel, effects: [AppEffect]) {
         var state = state
+        guard !refusesStartWithoutLicense(&state) else { return (state, []) }
         // The teardown clears any live session; a model-switch message
         // would describe the torn-down engine, so it clears with it, and
         // the virtual-output level reading is re-taken once the new

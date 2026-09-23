@@ -4,6 +4,8 @@ included:
   - macos/Sources/NoicanMenuBar
   - macos/NoicanState/Sources/NoicanState
   - macos/NoicanState/Tests/NoicanStateTests
+  - macos/NoicanLicensing/Sources/NoicanLicensing
+  - macos/NoicanLicensing/Tests/NoicanLicensingTests
 
 # The reducer's event dispatch is one exhaustive switch by design (every
 # event visibly routed in one place); counting its cases as complexity
