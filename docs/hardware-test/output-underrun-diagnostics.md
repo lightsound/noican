@@ -14,10 +14,9 @@ ramp and benign partial shortfalls from 480-sample block quantization
 are excluded by design) — and the worker's per-block processing
 times (total blocks / blocks over 10 ms / maximum). Counters reset on
 engine start and on every model switch, so readings are attributable
-to the active model. x86-64 measurements already show FastEnhancer-L
-over budget on ~7% of blocks (docs/tech-research.md §5.2 suggests
-DeepFilterNet3 is also near the budget on Apple Silicon); this
-procedure produces the on-device evidence.
+to the active model. docs/tech-research.md §5.2 suggests
+DeepFilterNet3 is near the budget on Apple Silicon; this procedure
+produces the on-device evidence.
 
 The counters surface in the unified log — no popover UI by design
 (they are a diagnosis tool, not a user control). In Console.app,
@@ -48,8 +47,8 @@ on light models).
    `worker realtime scheduling true` and
    `Rosetta-translated process false`.
 2. For each of `FastEnhancer-B 48k` and `DPDFNet2 48k HR` (light
-   controls), then `DPDFNet8 48k HR`, `DeepFilterNet3 48k`, and
-   `FastEnhancer-L 48k` (suspects): select the model, speak
+   controls), then `DPDFNet8 48k HR` and `DeepFilterNet3 48k`
+   (suspects): select the model, speak
    continuously for at least 60 seconds, and note every diagnostic
    line (or its absence).
 3. Pass criteria for the controls: **no underrun line at all** for
@@ -82,8 +81,8 @@ when:
 1. **No false positives**: light models (FastEnhancer-B and friends)
    log zero underruns over 60+ seconds of continuous speech on the
    aggregate path.
-2. **Counts recorded**: FastEnhancer-L, DeepFilterNet3, DPDFNet8 (and
-   any other suspect) have their underrun and block-time numbers
+2. **Counts recorded**: DeepFilterNet3, DPDFNet8 (and any other
+   suspect) have their underrun and block-time numbers
    recorded verbatim in the result record.
 3. **Counts match ears**: models that log underruns are exactly the
    models whose virtual-microphone recordings stutter.

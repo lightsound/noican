@@ -440,7 +440,15 @@ Status of the two direct competitors as checked on 2026-09-11 (see also the §6.
 Personal (non-distributed) use carries no obligations. If the app is ever **sold or distributed**, the stack splits as follows (not legal advice; re-verify licenses at ship time):
 
 **Permissive — safe for closed-source commercial use** (attribution/notice files required):
-FastEnhancer (MIT), DPDFNet code + models (Apache-2.0), Hush (Apache-2.0), DeepFilterNet (MIT/Apache-2.0 dual), sherpa-onnx (Apache-2.0), ONNX Runtime (MIT), libASPL (MIT), Sidon (MIT), speech-swift (MIT), JointAEC-NS (MIT), Krasp / NoNoise-Mac / MetalVoice (MIT), webrtc-audio-processing (BSD-3).
+FastEnhancer code (MIT), DPDFNet code (Apache-2.0), Hush code (Apache-2.0), DeepFilterNet code + DFN3 weights (MIT/Apache-2.0 dual), sherpa-onnx (Apache-2.0), ONNX Runtime (MIT), libASPL (MIT), Sidon (MIT), speech-swift (MIT), JointAEC-NS (MIT), Krasp / NoNoise-Mac / MetalVoice (MIT), webrtc-audio-processing (BSD-3).
+
+**Model weights: the training data decides** (audit 2026-09-23). Every registered model's weights carry MIT or Apache-2.0, but a weight license cannot grant rights the trainer did not have. DFN3 is trained on DNS Challenge 4, whose component corpora are all commercially licensed (DNS-Challenge README, "Dataset licenses"), so it is clear. The others:
+- FastEnhancer 48 kHz release (`onnx-48khz-v1`): its training noise includes **TUT Urban Acoustic Scenes 2018**, licensed "only for experimental and non-commercial purposes", with commercial use defined to include "selling or distributing the results or content achieved by use of the Work"; it also includes WHAM! noise (CC BY-NC 4.0). Not usable commercially: T/S/M/L were removed on 2026-09-23, and `fastenhancer-b` stays only as the current default until a replacement is chosen. The AI-Hub (Korea) speech in the same release is not the blocker: the AI-Hub FAQ allows trained models to be sold and distributed, provided the datasets and AI-Hub are credited.
+- Hush (`hush`, `hush-48k`): noise includes ESC-50 (CC BY-NC 3.0) and unspecified FreeSound clips. The DNS noise it lists is fine: `DATASETS.md` calls it a "Microsoft Research License", but the DNS terms are the permissive per-corpus licenses. Unclear until Weya AI confirms.
+- DPDFNet2/8: noise includes FSD50K, which contains CC BY-NC clips (about 12 %). Unclear until Ceva confirms that those clips were excluded.
+- UL-UNAS: the released checkpoint is `model_trained_on_dns3`, and the paper adds the DiDiSpeech Mandarin corpus, distributed through DiDi's academic-research program. Unclear until the authors confirm the checkpoint's data.
+
+Generic CC BY-NC training data counts as *unclear*, not *prohibited*: the NC restriction binds only uses that need copyright permission, and whether distributing a trained model needs it is unsettled (Creative Commons, "Using CC-licensed Works for AI Training", 2025). A dataset license that names distributing results or trained models as prohibited, as the TUT license does, counts as prohibited.
 
 **Copyleft but workable — obligations attach to the driver only**:
 The BlackHole-fork driver (GPL-3.0) is a separate program loaded by `coreaudiod`, not linked into the app, so the GPL does not extend to the app itself. Distribution requires publishing the driver source under GPL-3.0 — exactly what JoyCast does with [joycast.driver](https://github.com/joymacstudio/joycast.driver), which is the precedent for this model. Note that the GPL explicitly permits **selling** ("You may charge any price or no price for each copy"); the only obligation is source access for the GPL-covered component. Since publishing source is acceptable for this project, no paid license is needed. Alternatives if source publication ever becomes undesirable: Existential Audio offers commercial BlackHole licenses (no public pricing; individual negotiation via devinroth@existential.audio). Separately from the GPL, the **BlackHole name, logo, and branding are Existential Audio trademarks** (all rights reserved) — the fork must ship under our own name, which the joycast.driver build-time renaming already handles.
@@ -449,7 +457,7 @@ The BlackHole-fork driver (GPL-3.0) is a separate program loaded by `coreaudiod`
 NNA Virtual Audio (free *for personal use*; commercial use requires a vendor license with no public pricing — contact@neutralandnaturalaudio.com. Dropped from consideration for any sold version), Stream.FM (AGPL-3.0 — would force open-sourcing the entire app).
 
 **Verify before shipping** (license not yet confirmed):
-LocalVQE weights, tympan-aspl, UL-UNAS, GTCRN. The `aec3` crate's license was verified during the PR #19 evaluation (MIT OR BSD-3-Clause, cargo-deny-clean), as was `sonora` (BSD-3-Clause) — see the §7.4 decision record.
+LocalVQE weights, tympan-aspl, UL-UNAS / Hush / DPDFNet training data (above), GTCRN. The `aec3` crate's license was verified during the PR #19 evaluation (MIT OR BSD-3-Clause, cargo-deny-clean), as was `sonora` (BSD-3-Clause) — see the §7.4 decision record.
 
 ---
 
@@ -526,7 +534,9 @@ Everything the former Phase -1 needed, built as the product itself:
   (enrollment via an external 192-dim ECAPA-TDNN embedding — the TSE
   distribution does not include the embedding model; use a public ECAPA ONNX
   from sherpa-onnx or SpeechBrain). *tse-conv-tasnet-48k was removed from
-  the tree on 2026-09-23 (§6.4 decision record).*
+  the tree on 2026-09-23 (§6.4 decision record), and so were FastEnhancer
+  T/S/M/L, because their training data forbids commercial use (§11
+  licensing notes).*
 - **Model weights**: downloader (or documented manual steps) fetching from the
   official releases listed in §14; weights are never committed to the repo.
 - **CLI file mode**: batch-process WAV files through any/all models with

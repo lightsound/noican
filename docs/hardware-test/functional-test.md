@@ -18,7 +18,7 @@ Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
      it reveals the Model selector and the Strength slider.
    - the Model selector (inside "Model & strength"): **every registry
      stage** as rows with a checkmark on the selection — Passthrough,
-     FastEnhancer T/B/S/M/L, DPDFNet2, DPDFNet8, DeepFilterNet3,
+     FastEnhancer-B, DPDFNet2, DPDFNet8, DeepFilterNet3,
      UL-UNAS, Hush 16k, and Hush 48k, all selectable; the default model
      row is annotated "Default". Hovering a row pops the model's profile
      card out beside that row after a short delay: name, tag, four dot
@@ -76,7 +76,7 @@ working.
 
 While recording one continuous file:
 
-1. Switch among `fastenhancer-t/b/s/m/l`, `dpdfnet2`, `dpdfnet8`, `dfn3`,
+1. Switch among `fastenhancer-b`, `dpdfnet2`, `dpdfnet8`, `dfn3`,
    `ul-unas`, `hush`, and `hush-48k`.
 2. Place markers immediately before each change.
 3. Inspect the waveform around each marker at sample level.
@@ -155,5 +155,5 @@ this build:
    −3.4 dB to −1.5 dB voiced-RMS deficit, and no clipping artifacts
    appear on loud speech.
 7. **Full model list** *(new)*: the Model picker shows every `main` registry
-   stage (Passthrough, FastEnhancer T/B/S/M/L, DPDFNet2/8, DeepFilterNet3,
+   stage (Passthrough, FastEnhancer-B, DPDFNet2/8, DeepFilterNet3,
    UL-UNAS, Hush 16k, and Hush 48k).
