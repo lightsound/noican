@@ -97,9 +97,7 @@ extension AppReducer {
             state.messages.previewError = nil
         }
         state.messages.previewUnavailableReason = nil
-        if refusesWithoutLicense(&state, newMode) {
-            return (state, [])
-        }
+        guard !refusesWithoutLicense(&state, newMode) else { return (state, []) }
         if newMode == .preview, let reason = monitorTargetError {
             // Refuse in place and explain: neither the mode nor the
             // engine changes, and `monitorTargetErrorChanged` clears the
@@ -642,9 +640,7 @@ extension AppReducer {
         revertInputUID: String?
     ) -> (state: AppModel, effects: [AppEffect]) {
         var state = state
-        if refusesStartWithoutLicense(&state) {
-            return (state, [])
-        }
+        guard !refusesStartWithoutLicense(&state) else { return (state, []) }
         // The teardown clears any live session; a model-switch message
         // would describe the torn-down engine, so it clears with it, and
         // the virtual-output level reading is re-taken once the new
