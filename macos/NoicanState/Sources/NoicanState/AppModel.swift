@@ -126,19 +126,25 @@ public struct MessageSlots: Hashable, Sendable {
     /// the toggle to the re-read real status. Cleared by the next toggle
     /// attempt and by a later clean completion.
     public var launchAtLoginError: String?
+    /// Why the last Preview/On tap was refused: no valid license. Shown
+    /// under the mode control; cleared by the next tap and as soon as a
+    /// license allows processing.
+    public var licenseRequired: String?
 
     public init(
         previewError: String? = nil,
         previewUnavailableReason: String? = nil,
         microphoneError: String? = nil,
         modelError: String? = nil,
-        launchAtLoginError: String? = nil
+        launchAtLoginError: String? = nil,
+        licenseRequired: String? = nil
     ) {
         self.previewError = previewError
         self.previewUnavailableReason = previewUnavailableReason
         self.microphoneError = microphoneError
         self.modelError = modelError
         self.launchAtLoginError = launchAtLoginError
+        self.licenseRequired = licenseRequired
     }
 }
 
@@ -201,6 +207,10 @@ public struct AppModel: Hashable, Sendable {
     /// selection changes still update the pickers but never claim engine
     /// transitions.
     public var isEngineAvailable: Bool
+    /// Whether the license lets the user start noise cancellation. Gates
+    /// Preview/On taps only: a running session (and its automatic
+    /// rebuilds) is never interrupted by a license change.
+    public var isProcessingAllowed: Bool
 
     public init(
         mode: EngineMode = .off,
@@ -214,7 +224,8 @@ public struct AppModel: Hashable, Sendable {
         isLaunchAtLoginBusy: Bool = false,
         messages: MessageSlots = MessageSlots(),
         virtualOutputLevel: VirtualOutputLevel = .nominal,
-        isEngineAvailable: Bool = true
+        isEngineAvailable: Bool = true,
+        isProcessingAllowed: Bool = true
     ) {
         self.mode = mode
         self.machine = machine
@@ -228,6 +239,7 @@ public struct AppModel: Hashable, Sendable {
         self.messages = messages
         self.virtualOutputLevel = virtualOutputLevel
         self.isEngineAvailable = isEngineAvailable
+        self.isProcessingAllowed = isProcessingAllowed
     }
 }
 

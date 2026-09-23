@@ -63,6 +63,8 @@ public enum AppReducer {
             return virtualOutputLevelObserved(state, level)
         case let .deviceQueryFailed(message):
             return deviceQueryFailed(state, message)
+        case let .processingAllowanceChanged(isAllowed):
+            return processingAllowanceChanged(state, isAllowed)
         }
     }
 }
@@ -95,6 +97,9 @@ extension AppReducer {
             state.messages.previewError = nil
         }
         state.messages.previewUnavailableReason = nil
+        if refusesWithoutLicense(&state, newMode) {
+            return (state, [])
+        }
         if newMode == .preview, let reason = monitorTargetError {
             // Refuse in place and explain: neither the mode nor the
             // engine changes, and `monitorTargetErrorChanged` clears the

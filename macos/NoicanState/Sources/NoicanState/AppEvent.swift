@@ -112,4 +112,7 @@ public enum AppEvent: Hashable, Sendable {
     case virtualOutputLevelObserved(VirtualOutputLevel)
     /// Reading the device list itself failed.
     case deviceQueryFailed(String)
+    /// The license status changed whether noise cancellation may be
+    /// started (`LicenseStatus.allowsProcessing` in NoicanLicensing).
+    case processingAllowanceChanged(Bool)
 }
