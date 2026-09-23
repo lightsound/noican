@@ -7,7 +7,8 @@
 //! quality matters more than allocation behavior here.
 //!
 //! Some compressed AIFC variants (e.g. IMA4) are not decodable here;
-//! convert those with `afconvert` first (see the README).
+//! convert those with macOS's built-in
+//! `afconvert -f WAVE -d LEI16@48000 <in> out.wav` first.
 
 use std::fs::File;
 use std::path::Path;
@@ -105,7 +106,7 @@ fn read_symphonia(path: &Path, extension: Option<&str>) -> anyhow::Result<(Vec<f
         .with_context(|| {
             format!(
                 "unsupported container/encoding in {} — convert it with \
-                 `afconvert -f WAVE -d LEI16@48000 <in> out.wav` first (see README)",
+                 `afconvert -f WAVE -d LEI16@48000 <in> out.wav` first",
                 path.display()
             )
         })?;
@@ -125,7 +126,7 @@ fn read_symphonia(path: &Path, extension: Option<&str>) -> anyhow::Result<(Vec<f
         .with_context(|| {
             format!(
                 "unsupported codec in {} — convert it with \
-                 `afconvert -f WAVE -d LEI16@48000 <in> out.wav` first (see README)",
+                 `afconvert -f WAVE -d LEI16@48000 <in> out.wav` first",
                 path.display()
             )
         })?;

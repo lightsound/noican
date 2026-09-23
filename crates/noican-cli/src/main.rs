@@ -43,7 +43,7 @@ enum Command {
     /// Process audio files through models; outputs are organized per input
     /// file for side-by-side comparison.
     Process {
-        /// Input audio files (WAV, AIFF/AIFC, CAF, M4A; output is WAV).
+        /// Input audio files (WAV, AIFF/AIFC, CAF, FLAC, M4A; output is WAV).
         #[arg(required = true)]
         inputs: Vec<PathBuf>,
         /// Output directory (default: out).
