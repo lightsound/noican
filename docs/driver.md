@@ -79,8 +79,11 @@ without modification, and one app build runs with either driver:
   of the current and the 0.1.0 driver, and the negative case
   `com.lightsound.noican_UID`)
 
-The driver's build refuses a UID base outside that prefix, so neither side
-can drift unnoticed. Tell an installed bundle's shape from its version
+The UID base is set in the driver repository, whose build refuses a base
+outside that prefix; because that guard and the matchers now live in
+different repositories, the macOS CI job here also checks that the built
+driver binary carries a `com.lightsound.noican.<segment>_UID` string, so
+a gitlink bump to a driver the app cannot recognize fails CI. Tell an installed bundle's shape from its version
 string (0.1.0: 2 channels, 0.2.0: 1 channel):
 
 ```bash

@@ -118,6 +118,14 @@ jobs:
         # so the installable artifact is built on a machine with the
         # identity (NOICAN_CODESIGN_IDENTITY), not in CI.
         run: bash external/noican-driver/scripts/build-driver.sh
+      - name: Check the driver's device UID against the app's matchers
+        # The UID base is set in lightsound/noican-driver; the matchers
+        # that must accept it (AudioDeviceCatalog.isNoicanVirtualDevice,
+        # is_noican_loopback_uid) live here and require the
+        # "com.lightsound.noican." prefix with a segment after the dot.
+        run: >
+          strings external/noican-driver/dist/Noican.driver/Contents/MacOS/Noican
+          | grep -E '^com\.lightsound\.noican\.[^.]+_UID$'
       - uses: actions/upload-artifact@v4
         with:
           name: noican-macos-arm64
