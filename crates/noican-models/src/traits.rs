@@ -83,43 +83,11 @@ static PROFILES: &[(&str, ModelTraits)] = &[
         ),
     ),
     (
-        "fastenhancer-t",
-        ModelTraits::rated(
-            [2, 4, 5, 5],
-            "lightest",
-            "48 kHz native, ~21 ms delay, ~0.04M parameters.",
-        ),
-    ),
-    (
         "fastenhancer-b",
         ModelTraits::rated(
             [3, 4, 5, 5],
             "balanced default",
             "48 kHz native, ~21 ms delay, ~0.1M parameters.",
-        ),
-    ),
-    (
-        "fastenhancer-s",
-        ModelTraits::rated(
-            [3, 4, 5, 5],
-            "light, a bit stronger",
-            "48 kHz native, ~21 ms delay, ~0.2M parameters.",
-        ),
-    ),
-    (
-        "fastenhancer-m",
-        ModelTraits::rated(
-            [4, 4, 5, 4],
-            "stronger, still quick",
-            "48 kHz native, ~21 ms delay, ~0.5M parameters.",
-        ),
-    ),
-    (
-        "fastenhancer-l",
-        ModelTraits::rated(
-            [4, 4, 5, 4],
-            "strongest FastEnhancer",
-            "48 kHz native, ~21 ms delay, ~1.1M parameters.",
         ),
     ),
     (

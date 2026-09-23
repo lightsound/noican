@@ -12,7 +12,7 @@
 //! ```bash
 //! NOICAN_MODELS_DIR=/tmp/noican-models \
 //!   cargo run --release -p noican-models --example block_bench -- \
-//!   fastenhancer-l 60
+//!   dpdfnet8 60
 //! ```
 
 #![expect(
@@ -68,7 +68,7 @@ fn percent(part: usize, total: usize) -> f64 {
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let model = args.next().unwrap_or_else(|| "fastenhancer-l".to_owned());
+    let model = args.next().unwrap_or_else(|| "dpdfnet8".to_owned());
     // Clamped to one second so a `0` argument cannot reach the quantile
     // lookup with an empty vector.
     let seconds: usize = args

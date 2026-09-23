@@ -64,61 +64,24 @@ impl ModelSpec {
     }
 }
 
-macro_rules! fastenhancer {
-    ($id:literal, $name:literal, $file:literal, $url:literal, $sha:literal) => {
-        ModelSpec {
-            id: $id,
-            display_name: $name,
-            family: ModelFamily::Denoise,
-            sample_rate: 48_000,
-            license: "MIT",
-            files: &[FileSpec {
-                name: $file,
-                url: $url,
-                sha256: Some($sha),
-            }],
-            depends_on: &[],
-        }
-    };
-}
-
 /// All models known to this build.
 pub static ALL_MODELS: &[ModelSpec] = &[
-    fastenhancer!(
-        "fastenhancer-t",
-        "FastEnhancer-T 48k",
-        "fastenhancer_t.onnx",
-        "https://github.com/aask1357/fastenhancer/releases/download/onnx-48khz-v1/fastenhancer_t.onnx",
-        "1993a3f58ae95d959123b3d28779c2800e0f016d6f4e1177f1213144f301b89c"
-    ),
-    fastenhancer!(
-        "fastenhancer-b",
-        "FastEnhancer-B 48k",
-        "fastenhancer_b.onnx",
-        "https://github.com/aask1357/fastenhancer/releases/download/onnx-48khz-v1/fastenhancer_b.onnx",
-        "70e23bba3d41e80d30ebc5eba39d9df64f0e0315f31c772022bb17576c4d96bf"
-    ),
-    fastenhancer!(
-        "fastenhancer-s",
-        "FastEnhancer-S 48k",
-        "fastenhancer_s.onnx",
-        "https://github.com/aask1357/fastenhancer/releases/download/onnx-48khz-v1/fastenhancer_s.onnx",
-        "f04ece2beed330da367264c54cedded62f65a117fbde5c005d3a88fc796d0ba3"
-    ),
-    fastenhancer!(
-        "fastenhancer-m",
-        "FastEnhancer-M 48k",
-        "fastenhancer_m.onnx",
-        "https://github.com/aask1357/fastenhancer/releases/download/onnx-48khz-v1/fastenhancer_m.onnx",
-        "c7da800810b583f4734d757c6e14d235f3eec81476121b595743e5866b66efa2"
-    ),
-    fastenhancer!(
-        "fastenhancer-l",
-        "FastEnhancer-L 48k",
-        "fastenhancer_l.onnx",
-        "https://github.com/aask1357/fastenhancer/releases/download/onnx-48khz-v1/fastenhancer_l.onnx",
-        "d7138309ec98266c668b2f86658fcc8f4e82ded67cd7fc8d6598534104b4bf89"
-    ),
+    ModelSpec {
+        id: "fastenhancer-b",
+        display_name: "FastEnhancer-B 48k",
+        family: ModelFamily::Denoise,
+        sample_rate: 48_000,
+        license: "MIT",
+        // The 48 kHz release's training data includes non-commercial
+        // corpora (docs/tech-research.md §11); registered only while it
+        // is the app's default.
+        files: &[FileSpec {
+            name: "fastenhancer_b.onnx",
+            url: "https://github.com/aask1357/fastenhancer/releases/download/onnx-48khz-v1/fastenhancer_b.onnx",
+            sha256: Some("70e23bba3d41e80d30ebc5eba39d9df64f0e0315f31c772022bb17576c4d96bf"),
+        }],
+        depends_on: &[],
+    },
     ModelSpec {
         id: "dpdfnet2",
         display_name: "DPDFNet2 48k HR",
