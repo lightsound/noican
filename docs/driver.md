@@ -83,8 +83,10 @@ The UID base is set in the driver repository, whose build refuses a base
 outside that prefix; because that guard and the matchers now live in
 different repositories, the macOS CI job here also checks that the built
 driver binary carries a `com.lightsound.noican.<segment>_UID` string, so
-a gitlink bump to a driver the app cannot recognize fails CI. Tell an installed bundle's shape from its version
-string (0.1.0: 2 channels, 0.2.0: 1 channel):
+a gitlink bump to a driver the app cannot recognize fails CI.
+
+Tell an installed bundle's shape from its version string (0.1.0:
+2 channels, 0.2.0: 1 channel):
 
 ```bash
 /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
