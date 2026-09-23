@@ -30,6 +30,11 @@ raises Hugging Face's rate limits; no token is required.
 | `hush` | Hush (Weya AI) | speaker suppression | 16 k | tract (`deep_filter` crate, Hush tarball) | [HF weya-ai/hush](https://huggingface.co/weya-ai/hush) | Apache-2.0 |
 | `hush-48k` | Hush 48k (band-split wrapper around `hush`) | speaker suppression | 48 k out (16 k core) | tract + `noican-models::stages::hush_wideband` | — (depends on `hush`; no files of its own) | Apache-2.0 |
 
+Sample-rate/frame-size differences are absorbed by the engine
+(`noican-core::FramedStage`): 16 kHz models are driven through a
+fixed-ratio polyphase resampler and all models present the same 48 kHz
+streaming interface.
+
 The license column covers the weights only. Training-data terms also
 decide whether a model can ship in the paid app
 ([tech-research.md §11](tech-research.md), licensing notes).
@@ -48,11 +53,6 @@ Do not register these, whatever their weight license says:
   and counts "selling or distributing the results or content achieved
   by use of the Work" as prohibited commercial use. The training noise
   also includes WHAM! noise, which is CC BY-NC 4.0.
-
-Sample-rate/frame-size differences are absorbed by the engine
-(`noican-core::FramedStage`): 16 kHz models are driven through a
-fixed-ratio polyphase resampler and all models present the same 48 kHz
-streaming interface.
 
 ### Composite entries (`depends_on`)
 

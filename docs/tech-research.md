@@ -390,6 +390,16 @@ Latency budget (target 20–30 ms end-to-end):
 | Model algorithmic delay | ~10–40 ms (model-dependent; Hush ≈ 20 ms class, DFN3 40 ms) |
 | Ring buffers + virtual device output | ~5 ms |
 
+**The target is no longer met by the default** (2026-09-23). The input
+buffer, the engine-reported model latency (`Stage::latency_samples`),
+and the output path add up to about 48 ms with `dfn3` (40 ms), which
+became the default because its training data is commercially clear.
+No 48 kHz-native model left in the registry fits: DPDFNet2/8 add up to
+about 68 ms. Only the 16 kHz-core Hush models reach the target: `hush`
+and `hush-48k` add up to about 30 ms, and `hush-48k` keeps full-band
+output. Their training data is still unclear (§11). UL-UNAS adds up to
+about 42 ms.
+
 ---
 
 ## 10. Existing OSS Applications (references / parts donors / escape hatches)
@@ -440,7 +450,29 @@ Personal (non-distributed) use carries no obligations. If the app is ever **sold
 **Permissive — safe for closed-source commercial use** (attribution/notice files required):
 DPDFNet code (Apache-2.0), Hush code (Apache-2.0), DeepFilterNet code + DFN3 weights (MIT/Apache-2.0 dual), sherpa-onnx (Apache-2.0), ONNX Runtime (MIT), libASPL (MIT), Sidon (MIT), speech-swift (MIT), JointAEC-NS (MIT), Krasp / NoNoise-Mac / MetalVoice (MIT), webrtc-audio-processing (BSD-3).
 
-**Model weights: the training data decides** (audit 2026-09-23). Every registered model's weights carry MIT or Apache-2.0, but a weight license cannot grant rights the trainer did not have. DFN3 is trained on DNS Challenge 4, whose component corpora are all commercially licensed (DNS-Challenge README, "Dataset licenses"), so it is clear. Models excluded for their training data are listed in [models.md](models.md) ("Excluded models"). The others:
+**Model weights: the training data decides** (audit 2026-09-23). Every registered model's weights carry MIT or Apache-2.0, but a weight license cannot grant rights the trainer did not have. Models excluded for their training data are listed in [models.md](models.md) ("Excluded models"). The registered ones:
+- DFN3 (`dfn3`, the default): **clear.** The weights are published with the code under MIT OR Apache-2.0. The DFN3 paper ([arXiv:2305.08227](https://arxiv.org/abs/2305.08227), §4) trains on "the full multi-lingual DNS4 dataset, while oversampling the high-quality PTDB and VCTK datasets." The corpora in DNS4 were checked against three sources:
+  - The DNS4 README's "Dataset licenses" table ([`v4dnschallenge_ICASSP2022` branch](https://github.com/microsoft/DNS-Challenge/blob/v4dnschallenge_ICASSP2022/README.md#dataset-licenses)). The DNS4 paper does not name its non-English sources, and this table does not list them either.
+  - The dataset manifest linked from that README ([`dns4-datasets-files-sha1.csv.bz2`](https://dns4public.blob.core.windows.net/dns4archive/dns4-datasets-files-sha1.csv.bz2)). Its paths name every clean-speech source.
+  - Each non-English source's own license page.
+
+  | DNS4 part | Source | License |
+  |---|---|---|
+  | English read speech | LibriVox | public domain |
+  | VCTK | VCTK | ODC-By |
+  | Singing | VocalSet | CC BY 4.0 |
+  | Emotional speech | CREMA-D | DbCL |
+  | PTDB-TUG | PTDB-TUG | ODbL |
+  | French, Italian, Russian, part of Spanish and German | M-AILABS | "any commercial use" permitted; the original page is offline, so the [archived page](http://web.archive.org/web/2020/https://www.caito.de/2019/01/the-m-ailabs-speech-dataset/) was used |
+  | German | Spoken Wikipedia Corpora | CC BY-SA 4.0 |
+  | Spanish | OpenSLR 61, 71, 73, 74, 75 | CC BY-SA 4.0 |
+  | Spanish | OpenSLR 39 | Apache-2.0 |
+  | Noise | AudioSet | CC BY 4.0 |
+  | Noise | Freesound | CC0 files only |
+  | Noise | DEMAND | CC BY-SA 3.0 |
+  | RIRs | OpenSLR 26/28 | Apache-2.0 |
+
+  No component carries an NC or research-only term. The one caveat is AudioSet: its audio comes from YouTube, and that is an industry-wide grey zone that every DNS-trained model shares. The share-alike and database licenses ask for attribution.
 - Hush (`hush`, `hush-48k`): noise includes ESC-50 (CC BY-NC 3.0) and unspecified FreeSound clips. The DNS noise it lists is fine: `DATASETS.md` calls it a "Microsoft Research License", but the DNS terms are the permissive per-corpus licenses. Unclear until Weya AI confirms.
 - DPDFNet2/8: noise includes FSD50K, which contains CC BY-NC clips (about 12 %). Unclear until Ceva confirms that those clips were excluded.
 - UL-UNAS: the released checkpoint is `model_trained_on_dns3`, and the paper adds the DiDiSpeech Mandarin corpus, distributed through DiDi's academic-research program. Unclear until the authors confirm the checkpoint's data.

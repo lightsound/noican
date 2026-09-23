@@ -19,9 +19,9 @@ Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
    - the Model selector (inside "Model & strength"): **every registry
      stage** as rows with a checkmark on the selection — Passthrough,
      DPDFNet2, DPDFNet8, DeepFilterNet3, UL-UNAS, Hush 16k, and
-     Hush 48k, all selectable; the default model
-     row is annotated "Default". Hovering a row pops the model's profile
-     card out beside that row after a short delay: name, tag, four dot
+     Hush 48k, all selectable; the default model row is annotated
+     "Default". Hovering a row pops the model's profile card out
+     beside that row after a short delay: name, tag, four dot
      ratings (Noise removal / Voice quality / Responsiveness /
      Efficiency, all "more is better"), and the raw facts (native rate,
      measured delay, size). Once up, the card must **stay up while the

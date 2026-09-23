@@ -28,8 +28,8 @@ especially macOS 26.
 Scored on 2026-09-10
 ([record](../acceptance/2026-09-10-long-session-owner-report.md)) from
 an owner report, not a measured run: a meeting of about two hours with a
-Shure MV7i and a light 48 kHz denoiser, no reference tone, no recording kept,
-and the microphone's rate — hence the transport — not read (the MV7i
+Shure MV7i and a light 48 kHz denoiser, no reference tone, no recording
+kept, and the microphone's rate — hence the transport — not read (the MV7i
 took the aggregate path in every earlier record; that is an inference
 here). Of the step 5 criteria, only "no engine fault" passes, on the
 owner's observation that the microphone stayed live for the whole
