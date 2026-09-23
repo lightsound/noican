@@ -12,7 +12,8 @@ Without a valid license, **Preview and On are refused** with the message
 "Noican needs a license to run — enter your license key below." Everything
 else works: Off, the microphone and model pickers, the strength slider,
 start at login, and the virtual driver itself (the driver is GPL-3.0 and is
-never gated; see `LICENSE.driver`).
+never gated; see the `LICENSE` in
+[lightsound/noican-driver](https://github.com/lightsound/noican-driver)).
 
 - A license that lapses or is rejected while noise cancellation runs does
   not stop it. The check runs in the background, and cutting the microphone

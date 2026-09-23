@@ -1,7 +1,7 @@
 # Technology Research: JoyCast-Style Noise-Cancelling Virtual Microphone for macOS
 
 - **Date**: 2026-08-24 (five research rounds conducted on this date; round 5 was a zero-based sweep for alternative architectures and produced no stack changes — the stack below is final)
-- **Status**: Research complete; implementation not started
+- **Status**: Research complete; implementation in progress (phase status in §12)
 - **Scope**: macOS only, fully on-device, paid public release (one-time purchase through Polar, Japan included; [licensing.md](licensing.md)); this repository goes private before release ([release.md](release.md)) while the GPL-3.0 driver stays public in [lightsound/noican-driver](https://github.com/lightsound/noican-driver); Apple Developer Program membership available (Developer ID signing is possible)
 
 This document consolidates the review of two earlier AI-generated design documents ("design1" and "design2") and three rounds of follow-up research. It records every candidate that was evaluated — including rejected ones and the reasons for rejection — so that later decisions can be revisited with full context and rejected options can serve as fallbacks.
@@ -437,7 +437,7 @@ Status of the two direct competitors as checked on 2026-09-11 (see also the §6.
 | Drift | Private Aggregate Device with drift compensation | DIY adaptive resampler |
 | NS model (quality) | DeepFilterNet3 (`df` crate; app default since 2026-09-23) **or** DPDFNet 48 k HR — decided by daily use | CoreML DFN3 route |
 | NS model (low-latency mode) | UL-UNAS | GTCRN (easier integration via sherpa-onnx) |
-| Background speakers | **Hush 16 k** (decided 2026-08-31, §6.4 decision record); the 48 kHz-output candidate `hush-48k` is in the tree (2026-09-11 decision record), default unchanged pending the owner's listening test | tse-conv-tasnet-48k (weights private) / DIY VAD + ECAPA gate (mellonella/voce design) — not planned |
+| Background speakers | **Hush 16 k** (decided 2026-08-31, §6.4 decision record); the 48 kHz-output candidate `hush-48k` is in the tree (2026-09-11 decision record); the app default is `dfn3` (since 2026-09-23), and switching it to `hush-48k` waits for the owner's listening test | tse-conv-tasnet-48k (weights private) / DIY VAD + ECAPA gate (mellonella/voce design) — not planned |
 | AEC | None in v0 (headphones) | Process tap + `aec3` (WebRTC AEC3) with macOS 26 watchdog |
 | Inference runtime | ONNX Runtime (DPDFNet, UL-UNAS); tract via `df` crate (DFN3, Hush) | sherpa-onnx (GTCRN, VAD, speaker embeddings) |
 | Core language | Rust (audio engine, inference, gating) | — |
