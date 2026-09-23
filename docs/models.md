@@ -15,6 +15,10 @@ cargo run -p noican-cli --release -- fetch
 cargo run -p noican-cli --release -- fetch fastenhancer-t dpdfnet2
 ```
 
+Every source is public. Downloads from huggingface.co send
+`NOICAN_HF_TOKEN` (or `HF_TOKEN`) as a bearer token when set, which
+raises Hugging Face's rate limits; no token is required.
+
 ## Registry
 
 | id | model | family | rate | backend | weights source | license |

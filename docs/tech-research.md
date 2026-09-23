@@ -192,8 +192,7 @@ Known tuning risk (from design1): gate fade time constant — too short clips th
 > selected) found that Hush already removes background speech well
 > enough in the tested conditions — "more than enough" — so neither the
 > DIY gate (§6.2) nor the TSE enrollment path (§6.1, `tse-48k`; weights
-> still private) is worth building for this
-> product. The only complaint was quality: Hush runs at 16 kHz, so the
+> still private) is worth building for this product. The only complaint was quality: Hush runs at 16 kHz, so the
 > user's own voice comes out band-limited to 8 kHz while every denoise
 > model in the app is 48 kHz. The follow-up work (PR #21, merged
 > 2026-09-02) was therefore loudness parity for Hush, not speaker
@@ -431,7 +430,7 @@ Status of the two direct competitors as checked on 2026-09-11 (see also the §6.
 | NS model (low-latency mode) | UL-UNAS | GTCRN (easier integration via sherpa-onnx) |
 | Background speakers | **Hush 16 k** (decided 2026-08-31, §6.4 decision record); the 48 kHz-output candidate `hush-48k` is in the tree (2026-09-11 decision record), default unchanged pending the owner's listening test | tse-conv-tasnet-48k (weights private) / DIY VAD + ECAPA gate (mellonella/voce design) — not planned |
 | AEC | None in v0 (headphones) | Process tap + `aec3` (WebRTC AEC3) with macOS 26 watchdog |
-| Inference runtime | ONNX Runtime (FastEnhancer, TSE); sherpa-onnx (DPDFNet/GTCRN, VAD, speaker embeddings) | tract via `df` crate |
+| Inference runtime | ONNX Runtime (FastEnhancer); sherpa-onnx (DPDFNet/GTCRN, VAD, speaker embeddings) | tract via `df` crate |
 | Core language | Rust (audio engine, inference, gating) | — |
 | UI | SwiftUI `MenuBarExtra` from the start (on/off, input device picker, status; strength/meters/mode switch and `SMAppService` login item added incrementally). Rust engine embedded as a static library behind a C ABI, or run as a separate daemon process with a small IPC control plane | CLI + config + launchd (if the UI ever blocks progress) |
 | Enhancement extras | vDSP/fundsp EQ + compressor (later) | Sidon offline cleanup; Stream.FM (watch) |

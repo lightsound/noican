@@ -17,10 +17,10 @@ Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
      model and strength (e.g. "FastEnhancer-B 48k · 100%"). Expanding
      it reveals the Model selector and the Strength slider.
    - the Model selector (inside "Model & strength"): **every registry
-     stage** as rows with a checkmark on the selection — Passthrough, FastEnhancer
-     T/B/S/M/L, DPDFNet2, DPDFNet8, DeepFilterNet3, UL-UNAS, Hush 16k, and
-     Hush 48k, all selectable; the default model row is annotated
-     "Default". Hovering a row pops the model's
+     stage** as rows with a checkmark on the selection — Passthrough,
+     FastEnhancer T/B/S/M/L, DPDFNet2, DPDFNet8, DeepFilterNet3, UL-UNAS,
+     Hush 16k, and Hush 48k, all selectable; the default model row is
+     annotated "Default". Hovering a row pops the model's
      profile card out beside that row after a short delay: name, tag,
      four dot ratings (Noise removal / Voice quality / Responsiveness /
      Efficiency, all "more is better"), and the raw facts (native rate,
