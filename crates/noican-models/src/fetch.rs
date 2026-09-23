@@ -156,8 +156,9 @@ fn fetch_model_dyn(
 }
 
 /// Returns a Hugging Face access token from the environment
-/// (`NOICAN_HF_TOKEN` or `HF_TOKEN`), if any. Needed only for gated/private
-/// repos (see docs/models.md).
+/// (`NOICAN_HF_TOKEN` or `HF_TOKEN`), if any. Optional: every registry
+/// entry hosted there is public, but authenticated requests get higher
+/// rate limits and can reach gated repos.
 fn hf_token() -> Option<String> {
     std::env::var("NOICAN_HF_TOKEN")
         .or_else(|_| std::env::var("HF_TOKEN"))
@@ -310,8 +311,6 @@ mod tests {
             sha256: Some("7afc240a360b1f66b2da6dbe941071513fd89c0f4d5e2961231c10c3c4b054ea"),
         }],
         depends_on: &[],
-        needs_enrollment: false,
-        fetch_note: None,
     };
 
     /// A present file whose bytes match the pinned digest is reported

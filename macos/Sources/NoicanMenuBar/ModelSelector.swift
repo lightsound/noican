@@ -132,10 +132,9 @@ private struct RowFramePreference: PreferenceKey {
 /// One selectable model row: checkmark and name, with the
 /// native-menu-style hover highlight. No per-row descriptions — the
 /// hover card carries the profile, so trailing text would repeat it;
-/// the only annotations are "Default" on the first-launch model and
-/// "requires enrollment" on disabled rows (a disabled row must explain
-/// itself immediately). Hover enter/leave is reported upward — the
-/// shared profile card belongs to the list, not the row.
+/// the only annotation is "Default" on the first-launch model. Hover
+/// enter/leave is reported upward — the shared profile card belongs to
+/// the list, not the row.
 private struct ModelRow: View {
     let model: ModelInfo
     let isSelected: Bool
@@ -158,19 +157,18 @@ private struct ModelRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 0)
-                if let annotation {
-                    Text(annotation)
+                if isDefault {
+                    Text("Default")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
             }
-            .opacity(model.needsEnrollment ? 0.5 : 1)
             .padding(.horizontal, 6)
             .padding(.vertical, 5)
             .contentShape(RoundedRectangle(cornerRadius: 6))
             .background {
-                if isHovering, !isBusy, !model.needsEnrollment {
+                if isHovering, !isBusy {
                     RoundedRectangle(cornerRadius: 6)
                         .fill(.quaternary.opacity(0.7))
                 }
@@ -178,18 +176,11 @@ private struct ModelRow: View {
         }
         .buttonStyle(StaticButtonStyle())
         .foregroundStyle(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
-        .disabled(isBusy || model.needsEnrollment)
+        .disabled(isBusy)
         .onHover { hovering in
             isHovering = hovering
             hoverChanged(hovering)
         }
-    }
-
-    private var annotation: String? {
-        if model.needsEnrollment {
-            return "requires enrollment"
-        }
-        return isDefault ? "Default" : nil
     }
 }
 
@@ -308,7 +299,7 @@ private struct ModelDetailCard: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.displayName)
                     .font(.headline)
-                Text(model.needsEnrollment ? "requires enrollment" : model.tagline)
+                Text(model.tagline)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

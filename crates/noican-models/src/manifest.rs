@@ -12,8 +12,6 @@ pub enum ModelFamily {
     Denoise,
     /// Suppresses background speakers (keeps the target speaker).
     SpeakerSuppression,
-    /// Produces speaker embeddings (support model, not a pipeline stage).
-    SpeakerEmbedding,
 }
 
 /// One downloadable file belonging to a model.
@@ -49,11 +47,6 @@ pub struct ModelSpec {
     /// stage factory resolves their file paths through the dependency's
     /// own spec, so the weights live in one place on disk.
     pub depends_on: &'static [&'static str],
-    /// True when the model needs a speaker-enrollment embedding.
-    pub needs_enrollment: bool,
-    /// Set when the distribution point currently requires authentication
-    /// or is otherwise not freely fetchable; the note explains the state.
-    pub fetch_note: Option<&'static str>,
 }
 
 impl ModelSpec {
@@ -61,14 +54,6 @@ impl ModelSpec {
     #[must_use]
     pub fn find(id: &str) -> Option<&'static Self> {
         ALL_MODELS.iter().find(|m| m.id == id)
-    }
-
-    /// Models that can be selected as processing stages (excludes support
-    /// models such as speaker-embedding extractors).
-    pub fn stages() -> impl Iterator<Item = &'static Self> {
-        ALL_MODELS
-            .iter()
-            .filter(|m| m.family != ModelFamily::SpeakerEmbedding)
     }
 
     /// The registry entries named in [`ModelSpec::depends_on`] (direct
@@ -93,8 +78,6 @@ macro_rules! fastenhancer {
                 sha256: Some($sha),
             }],
             depends_on: &[],
-            needs_enrollment: false,
-            fetch_note: None,
         }
     };
 }
@@ -148,8 +131,6 @@ pub static ALL_MODELS: &[ModelSpec] = &[
             sha256: Some("0b399f8a58dc4d70d8cd97541f5c39869406145193b957d00a03b66070944928"),
         }],
         depends_on: &[],
-        needs_enrollment: false,
-        fetch_note: None,
     },
     ModelSpec {
         id: "dpdfnet8",
@@ -165,8 +146,6 @@ pub static ALL_MODELS: &[ModelSpec] = &[
             sha256: Some("7b3afbb260a08fe9af3d16e3bda992971be1e7e951d1dee7c2d235f5c43f5631"),
         }],
         depends_on: &[],
-        needs_enrollment: false,
-        fetch_note: None,
     },
     ModelSpec {
         id: "dfn3",
@@ -177,8 +156,6 @@ pub static ALL_MODELS: &[ModelSpec] = &[
         // Embedded in the deep_filter crate (default-model feature).
         files: &[],
         depends_on: &[],
-        needs_enrollment: false,
-        fetch_note: None,
     },
     ModelSpec {
         id: "ul-unas",
@@ -193,8 +170,6 @@ pub static ALL_MODELS: &[ModelSpec] = &[
             sha256: Some("f2e804d54d6a88f4f82f44d86c9f1cf646db2509bfca935cfbfc5fcd8cbfac3b"),
         }],
         depends_on: &[],
-        needs_enrollment: false,
-        fetch_note: None,
     },
     ModelSpec {
         id: "hush",
@@ -208,8 +183,6 @@ pub static ALL_MODELS: &[ModelSpec] = &[
             sha256: Some("45632ccaa82b71bb743d6caa7c78e983fe2f2790a3af7f6ec48e6ed7ba085df6"),
         }],
         depends_on: &[],
-        needs_enrollment: false,
-        fetch_note: None,
     },
     ModelSpec {
         id: "hush-48k",
@@ -221,49 +194,6 @@ pub static ALL_MODELS: &[ModelSpec] = &[
         // `stages::hush_wideband`); no files of its own.
         files: &[],
         depends_on: &["hush"],
-        needs_enrollment: false,
-        fetch_note: None,
-    },
-    ModelSpec {
-        id: "tse-48k",
-        display_name: "TSE Conv-TasNet 48k",
-        family: ModelFamily::SpeakerSuppression,
-        sample_rate: 48_000,
-        license: "unknown (repo currently private)",
-        files: &[
-            FileSpec {
-                name: "tse_prod_48k.onnx",
-                url: "https://huggingface.co/penta2himajin/tse-conv-tasnet-48k/resolve/main/tse_prod_48k.onnx",
-                sha256: None,
-            },
-            FileSpec {
-                name: "tse_prod_48k.onnx.data",
-                url: "https://huggingface.co/penta2himajin/tse-conv-tasnet-48k/resolve/main/tse_prod_48k.onnx.data",
-                sha256: None,
-            },
-        ],
-        depends_on: &[],
-        needs_enrollment: true,
-        fetch_note: Some(
-            "the Hugging Face repo penta2himajin/tse-conv-tasnet-48k currently returns \
-             HTTP 401 (private); set HF_TOKEN if you have access, or place the files \
-             manually (see docs/models.md)",
-        ),
-    },
-    ModelSpec {
-        id: "ecapa-tdnn",
-        display_name: "ECAPA-TDNN embedding",
-        family: ModelFamily::SpeakerEmbedding,
-        sample_rate: 16_000,
-        license: "Apache-2.0",
-        files: &[FileSpec {
-            name: "ecapa_tdnn.onnx",
-            url: "https://huggingface.co/penta2himajin/ecapa-tdnn-onnx/resolve/main/ecapa_tdnn.onnx",
-            sha256: Some("75f5f36d23879c5b2dd73b09221e8727e8e6e6a7cbd1a0655992d7ae81195698"),
-        }],
-        depends_on: &[],
-        needs_enrollment: false,
-        fetch_note: None,
     },
 ];
 

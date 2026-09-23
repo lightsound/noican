@@ -178,15 +178,6 @@ static PROFILES: &[(&str, ModelTraits)] = &[
              and keyboard/trackpad clicks.",
         ),
     ),
-    (
-        "tse-48k",
-        ModelTraits::rated(
-            [4, 4, 3, 2],
-            "keeps only your voice",
-            "48 kHz native. Extracts the enrolled speaker and removes \
-             everything else; requires enrollment.",
-        ),
-    ),
 ];
 
 #[cfg(test)]

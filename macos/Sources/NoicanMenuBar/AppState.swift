@@ -341,12 +341,11 @@ final class AppState: ObservableObject {
     /// Feeds the persisted preferences back through the reducer (the
     /// restore is an event like everything else, so it stays testable).
     /// The stored model id is validated against the live registry here —
-    /// the reducer has no model catalog — and enrollment-gated models
-    /// are skipped like the picker skips them.
+    /// the reducer has no model catalog.
     private func restorePreferences() {
         let defaults = UserDefaults.standard
         var modelID = defaults.string(forKey: PreferenceKey.modelID)
-        if !models.contains(where: { $0.id == modelID && !$0.needsEnrollment }) {
+        if !models.contains(where: { $0.id == modelID }) {
             modelID = nil
         }
         dispatch(.preferencesRestored(
