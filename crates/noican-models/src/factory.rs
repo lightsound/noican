@@ -94,6 +94,10 @@ pub fn create_stage(id: &str, models_dir: &Path) -> Result<Box<dyn Stage>, Stage
             let stage = DfTractStage::deepfilternet3(spec.id)?;
             Ok(Box::new(FramedStage::new(stage, MAX_BLOCK_LEN)?))
         }
+        "dfn3-ll" => {
+            let stage = DfTractStage::deepfilternet3_ll(spec.id, &file_path(models_dir, spec, 0))?;
+            Ok(Box::new(FramedStage::new(stage, MAX_BLOCK_LEN)?))
+        }
         "ul-unas" => {
             let stage = UlunasStage::new(spec.id, &file_path(models_dir, spec, 0))?;
             Ok(Box::new(FramedStage::new(stage, MAX_BLOCK_LEN)?))

@@ -10,8 +10,8 @@
 //! Basis, so the numbers stay honest:
 //! - `responsiveness` is derived from the *measured* engine-reported
 //!   algorithmic latency (`Stage::latency_samples`, 2026-08-27: Hush
-//!   22.5 ms, UL-UNAS 34.5 ms, DFN3 40 ms, DPDFNet 60 ms): 5 ≤ 25 ms,
-//!   4 ≤ 35 ms, 3 ≤ 45 ms, 2 ≤ 65 ms.
+//!   22.5 ms, UL-UNAS 34.5 ms, DFN3 40 ms, DPDFNet 60 ms; 2026-09-23:
+//!   DFN3-LL 20 ms): 5 ≤ 25 ms, 4 ≤ 35 ms, 3 ≤ 45 ms, 2 ≤ 65 ms.
 //! - `efficiency` is derived from parameter count (weight-file size):
 //!   5 ≤ 0.25 M, 4 ≤ 1.5 M, 3 ≤ 2.5 M, 2 above.
 //! - `voice_quality` is the output bandwidth: 48 kHz native scores 4
@@ -106,6 +106,16 @@ static PROFILES: &[(&str, ModelTraits)] = &[
             "strong cleanup, moderate delay",
             "48 kHz native, ~40 ms delay, ~2.1M parameters. \
              Suppresses keyboard/trackpad clicks.",
+        ),
+    ),
+    (
+        "dfn3-ll",
+        // noise_removal is provisional: not yet compared by ear with dfn3.
+        ModelTraits::rated(
+            [4, 4, 5, 2],
+            "strong cleanup, low delay",
+            "48 kHz native, ~20 ms delay, ~9.7M parameters. \
+             DeepFilterNet3 variant without lookahead.",
         ),
     ),
     (

@@ -105,6 +105,22 @@ pub static ALL_MODELS: &[ModelSpec] = &[
         depends_on: &[],
     },
     ModelSpec {
+        id: "dfn3-ll",
+        display_name: "DeepFilterNet3 LL 48k",
+        family: ModelFamily::Denoise,
+        sample_rate: 48_000,
+        license: "MIT OR Apache-2.0",
+        files: &[FileSpec {
+            // Commit-pinned (tag v0.5.6, the `deep_filter` revision the
+            // workspace builds against); not part of the crate's embedded
+            // default model.
+            name: "DeepFilterNet3_ll_onnx.tar.gz",
+            url: "https://raw.githubusercontent.com/Rikorose/DeepFilterNet/978576aa8400552a4ce9730838c635aa30db5e61/models/DeepFilterNet3_ll_onnx.tar.gz",
+            sha256: Some("5998e58e8ba0e09bb76986ef97b84afa065a571ef282d4a1222f341e3251cf3a"),
+        }],
+        depends_on: &[],
+    },
+    ModelSpec {
         id: "ul-unas",
         display_name: "UL-UNAS 16k",
         family: ModelFamily::Denoise,

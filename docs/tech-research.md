@@ -398,7 +398,8 @@ No 48 kHz-native model left in the registry fits: DPDFNet2/8 add up to
 about 68 ms. Only the 16 kHz-core Hush models reach the target: `hush`
 and `hush-48k` add up to about 30 ms, and `hush-48k` keeps full-band
 output. Their training data is still unclear (§11). UL-UNAS adds up to
-about 42 ms.
+about 42 ms. `dfn3-ll` (20 ms, 48 kHz native) adds up to about 28 ms
+and meets the target, but its training data is unclear as well (§11).
 
 ---
 
@@ -475,6 +476,7 @@ DPDFNet code (Apache-2.0), Hush code (Apache-2.0), DeepFilterNet code + DFN3 wei
   | RIRs | OpenSLR 26/28 | Apache-2.0 |
 
   No component carries an NC or research-only term. The one caveat is AudioSet: its audio comes from YouTube, and that is an industry-wide grey zone that every DNS-trained model shares. The share-alike and database licenses ask for attribution.
+- DFN3-LL (`dfn3-ll`): **unclear.** The weights ship in the same dual-licensed repository as DFN3 (`models/DeepFilterNet3_ll_onnx.tar.gz`), but no source documents their training data. The bundled `config.ini` shows a separately trained, larger model: `emb_hidden_dim = 512`, `df_num_layers = 3`, zero lookahead, and different augmentation settings. DFN3's data (DNS4) is only a presumption for it. Ask the DeepFilterNet author before making it the default.
 - Hush (`hush`, `hush-48k`): noise includes ESC-50 (CC BY-NC 3.0) and unspecified FreeSound clips. The DNS noise it lists is fine: `DATASETS.md` calls it a "Microsoft Research License", but the DNS terms are the permissive per-corpus licenses. Unclear until Weya AI confirms.
 - DPDFNet2/8: noise includes FSD50K, which contains CC BY-NC clips (about 12 %). Unclear until Ceva confirms that those clips were excluded.
 - UL-UNAS: the released checkpoint is `model_trained_on_dns3`, and the paper adds the DiDiSpeech Mandarin corpus, distributed through DiDi's academic-research program. Unclear until the authors confirm the checkpoint's data.

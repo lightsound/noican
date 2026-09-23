@@ -109,6 +109,7 @@ macro_rules! model_test {
 
 model_test!(dpdfnet2_runs, "dpdfnet2");
 model_test!(dpdfnet8_runs, "dpdfnet8");
+model_test!(dfn3_ll_runs, "dfn3-ll");
 model_test!(ulunas_runs, "ul-unas");
 model_test!(hush_runs, "hush");
 model_test!(hush_48k_runs, "hush-48k");
@@ -119,4 +120,22 @@ model_test!(hush_48k_runs, "hush-48k");
 #[ignore = "slow (tract plan build); run with --ignored"]
 fn dfn3_runs() {
     run_model("dfn3");
+}
+
+/// The zero-lookahead variant's delay is one hop of framing plus the
+/// overlap-add window: 960 samples (20 ms) at 48 kHz, half of `dfn3`'s.
+#[test]
+#[ignore = "requires downloaded model weights (run: noican fetch dfn3-ll)"]
+fn dfn3_ll_latency_is_twenty_ms() {
+    let dir = models_dir();
+    let spec = ModelSpec::find("dfn3-ll").expect("registered");
+    if !noican_models::fetch::is_fetched(&dir, spec) {
+        eprintln!(
+            "[skip] dfn3-ll: weights not fetched under {}",
+            dir.display()
+        );
+        return;
+    }
+    let stage = create_stage("dfn3-ll", &dir).expect("stage should load");
+    assert_eq!(stage.latency_samples(), 960);
 }

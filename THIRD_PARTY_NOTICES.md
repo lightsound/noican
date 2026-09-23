@@ -11,6 +11,7 @@ models, adapted code, and vendored assets.
 |---|---|---|
 | DPDFNet ONNX models (`dpdfnet2_48khz_hr`, `dpdfnet8_48khz_hr`) | https://github.com/ceva-ip/DPDFNet / https://huggingface.co/Ceva-IP/DPDFNet (redistributed by https://github.com/k2-fsa/sherpa-onnx) | Apache-2.0 |
 | DeepFilterNet3 model bundle | https://github.com/Rikorose/DeepFilterNet (embedded via the `deep_filter` crate) | MIT OR Apache-2.0 |
+| DeepFilterNet3 LL ONNX bundle (`DeepFilterNet3_ll_onnx.tar.gz`) | https://github.com/Rikorose/DeepFilterNet (`models/`, tag `v0.5.6`) | MIT OR Apache-2.0 |
 | UL-UNAS streaming ONNX | https://github.com/Xiaobin-Rong/ul-unas | MIT |
 | Hush ONNX bundle (`advanced_dfnet16k_*`) | https://github.com/pulp-vision/Hush / https://huggingface.co/weya-ai/hush | Apache-2.0 |
 
