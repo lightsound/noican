@@ -124,30 +124,6 @@ impl StateBank {
         Ok(Self { slots })
     }
 
-    /// Overrides the initial (and current) value of the slot whose input is
-    /// `input_name`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StageError::Inference`] on unknown names or length
-    /// mismatch.
-    pub fn set_init(&mut self, input_name: &str, init: &[f32]) -> Result<(), StageError> {
-        let slot = self
-            .slots
-            .iter_mut()
-            .find(|s| s.input_name == input_name)
-            .ok_or_else(|| StageError::Inference(format!("unknown state slot: {input_name}")))?;
-        if init.len() != slot.init.len() {
-            return Err(StageError::BufferLen {
-                expected: slot.init.len(),
-                got: init.len(),
-            });
-        }
-        slot.init.copy_from_slice(init);
-        slot.data.copy_from_slice(init);
-        Ok(())
-    }
-
     /// Appends the current state values as named tensors to `inputs`.
     ///
     /// # Errors

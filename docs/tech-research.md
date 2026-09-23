@@ -386,8 +386,8 @@ Latency budget (target 20–30 ms end-to-end):
 | Component | Budget |
 |---|---|
 | Input buffer (128 frames @ 48 kHz) | ~2.7 ms |
-| Model hop (10 ms frame models) | 10 ms |
-| Model algorithmic delay | ~10–40 ms (model-dependent; Hush ≈ 20 ms class, DFN3 40 ms) |
+| Model hop (10 ms frame models) | 10 ms (counted in the next row) |
+| Model latency (`Stage::latency_samples`, hop included) | ~20–60 ms (model-dependent; Hush 22.5 ms, DFN3 40 ms, DPDFNet 60 ms) |
 | Ring buffers + virtual device output | ~5 ms |
 
 **The target is no longer met by the default** (2026-09-23). The input
@@ -463,6 +463,8 @@ DPDFNet code (Apache-2.0), Hush code (Apache-2.0), DeepFilterNet code + DFN3 wei
   | Singing | VocalSet | CC BY 4.0 |
   | Emotional speech | CREMA-D | DbCL |
   | PTDB-TUG | PTDB-TUG | ODbL |
+  | Noisy speech (56 speakers) | Edinburgh DataShare 10283/2791 | CC BY 4.0 (in the license table; not in the real-time track's manifest) |
+  | Speaker verification | VoxCeleb2 | CC BY 4.0 (in the license table; not in the real-time track's manifest) |
   | French, Italian, Russian, part of Spanish and German | M-AILABS | "any commercial use" permitted; the original page is offline, so the [archived page](http://web.archive.org/web/2020/https://www.caito.de/2019/01/the-m-ailabs-speech-dataset/) was used |
   | German | Spoken Wikipedia Corpora | CC BY-SA 4.0 |
   | Spanish | OpenSLR 61, 71, 73, 74, 75 | CC BY-SA 4.0 |
