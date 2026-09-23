@@ -333,7 +333,7 @@ mod tests {
         std::fs::write(&dest, b"correct weights").expect("write");
         let mut lines = Vec::new();
         fetch_model(&models_dir, &VERIFY_SPEC, |line| {
-            lines.push(line.to_owned())
+            lines.push(line.to_owned());
         })
         .expect("a matching digest needs no download");
         assert_eq!(lines, ["verify-test/weights.bin: already present"]);
@@ -341,7 +341,7 @@ mod tests {
         std::fs::write(&dest, b"wrong bytes").expect("write");
         lines.clear();
         let error = fetch_model(&models_dir, &VERIFY_SPEC, |line| {
-            lines.push(line.to_owned())
+            lines.push(line.to_owned());
         })
         .expect_err("the unroutable URL must fail after detection");
         assert!(matches!(error, FetchError::Http { .. }));
