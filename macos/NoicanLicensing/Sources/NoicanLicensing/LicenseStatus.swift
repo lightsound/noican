@@ -59,7 +59,7 @@ public enum LicenseStatus: Hashable, Sendable {
 /// How often the license is re-checked and how long it works offline.
 public struct LicensePolicy: Hashable, Sendable {
     /// A validation older than this is repeated at the next opportunity
-    /// (launch, the hourly check, wake from sleep).
+    /// (launch or the hourly check).
     public var revalidationInterval: TimeInterval
     /// How long a license keeps working without a successful validation,
     /// counted from the last one.

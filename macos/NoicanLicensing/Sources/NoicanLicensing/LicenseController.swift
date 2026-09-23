@@ -48,7 +48,7 @@ public final class LicenseController {
     private let now: () -> Date
     private var record: StoredLicense?
     private var verificationFailed = false
-    /// When the server last rejected the stored record in this session.
+    /// When the server last answered no in this session.
     private var lastRejection: Date?
 
     /// `backend` is nil when the build has no license-server
@@ -81,29 +81,28 @@ public final class LicenseController {
 
     // MARK: - Operations
 
-    /// Launch, hourly, and wake-from-sleep entry point: re-activates a
-    /// record issued by another backend or for another Mac with its
-    /// stored key, and re-validates one that is due — including a
-    /// rejected record, so a mistaken rejection heals by itself.
+    /// Launch and hourly entry point: re-activates a record issued by
+    /// another backend or for another Mac with its stored key, and
+    /// re-validates one that is due — including a rejected record, so a
+    /// mistaken rejection heals by itself.
     public func refreshIfDue() async {
-        guard state.activity == nil, let backend, let record else {
+        guard state.activity == nil, let backend, let record, isRecheckDue(record, backend) else {
             state.status = evaluate()
             return
         }
-        if !isOwn(record, backend) {
-            await activate(key: record.key, backend: backend)
-        } else if isRecheckDue(record) {
+        if isOwn(record, backend) {
             await validate(record, backend: backend)
         } else {
-            state.status = evaluate()
+            await activate(key: record.key, backend: backend)
         }
     }
 
-    /// A rejected record is re-checked once per revalidation interval
-    /// (counted from the rejection, since its last success is old);
-    /// anything else when its last success is due for renewal.
-    private func isRecheckDue(_ license: StoredLicense) -> Bool {
-        guard license.rejection != nil else {
+    /// A healthy record is due when its last success needs renewal. A
+    /// rejected or foreign record has no recent success to count from, so
+    /// after a definitive "no" it waits one revalidation interval rather
+    /// than asking the server again every hour.
+    private func isRecheckDue(_ license: StoredLicense, _ backend: any LicenseBackend) -> Bool {
+        if isOwn(license, backend), license.rejection == nil {
             return policy.isRevalidationDue(license, now: now())
         }
         guard let lastRejection else {
@@ -183,6 +182,7 @@ public final class LicenseController {
             case let .unavailable(reason):
                 finish(notice: reason)
             case let .rejected(rejection):
+                lastRejection = now()
                 finish(notice: rejection.message)
             }
         }

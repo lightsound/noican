@@ -244,6 +244,28 @@ struct LicenseMigrationTests {
         #expect(store.license?.deviceID == thisMac.id)
     }
 
+    @Test("A refused re-activation is retried daily, an unreachable server hourly")
+    func migrationRetryCadence() async {
+        let backend = MockBackend()
+        backend.onActivate(.failure(.unavailable(reason: "This Mac is offline.")))
+        let clock = TestClock()
+        let license = controller(backend: backend, store: InMemoryLicenseStore(storedLicense(device: otherMac)), clock: clock)
+        await license.refreshIfDue()
+        clock.advance(hour)
+        await license.refreshIfDue()
+        #expect(backend.calls.count == 2, "offline: the next hourly tick tries again")
+
+        backend.onActivate(.failure(.rejected(.refused(detail: "License key only supports 3 activations"))))
+        clock.advance(hour)
+        await license.refreshIfDue()
+        clock.advance(hour)
+        await license.refreshIfDue()
+        #expect(backend.calls.count == 3, "after a definitive no, not again within the day")
+        clock.advance(day)
+        await license.refreshIfDue()
+        #expect(backend.calls.count == 4)
+    }
+
     @Test("Deactivation releases the slot and forgets the key")
     func deactivateReleases() async {
         let backend = MockBackend()
