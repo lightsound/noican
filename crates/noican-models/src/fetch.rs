@@ -121,8 +121,7 @@ fn fetch_model_dyn(
             }
             progress(&format!(
                 "{}/{}: checksum mismatch, re-downloading",
-                model.id,
-                file.name
+                model.id, file.name
             ));
         }
         progress(&format!("{}/{}: downloading…", model.id, file.name));
@@ -308,9 +307,7 @@ mod tests {
         files: &[crate::manifest::FileSpec {
             name: "weights.bin",
             url: "http://127.0.0.1:1/unreachable",
-            sha256: Some(
-                "7afc240a360b1f66b2da6dbe941071513fd89c0f4d5e2961231c10c3c4b054ea",
-            ),
+            sha256: Some("7afc240a360b1f66b2da6dbe941071513fd89c0f4d5e2961231c10c3c4b054ea"),
         }],
         depends_on: &[],
         needs_enrollment: false,
@@ -335,14 +332,18 @@ mod tests {
 
         std::fs::write(&dest, b"correct weights").expect("write");
         let mut lines = Vec::new();
-        fetch_model(&models_dir, &VERIFY_SPEC, |line| lines.push(line.to_owned()))
-            .expect("a matching digest needs no download");
+        fetch_model(&models_dir, &VERIFY_SPEC, |line| {
+            lines.push(line.to_owned())
+        })
+        .expect("a matching digest needs no download");
         assert_eq!(lines, ["verify-test/weights.bin: already present"]);
 
         std::fs::write(&dest, b"wrong bytes").expect("write");
         lines.clear();
-        let error = fetch_model(&models_dir, &VERIFY_SPEC, |line| lines.push(line.to_owned()))
-            .expect_err("the unroutable URL must fail after detection");
+        let error = fetch_model(&models_dir, &VERIFY_SPEC, |line| {
+            lines.push(line.to_owned())
+        })
+        .expect_err("the unroutable URL must fail after detection");
         assert!(matches!(error, FetchError::Http { .. }));
         assert_eq!(
             lines,
