@@ -192,7 +192,7 @@ Known tuning risk (from design1): gate fade time constant — too short clips th
 > selected) found that Hush already removes background speech well
 > enough in the tested conditions — "more than enough" — so neither the
 > DIY gate (§6.2) nor the TSE enrollment path (§6.1, `tse-48k`; weights
-> still private, see [models.md](models.md)) is worth building for this
+> still private) is worth building for this
 > product. The only complaint was quality: Hush runs at 16 kHz, so the
 > user's own voice comes out band-limited to 8 kHz while every denoise
 > model in the app is 48 kHz. The follow-up work (PR #21, merged
@@ -267,6 +267,19 @@ Known tuning risk (from design1): gate fade time constant — too short clips th
 > `noican eval --target-level-dbfs` measures it). Whether `hush-48k`
 > becomes the default is the owner's listening decision (§12 Phase 1,
 > checklist in [hush-48k-eval.md](hush-48k-eval.md)).
+
+> **Decision record (2026-09-23): `tse-48k` removed from the tree.**
+> The registry entry had stayed in the model list as a disabled
+> "requires enrollment" row, but it was never usable: the Hugging Face
+> repo `penta2himajin/tse-conv-tasnet-48k` still answers HTTP 401, the
+> weights' license is unknown, the stage had only been exercised with a
+> random-weight export, and the menu-bar app has no enrollment flow.
+> With the TSE path not planned (first decision record above), the
+> entry, its stage, the ECAPA-TDNN support model and fbank feature
+> pipeline that existed only to compute its enrollment embedding, the
+> CLI `--enroll` option, and the app's enrollment gating were removed.
+> Reviving TSE means re-adding them from git history once the weights
+> are public under a known license.
 
 ---
 
@@ -437,7 +450,7 @@ The BlackHole-fork driver (GPL-3.0) is a separate program loaded by `coreaudiod`
 NNA Virtual Audio (free *for personal use*; commercial use requires a vendor license with no public pricing — contact@neutralandnaturalaudio.com. Dropped from consideration for any sold version), Stream.FM (AGPL-3.0 — would force open-sourcing the entire app).
 
 **Verify before shipping** (license not yet confirmed):
-tse-conv-tasnet-48k model weights (HF card lacks an explicit license; trained on VCTK CC-BY-4.0 + DEMAND), LocalVQE weights, tympan-aspl, UL-UNAS, GTCRN. The `aec3` crate's license was verified during the PR #19 evaluation (MIT OR BSD-3-Clause, cargo-deny-clean), as was `sonora` (BSD-3-Clause) — see the §7.4 decision record.
+LocalVQE weights, tympan-aspl, UL-UNAS, GTCRN. The `aec3` crate's license was verified during the PR #19 evaluation (MIT OR BSD-3-Clause, cargo-deny-clean), as was `sonora` (BSD-3-Clause) — see the §7.4 decision record.
 
 ---
 
@@ -513,7 +526,8 @@ Everything the former Phase -1 needed, built as the product itself:
   UL-UNAS (16 k low-latency), Hush 16 k (no enrollment), tse-conv-tasnet-48k
   (enrollment via an external 192-dim ECAPA-TDNN embedding — the TSE
   distribution does not include the embedding model; use a public ECAPA ONNX
-  from sherpa-onnx or SpeechBrain).
+  from sherpa-onnx or SpeechBrain). *tse-conv-tasnet-48k was removed from
+  the tree on 2026-09-23 (§6.4 decision record).*
 - **Model weights**: downloader (or documented manual steps) fetching from the
   official releases listed in §14; weights are never committed to the repo.
 - **CLI file mode**: batch-process WAV files through any/all models with
@@ -567,7 +581,7 @@ Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level 
 
 1. Listening-test outcomes (§12 Phase 0, CLI comparison + live switching) — the entire stack pivots on these. *Speaker-suppression half answered 2026-08-31* (§6.4 decision record): Hush suppresses background speech sufficiently; no dedicated stage needed. The preferred denoise model remains a matter of daily use (default `fastenhancer-b`).
 2. Hush's behavior when the background speaker is *louder* than the user (trained at 12–24 dB SIR below primary). Not tested; stays open as a known limit rather than a blocker (upstream's retrain for louder background speech is still unreleased as of 2026-09-11).
-3. tse-conv-tasnet-48k real-world quality given its small training set (VCTK + DEMAND). Moot for now: not planned (§6.4 decision record) and the weights are private.
+3. tse-conv-tasnet-48k real-world quality given its small training set (VCTK + DEMAND). Moot: not planned, the weights are private, and the entry was removed from the tree on 2026-09-23 (§6.4 decision records).
 4. Long-session (2 h+) stability of aggregate-device drift compensation. Owner report of 2026-09-10 ([acceptance/2026-09-10-long-session-owner-report.md](acceptance/2026-09-10-long-session-owner-report.md)): a meeting of about two hours with a Shure MV7i and FastEnhancer-B ran without the participants noticing anything; no reference tone, recording, or memory measurement was taken and the microphone's rate (hence the transport — aggregate path presumed, as in every earlier MV7i record) was not read, so the measurement-based verification of the Clock drift and endurance procedure is still outstanding and the question stays open.
 5. DIY gate fade time constant (if the DIY route is needed): onset clipping vs. interferer leakage.
 6. How meeting apps treat the virtual device's reported latency/safety offsets (BlackHole reports zero).

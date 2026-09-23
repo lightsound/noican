@@ -37,7 +37,7 @@ own license (below).
    The interferer gain is set so that the RMS ratio *inside the middle
    segment* equals the SIR exactly.
 3. Runs every model (`--models`; default: passthrough plus every fetched
-   model that needs no enrollment) on each mixture in 480-sample blocks
+   model) on each mixture in 480-sample blocks
    with the same stage code the live engine uses, compensates the
    stage's reported latency (as `process` does), and measures the
    wall-clock time of every block.
