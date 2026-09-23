@@ -87,7 +87,7 @@ struct NativeRateSelectionTests {
     func bluetoothStarts() {
         let (state, effects) = step(readyModel(selectedInputUID: bluetoothMic.uid), tap(.on))
         let attempt = StartAttempt(
-            modelID: "fastenhancer-b", inputUID: bluetoothMic.uid, monitor: false
+            modelID: "dfn3", inputUID: bluetoothMic.uid, monitor: false
         )
         #expect(state.isBusy, "the selection pre-flights clean and claims a start")
         #expect(state.engineErrorMessage == nil)
@@ -102,7 +102,7 @@ struct NativeRateSelectionTests {
     func fortyFourStarts() {
         let (state, effects) = step(readyModel(selectedInputUID: fortyFourMic.uid), tap(.on))
         let attempt = StartAttempt(
-            modelID: "fastenhancer-b", inputUID: fortyFourMic.uid, monitor: false
+            modelID: "dfn3", inputUID: fortyFourMic.uid, monitor: false
         )
         #expect(state.isBusy, "the 44.1 kHz device pre-flights clean and claims a start")
         #expect(state.engineErrorMessage == nil)
@@ -117,7 +117,7 @@ struct NativeRateSelectionTests {
     func liveSwitchToBluetooth() {
         let (state, effects) = step(runningModel(), .microphoneSelected(bluetoothMic.uid))
         let attempt = StartAttempt(
-            modelID: "fastenhancer-b",
+            modelID: "dfn3",
             inputUID: bluetoothMic.uid,
             monitor: false,
             revertInputUID: builtInMic.uid
@@ -159,7 +159,7 @@ struct InputRateChangeTests {
         )
         let (state, effects) = step(running, .inputSampleRateChanged)
         let attempt = StartAttempt(
-            modelID: "fastenhancer-b", inputUID: bluetoothMic.uid, monitor: false
+            modelID: "dfn3", inputUID: bluetoothMic.uid, monitor: false
         )
         #expect(effects == [.stopEngine, .startEngine(attempt)])
         #expect(state.isBusy)
@@ -190,7 +190,7 @@ struct InputRateChangeTests {
         #expect(togglingMonitor.liveSession == nil, "busy transitions own their session")
         #expect(togglingMonitor.transportSession?.inputUID == builtInMic.uid)
 
-        let switchingModel = drive(runningModel(), [.modelSelected("dfn3")])
+        let switchingModel = drive(runningModel(), [.modelSelected("dpdfnet2")])
         #expect(switchingModel.isBusy)
         #expect(switchingModel.transportSession?.inputUID == builtInMic.uid)
 

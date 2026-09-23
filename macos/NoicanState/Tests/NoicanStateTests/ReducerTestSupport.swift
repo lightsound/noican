@@ -23,7 +23,7 @@ let unsupportedMic = InputDevice(
 func readyModel(
     devices: [InputDevice] = [builtInMic, usbMic, bluetoothMic, fortyFourMic, unsupportedMic],
     selectedInputUID: String = builtInMic.uid,
-    selectedModelID: String = "fastenhancer-b"
+    selectedModelID: String = "dfn3"
 ) -> AppModel {
     AppModel(
         selectedModelID: selectedModelID,

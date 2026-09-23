@@ -109,7 +109,7 @@ struct VirtualOutputLevelReducerTests {
         #expect(noticed.virtualOutputLevelNotice == VirtualOutputLevel.muted.notice)
         #expect(noticed.machine == armingMonitor.machine)
 
-        let switching = drive(runningModel(), [.modelSelected("dfn3")])
+        let switching = drive(runningModel(), [.modelSelected("dpdfnet2")])
         #expect(switching.isBusy)
         let noticedSwitching = drive(switching, [.virtualOutputLevelObserved(.turnedDown(scalar: 0.4))])
         #expect(noticedSwitching.virtualOutputLevelNotice != nil)
