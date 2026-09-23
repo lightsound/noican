@@ -71,7 +71,7 @@ never precede the virtual output there.
    make a different device (the built-in output, or other headphones)
    the system default output.
 3. Select the composite device as the microphone, select `Passthrough`
-   or `FastEnhancer-B 48k`, then select On. The engine must reach
+   or `DeepFilterNet3 48k`, then select On. The engine must reach
    `Running`. The private aggregate is hidden from Audio MIDI Setup, so
    read its composition from Console instead (subsystem
    `com.lightsound.noican`, category `engine-diagnostics`, or the

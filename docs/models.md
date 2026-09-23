@@ -12,7 +12,7 @@ cargo run -p noican-cli --release -- models
 cargo run -p noican-cli --release -- fetch
 
 # Download specific models
-cargo run -p noican-cli --release -- fetch fastenhancer-b dpdfnet2
+cargo run -p noican-cli --release -- fetch dpdfnet2 hush-48k
 ```
 
 Every source is public. Downloads from huggingface.co send
@@ -23,20 +23,31 @@ raises Hugging Face's rate limits; no token is required.
 
 | id | model | family | rate | backend | weights source | license |
 |---|---|---|---|---|---|---|
-| `fastenhancer-b` | FastEnhancer-B 48 kHz (ICASSP 2026) | denoise | 48 k | ONNX Runtime | [GitHub release `onnx-48khz-v1`](https://github.com/aask1357/fastenhancer/releases/tag/onnx-48khz-v1) | MIT |
 | `dpdfnet2` | DPDFNet2 48 kHz HR | denoise | 48 k | ONNX Runtime | [sherpa-onnx release](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speech-enhancement-models) | Apache-2.0 |
 | `dpdfnet8` | DPDFNet8 48 kHz HR | denoise | 48 k | ONNX Runtime | [HF Ceva-IP/DPDFNet](https://huggingface.co/Ceva-IP/DPDFNet) (not on the sherpa release yet) | Apache-2.0 |
-| `dfn3` | DeepFilterNet3 | denoise (baseline) | 48 k | tract (embedded in the `deep_filter` crate) | — (no download) | MIT OR Apache-2.0 |
+| `dfn3` | DeepFilterNet3 | denoise (**app default**) | 48 k | tract (embedded in the `deep_filter` crate) | — (no download) | MIT OR Apache-2.0 |
 | `ul-unas` | UL-UNAS (TASLP 2026) | denoise (low-latency) | 16 k | ONNX Runtime | [commit-pinned repo file](https://github.com/Xiaobin-Rong/ul-unas/tree/main/ulunas_onnx/onnx_models) | MIT |
 | `hush` | Hush (Weya AI) | speaker suppression | 16 k | tract (`deep_filter` crate, Hush tarball) | [HF weya-ai/hush](https://huggingface.co/weya-ai/hush) | Apache-2.0 |
 | `hush-48k` | Hush 48k (band-split wrapper around `hush`) | speaker suppression | 48 k out (16 k core) | tract + `noican-models::stages::hush_wideband` | — (depends on `hush`; no files of its own) | Apache-2.0 |
 
 The license column covers the weights only. Training-data terms also
 decide whether a model can ship in the paid app
-([tech-research.md §11](tech-research.md), licensing notes). One
-registered model does not clear that bar: `fastenhancer-b`, whose
-training data forbids commercial use, stays only while it is the app's
-default.
+([tech-research.md §11](tech-research.md), licensing notes).
+
+### Excluded models
+
+Do not register these, whatever their weight license says:
+
+- **FastEnhancer 48 kHz** ([aask1357/fastenhancer](https://github.com/aask1357/fastenhancer),
+  release `onnx-48khz-v1`, all sizes): not usable commercially, so it
+  was removed on 2026-09-23. The weights are MIT, but the training noise
+  ([README, Table 3](https://github.com/aask1357/fastenhancer#48khz))
+  includes TUT Urban Acoustic Scenes 2018. That dataset's license
+  ([Zenodo 1228142](https://zenodo.org/records/1228142), bundled
+  `LICENSE`) grants "experimental and non-commercial purposes" only
+  and counts "selling or distributing the results or content achieved
+  by use of the Work" as prohibited commercial use. The training noise
+  also includes WHAM! noise, which is CC BY-NC 4.0.
 
 Sample-rate/frame-size differences are absorbed by the engine
 (`noican-core::FramedStage`): 16 kHz models are driven through a
@@ -64,7 +75,7 @@ and in [tech-research.md §6.4](tech-research.md).
 cargo run -p noican-cli --release -- process my_recording.wav --out-dir out
 
 # Specific models; comma-separated or repeated
-cargo run -p noican-cli --release -- process my_recording.wav --models fastenhancer-b,dpdfnet2
+cargo run -p noican-cli --release -- process my_recording.wav --models dfn3,dpdfnet2
 ```
 
 Outputs land in `out/<input-stem>/<model-id>.wav` (mono 48 kHz, 16-bit)

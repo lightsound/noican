@@ -10,7 +10,7 @@ ears on a blind listening set. Both come out of one CLI command:
 cargo run -p noican-cli --release -- eval \
   --target  ~/Desktop/noican-eval/voice-builtin.m4a \
   --interferer ~/Desktop/noican-eval/interferer/*.flac \
-  --models passthrough,hush,hush-48k,fastenhancer-b \
+  --models passthrough,hush,hush-48k,dfn3 \
   --out-dir ~/Desktop/noican-eval/out-builtin
 ```
 

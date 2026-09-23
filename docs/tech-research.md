@@ -120,14 +120,12 @@ Open question: whether aggregate drift compensation alone stays glitch-free over
 design1 concluded the Rust `df` crate was the only practical route because DeepFilterNet's public ONNX exports contain only the neural nets (STFT, ERB feature extraction, complex-filter application, and ISTFT must be reimplemented). This premise is outdated:
 
 - **[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)** (k2-fsa, actively maintained) now ships **streaming speech enhancement including the STFT pipeline**, with C/C++/Swift/Rust/Python/etc. bindings ([PR #3324](https://github.com/k2-fsa/sherpa-onnx/pull/3324)). Supported: GTCRN and DPDFNet. The same library also provides Silero VAD and speaker-embedding models — one dependency can cover denoise + VAD + speaker verification.
-- **FastEnhancer** ships its own ONNX streaming inference for plain ONNX Runtime.
 - The original `df` crate still works but upstream DeepFilterNet development has stalled.
 
 ### 5.2 Candidates (real-time, streaming-capable)
 
 | Model | Params | Sample rate | Availability | Assessment |
 |---|---|---|---|---|
-| **FastEnhancer** (ICASSP 2026) ✅ | 28K–207K (T/B/S) | 16 k & **48 k native** | [aask1357/fastenhancer](https://github.com/aask1357/fastenhancer): checkpoints + streaming ONNX | Explicitly optimized for lowest real-world latency on one CPU thread; claims SOTA quality among lightweight streaming models. WASM port ([fastenhancer-web](https://github.com/ryyr-ry/fastenhancer-web)) measures 0.45–3.9 ms per 10.67 ms frame at 48 kHz — native ARM64 will be faster. **Primary candidate** |
 | **DPDFNet** (ceva-ip) ✅ | 2.3–3.6 M | 8/16/**48 k HR** | Official ONNX via [sherpa-onnx](https://k2-fsa.github.io/sherpa/onnx/speech-enhancement/dpdfnet.html) | DeepFilterNet2 + Dual-Path RNN; effectively the maintained DFN successor with graded quality/compute variants (`dpdfnet2_48khz_hr`, `dpdfnet8_48khz_hr`). **Primary candidate** (easiest integration) |
 | DeepFilterNet3 | 2.1 M | 48 k native | Rust `df` crate (tract); ONNX (neural nets only) | The historical baseline; 10 ms hop; runs ~1/3 real time on Apple Silicon CPU. Upstream stalled. Keep as reference in listening tests |
 | **UL-UNAS** (IEEE TASLP 2026) ✅ | ~171K | 16 k | [Xiaobin-Rong/ul-unas](https://github.com/Xiaobin-Rong/ul-unas): checkpoints + streaming ONNX (2026-02) | GTCRN author's successor; PESQ 3.09 vs. GTCRN 2.87 on VCTK-DEMAND. **Low-latency-mode candidate** |
@@ -184,7 +182,7 @@ Known tuning risk (from design1): gate fade time constant — too short clips th
 
 ### 6.4 Decision
 
-*Original plan (superseded by the decision record below):* listening-test **Hush (16 k, no enrollment)** vs. **tse-conv-tasnet-48k (48 k, enrollment)** on recordings that include real family/background speech; if neither satisfies, build the DIY gate (§6.2) on sherpa-onnx primitives; combining is also possible (e.g., FastEnhancer 48 k for NS + gate for speakers).
+*Original plan (superseded by the decision record below):* listening-test **Hush (16 k, no enrollment)** vs. **tse-conv-tasnet-48k (48 k, enrollment)** on recordings that include real family/background speech; if neither satisfies, build the DIY gate (§6.2) on sherpa-onnx primitives; combining is also possible (e.g., a 48 k denoiser for NS + gate for speakers).
 
 > **Decision record (2026-08-31, written down 2026-09-11): no dedicated
 > speaker-suppression feature; the remaining gap is Hush's bandwidth.**
@@ -253,8 +251,8 @@ Known tuning risk (from design1): gate fade time constant — too short clips th
 > (f) neural bandwidth extension: no streaming sub-10 ms CPU model with a
 > permissive licence, and generative when the true band is in the input.
 > High-band *source*: the dry input rather than a 48 kHz denoiser
-> (FastEnhancer-B would raise latency to ≈ 31 ms and need two weight
-> files; follow-up if upper-band hiss is audible). Gate band 4–7 kHz
+> (a light 48 kHz denoiser would raise latency to ≈ 31 ms and need two
+> weight files; follow-up if upper-band hiss is audible). Gate band 4–7 kHz
 > rather than 2–7 / 6–7.2 kHz / the whole band: it is the octave adjacent
 > to the restored band, so the restored band sits on Hush's own spectral
 > tilt (harness, VCTK stand-ins: Hush's own output is ≈ −6 dB at
@@ -370,7 +368,7 @@ v0 operates headphones-only (no AEC). When speaker use becomes a requirement, im
 | [mlx-audio](https://github.com/Blaizzy/mlx-audio) / [speech-swift](https://github.com/soniqo/speech-swift) MLX ports | Real | DeepFilterNet-mlx, MossFormer2_SE_48K_MLX, SAM-Audio (text-guided source separation) on Apple GPU via MLX. Useful for offline batch work on-device; the streaming mic path is better served by CPU ONNX (GPU contention, scheduling jitter) |
 | resemble-enhance, AnyEnhance, Miipher(-2) | Offline / closed | Not applicable |
 
-Dereverberation note: DPDFNet variants claim some dereverb capability; MossFormer2_SE_48K and Sidon handle it offline. If live dereverb matters, compare DPDFNet HR against FastEnhancer in the listening test.
+Dereverberation note: DPDFNet variants claim some dereverb capability; MossFormer2_SE_48K and Sidon handle it offline. If live dereverb matters, compare DPDFNet HR against DeepFilterNet3 in the listening test.
 
 ---
 
@@ -389,7 +387,7 @@ Latency budget (target 20–30 ms end-to-end):
 |---|---|
 | Input buffer (128 frames @ 48 kHz) | ~2.7 ms |
 | Model hop (10 ms frame models) | 10 ms |
-| Model algorithmic delay | ~10–30 ms (model-dependent; FastEnhancer/Hush ≈ 20 ms class) |
+| Model algorithmic delay | ~10–40 ms (model-dependent; Hush ≈ 20 ms class, DFN3 40 ms) |
 | Ring buffers + virtual device output | ~5 ms |
 
 ---
@@ -426,11 +424,11 @@ Status of the two direct competitors as checked on 2026-09-11 (see also the §6.
 | Virtual device | BlackHole fork via joycast.driver pattern, Developer ID signed | Stock BlackHole or NNA (no build); libASPL / tympan-aspl (full custom) |
 | Capture & output | AUHAL direct (`AudioDeviceCreateIOProcIDWithBlock`), 128–256 frame buffers | — (AVAudioEngine is not an option for device-targeted I/O) |
 | Drift | Private Aggregate Device with drift compensation | DIY adaptive resampler |
-| NS model (quality) | FastEnhancer 48 k **or** DPDFNet 48 k HR — decided by listening test | DeepFilterNet3 (`df` crate); CoreML DFN3 route |
+| NS model (quality) | DeepFilterNet3 (`df` crate; app default since 2026-09-23) **or** DPDFNet 48 k HR — decided by daily use | CoreML DFN3 route |
 | NS model (low-latency mode) | UL-UNAS | GTCRN (easier integration via sherpa-onnx) |
 | Background speakers | **Hush 16 k** (decided 2026-08-31, §6.4 decision record); the 48 kHz-output candidate `hush-48k` is in the tree (2026-09-11 decision record), default unchanged pending the owner's listening test | tse-conv-tasnet-48k (weights private) / DIY VAD + ECAPA gate (mellonella/voce design) — not planned |
 | AEC | None in v0 (headphones) | Process tap + `aec3` (WebRTC AEC3) with macOS 26 watchdog |
-| Inference runtime | ONNX Runtime (FastEnhancer); sherpa-onnx (DPDFNet/GTCRN, VAD, speaker embeddings) | tract via `df` crate |
+| Inference runtime | ONNX Runtime (DPDFNet, UL-UNAS); tract via `df` crate (DFN3, Hush) | sherpa-onnx (GTCRN, VAD, speaker embeddings) |
 | Core language | Rust (audio engine, inference, gating) | — |
 | UI | SwiftUI `MenuBarExtra` from the start (on/off, input device picker, status; strength/meters/mode switch and `SMAppService` login item added incrementally). Rust engine embedded as a static library behind a C ABI, or run as a separate daemon process with a small IPC control plane | CLI + config + launchd (if the UI ever blocks progress) |
 | Enhancement extras | vDSP/fundsp EQ + compressor (later) | Sidon offline cleanup; Stream.FM (watch) |
@@ -440,15 +438,14 @@ Status of the two direct competitors as checked on 2026-09-11 (see also the §6.
 Personal (non-distributed) use carries no obligations. If the app is ever **sold or distributed**, the stack splits as follows (not legal advice; re-verify licenses at ship time):
 
 **Permissive — safe for closed-source commercial use** (attribution/notice files required):
-FastEnhancer code (MIT), DPDFNet code (Apache-2.0), Hush code (Apache-2.0), DeepFilterNet code + DFN3 weights (MIT/Apache-2.0 dual), sherpa-onnx (Apache-2.0), ONNX Runtime (MIT), libASPL (MIT), Sidon (MIT), speech-swift (MIT), JointAEC-NS (MIT), Krasp / NoNoise-Mac / MetalVoice (MIT), webrtc-audio-processing (BSD-3).
+DPDFNet code (Apache-2.0), Hush code (Apache-2.0), DeepFilterNet code + DFN3 weights (MIT/Apache-2.0 dual), sherpa-onnx (Apache-2.0), ONNX Runtime (MIT), libASPL (MIT), Sidon (MIT), speech-swift (MIT), JointAEC-NS (MIT), Krasp / NoNoise-Mac / MetalVoice (MIT), webrtc-audio-processing (BSD-3).
 
-**Model weights: the training data decides** (audit 2026-09-23). Every registered model's weights carry MIT or Apache-2.0, but a weight license cannot grant rights the trainer did not have. DFN3 is trained on DNS Challenge 4, whose component corpora are all commercially licensed (DNS-Challenge README, "Dataset licenses"), so it is clear. The others:
-- FastEnhancer 48 kHz release (`onnx-48khz-v1`): its training noise includes **TUT Urban Acoustic Scenes 2018**, licensed "only for experimental and non-commercial purposes", with commercial use defined to include "selling or distributing the results or content achieved by use of the Work"; it also includes WHAM! noise (CC BY-NC 4.0). Not usable commercially: T/S/M/L were removed on 2026-09-23, and `fastenhancer-b` stays only as the current default until a replacement is chosen. The AI-Hub (Korea) speech in the same release is not the blocker: the AI-Hub FAQ allows trained models to be sold and distributed, provided the datasets and AI-Hub are credited.
+**Model weights: the training data decides** (audit 2026-09-23). Every registered model's weights carry MIT or Apache-2.0, but a weight license cannot grant rights the trainer did not have. DFN3 is trained on DNS Challenge 4, whose component corpora are all commercially licensed (DNS-Challenge README, "Dataset licenses"), so it is clear. Models excluded for their training data are listed in [models.md](models.md) ("Excluded models"). The others:
 - Hush (`hush`, `hush-48k`): noise includes ESC-50 (CC BY-NC 3.0) and unspecified FreeSound clips. The DNS noise it lists is fine: `DATASETS.md` calls it a "Microsoft Research License", but the DNS terms are the permissive per-corpus licenses. Unclear until Weya AI confirms.
 - DPDFNet2/8: noise includes FSD50K, which contains CC BY-NC clips (about 12 %). Unclear until Ceva confirms that those clips were excluded.
 - UL-UNAS: the released checkpoint is `model_trained_on_dns3`, and the paper adds the DiDiSpeech Mandarin corpus, distributed through DiDi's academic-research program. Unclear until the authors confirm the checkpoint's data.
 
-Generic CC BY-NC training data counts as *unclear*, not *prohibited*: the NC restriction binds only uses that need copyright permission, and whether distributing a trained model needs it is unsettled (Creative Commons, "Using CC-licensed Works for AI Training", 2025). A dataset license that names distributing results or trained models as prohibited, as the TUT license does, counts as prohibited.
+Generic CC BY-NC training data counts as *unclear*, not *prohibited*: the NC restriction binds only uses that need copyright permission, and whether distributing a trained model needs it is unsettled (Creative Commons, "Using CC-licensed Works for AI Training", 2025). A dataset license that names distributing results or trained models as prohibited counts as prohibited.
 
 **Copyleft but workable — obligations attach to the driver only**:
 The BlackHole-fork driver (GPL-3.0) is a separate program loaded by `coreaudiod`, not linked into the app, so the GPL does not extend to the app itself. Distribution requires publishing the driver source under GPL-3.0 — exactly what JoyCast does with [joycast.driver](https://github.com/joymacstudio/joycast.driver), which is the precedent for this model. Note that the GPL explicitly permits **selling** ("You may charge any price or no price for each copy"); the only obligation is source access for the GPL-covered component. Since publishing source is acceptable for this project, no paid license is needed. Alternatives if source publication ever becomes undesirable: Existential Audio offers commercial BlackHole licenses (no public pricing; individual negotiation via devinroth@existential.audio). Separately from the GPL, the **BlackHole name, logo, and branding are Existential Audio trademarks** (all rights reserved) — the fork must ship under our own name, which the joycast.driver build-time renaming already handles.
@@ -528,15 +525,13 @@ Everything the former Phase -1 needed, built as the product itself:
   frame-size differences (internal resampling/buffering), so the engine always
   sees 48 kHz frames. Adding a future model = one new trait impl.
 - **Model lineup** (all via ONNX Runtime unless noted; sources in §14):
-  FastEnhancer 48 k (T/B/S first, M/L optional), DPDFNet 48 k HR
-  (`dpdfnet2_48khz_hr`, `dpdfnet8_48khz_hr`), DeepFilterNet3 (baseline),
-  UL-UNAS (16 k low-latency), Hush 16 k (no enrollment), tse-conv-tasnet-48k
-  (enrollment via an external 192-dim ECAPA-TDNN embedding — the TSE
+  DPDFNet 48 k HR (`dpdfnet2_48khz_hr`, `dpdfnet8_48khz_hr`),
+  DeepFilterNet3 (baseline), UL-UNAS (16 k low-latency), Hush 16 k (no
+  enrollment), tse-conv-tasnet-48k (enrollment via an external 192-dim ECAPA-TDNN embedding — the TSE
   distribution does not include the embedding model; use a public ECAPA ONNX
   from sherpa-onnx or SpeechBrain). *tse-conv-tasnet-48k was removed from
-  the tree on 2026-09-23 (§6.4 decision record), and so were FastEnhancer
-  T/S/M/L, because their training data forbids commercial use (§11
-  licensing notes).*
+  the tree on 2026-09-23 (§6.4 decision record). Models excluded for
+  their training data are listed in [models.md](models.md).*
 - **Model weights**: downloader (or documented manual steps) fetching from the
   official releases listed in §14; weights are never committed to the repo.
 - **CLI file mode**: batch-process WAV files through any/all models with
@@ -588,10 +583,10 @@ Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level 
 
 ## 13. Open Questions
 
-1. Listening-test outcomes (§12 Phase 0, CLI comparison + live switching) — the entire stack pivots on these. *Speaker-suppression half answered 2026-08-31* (§6.4 decision record): Hush suppresses background speech sufficiently; no dedicated stage needed. The preferred denoise model remains a matter of daily use (default `fastenhancer-b`).
+1. Listening-test outcomes (§12 Phase 0, CLI comparison + live switching) — the entire stack pivots on these. *Speaker-suppression half answered 2026-08-31* (§6.4 decision record): Hush suppresses background speech sufficiently; no dedicated stage needed. The preferred denoise model remains a matter of daily use (default `dfn3` since 2026-09-23).
 2. Hush's behavior when the background speaker is *louder* than the user (trained at 12–24 dB SIR below primary). Not tested; stays open as a known limit rather than a blocker (upstream's retrain for louder background speech is still unreleased as of 2026-09-11).
 3. tse-conv-tasnet-48k real-world quality given its small training set (VCTK + DEMAND). Moot: not planned, the weights are private, and the entry was removed from the tree on 2026-09-23 (§6.4 decision records).
-4. Long-session (2 h+) stability of aggregate-device drift compensation. Owner report of 2026-09-10 ([acceptance/2026-09-10-long-session-owner-report.md](acceptance/2026-09-10-long-session-owner-report.md)): a meeting of about two hours with a Shure MV7i and FastEnhancer-B ran without the participants noticing anything; no reference tone, recording, or memory measurement was taken and the microphone's rate (hence the transport — aggregate path presumed, as in every earlier MV7i record) was not read, so the measurement-based verification of the Clock drift and endurance procedure is still outstanding and the question stays open.
+4. Long-session (2 h+) stability of aggregate-device drift compensation. Owner report of 2026-09-10 ([acceptance/2026-09-10-long-session-owner-report.md](acceptance/2026-09-10-long-session-owner-report.md)): a meeting of about two hours with a Shure MV7i and a light 48 kHz denoiser ran without the participants noticing anything; no reference tone, recording, or memory measurement was taken and the microphone's rate (hence the transport — aggregate path presumed, as in every earlier MV7i record) was not read, so the measurement-based verification of the Clock drift and endurance procedure is still outstanding and the question stays open.
 5. DIY gate fade time constant (if the DIY route is needed): onset clipping vs. interferer leakage.
 6. How meeting apps treat the virtual device's reported latency/safety offsets (BlackHole reports zero).
 7. AEC engine choice, only relevant if AEC is built: `aec3` crate maturity vs. C++ `webrtc-audio-processing` vs. neural LocalVQE v1.4-AEC (16 kHz constraint).
@@ -618,7 +613,6 @@ Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level 
 - macOS 26 tap regression mitigation: https://github.com/KonradDallaOrg/dimmy/commit/a81a902a6de7a2dfb8624aaff9edba0a576471ce
 
 ### Noise suppression
-- FastEnhancer: https://github.com/aask1357/fastenhancer (paper: arXiv:2509.21867) / WASM: https://github.com/ryyr-ry/fastenhancer-web
 - sherpa-onnx speech enhancement: https://github.com/k2-fsa/sherpa-onnx (PR #3324) / DPDFNet docs: https://k2-fsa.github.io/sherpa/onnx/speech-enhancement/dpdfnet.html
 - DeepFilterNet: https://github.com/Rikorose/DeepFilterNet
 - GTCRN: https://github.com/Xiaobin-Rong/gtcrn / UL-UNAS: https://github.com/Xiaobin-Rong/ul-unas (arXiv:2503.00340)

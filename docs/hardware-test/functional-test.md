@@ -14,12 +14,12 @@ Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
    - a "Model & strength" disclosure row (below the Microphone list),
      collapsed on first launch; its expansion state is remembered
      across launches, and while collapsed the row shows the active
-     model and strength (e.g. "FastEnhancer-B 48k · 100%"). Expanding
+     model and strength (e.g. "DeepFilterNet3 48k · 100%"). Expanding
      it reveals the Model selector and the Strength slider.
    - the Model selector (inside "Model & strength"): **every registry
      stage** as rows with a checkmark on the selection — Passthrough,
-     FastEnhancer-B, DPDFNet2, DPDFNet8, DeepFilterNet3,
-     UL-UNAS, Hush 16k, and Hush 48k, all selectable; the default model
+     DPDFNet2, DPDFNet8, DeepFilterNet3, UL-UNAS, Hush 16k, and
+     Hush 48k, all selectable; the default model
      row is annotated "Default". Hovering a row pops the model's profile
      card out beside that row after a short delay: name, tag, four dot
      ratings (Noise removal / Voice quality / Responsiveness /
@@ -31,7 +31,7 @@ Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
      critically — hovering must never close the menu popover itself.
    The monitoring section (level bars) must be absent while the mode is
    Off and appear while the engine runs.
-4. Select a physical microphone and `FastEnhancer-B 48k`.
+4. Select a physical microphone and `DeepFilterNet3 48k`.
 5. Select On and grant microphone access when macOS prompts.
 6. Confirm status changes to `Running` (the Model picker shows the
    active model).
@@ -51,7 +51,7 @@ Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
     **100%** (the unity dry path is identical on both models, so any
     partial strength narrows the gap and can mask a persisting 100%
     deficit), speak the same sentence through `Hush 16k` and
-    `FastEnhancer-B 48k` back to back while recording. The perceived
+    `DeepFilterNet3 48k` back to back while recording. The perceived
     speech loudness must match between the two (within about
     1 dB of voiced level in the waveform). Hush's network attenuates
     speech itself — a measured −3.4 dB to −1.5 dB voiced-frame RMS
@@ -76,8 +76,8 @@ working.
 
 While recording one continuous file:
 
-1. Switch among `fastenhancer-b`, `dpdfnet2`, `dpdfnet8`, `dfn3`,
-   `ul-unas`, `hush`, and `hush-48k`.
+1. Switch among `dpdfnet2`, `dpdfnet8`, `dfn3`, `ul-unas`, `hush`, and
+   `hush-48k`.
 2. Place markers immediately before each change.
 3. Inspect the waveform around each marker at sample level.
 4. Pass criteria:
@@ -155,5 +155,5 @@ this build:
    −3.4 dB to −1.5 dB voiced-RMS deficit, and no clipping artifacts
    appear on loud speech.
 7. **Full model list** *(new)*: the Model picker shows every `main` registry
-   stage (Passthrough, FastEnhancer-B, DPDFNet2/8, DeepFilterNet3,
-   UL-UNAS, Hush 16k, and Hush 48k).
+   stage (Passthrough, DPDFNet2/8, DeepFilterNet3, UL-UNAS, Hush 16k,
+   and Hush 48k).

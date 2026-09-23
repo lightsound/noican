@@ -9,7 +9,6 @@ models, adapted code, and vendored assets.
 
 | Component | Source | License |
 |---|---|---|
-| FastEnhancer-B ONNX model (`fastenhancer_b`, 48 kHz) | https://github.com/aask1357/fastenhancer (release `onnx-48khz-v1`) | MIT |
 | DPDFNet ONNX models (`dpdfnet2_48khz_hr`, `dpdfnet8_48khz_hr`) | https://github.com/ceva-ip/DPDFNet / https://huggingface.co/Ceva-IP/DPDFNet (redistributed by https://github.com/k2-fsa/sherpa-onnx) | Apache-2.0 |
 | DeepFilterNet3 model bundle | https://github.com/Rikorose/DeepFilterNet (embedded via the `deep_filter` crate) | MIT OR Apache-2.0 |
 | UL-UNAS streaming ONNX | https://github.com/Xiaobin-Rong/ul-unas | MIT |
@@ -69,7 +68,4 @@ models, adapted code, and vendored assets.
 - License status of all model weights must be re-verified at ship time if
   the app is ever sold or distributed (docs/tech-research.md §11).
   The weight licenses above do not settle commercial use on their own:
-  the training-data terms count too. FastEnhancer's 48 kHz training data
-  includes TUT Urban Acoustic Scenes 2018, whose license prohibits
-  "selling or distributing the results or content achieved by use of
-  the Work", so `fastenhancer-b` must not ship in a paid release as is.
+  the training-data terms count too (docs/models.md, "Excluded models").

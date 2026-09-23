@@ -39,19 +39,19 @@ translation flag means the budget numbers measure scheduling or
 translation overhead, not model cost (the first hardware run,
 [2026-09-02](../acceptance/2026-09-02-underrun-baseline.md), showed
 exactly that failure mode before the worker was promoted: chronic
-41–49% budget misses on FastEnhancer-L and one-shot 40 ms stalls even
-on light models).
+41–49% budget misses on the heaviest model then registered and
+one-shot 40 ms stalls even on light models).
 
 1. Select On with a 48 kHz microphone (aggregate path) and record from
    the virtual device throughout. Confirm the transport line reads
    `worker realtime scheduling true` and
    `Rosetta-translated process false`.
-2. For each of `FastEnhancer-B 48k` and `DPDFNet2 48k HR` (light
+2. For each of `UL-UNAS 16k` and `DPDFNet2 48k HR` (light
    controls), then `DPDFNet8 48k HR` and `DeepFilterNet3 48k`
    (suspects): select the model, speak continuously for at least 60
    seconds, and note every diagnostic line (or its absence).
 3. Pass criteria for the controls: **no underrun line at all** for
-   FastEnhancer-B (and the other light models) — a nonzero count on a
+   UL-UNAS (and the other light models) — a nonzero count on a
    light model is a false positive and fails this check.
 4. For the suspects, record the counts verbatim (model, underruns,
    over-budget blocks / total blocks, max ms) into the result record.
@@ -77,7 +77,7 @@ when:
 0. **Worker is real-time**: the engine-start transport line reads
    `worker realtime scheduling true` and
    `Rosetta-translated process false`.
-1. **No false positives**: light models (FastEnhancer-B and friends)
+1. **No false positives**: light models (UL-UNAS and friends)
    log zero underruns over 60+ seconds of continuous speech on the
    aggregate path.
 2. **Counts recorded**: DeepFilterNet3, DPDFNet8 (and any other
