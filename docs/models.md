@@ -32,11 +32,11 @@ raises Hugging Face's rate limits; no token is required.
 | `hush-48k` | Hush 48k (band-split wrapper around `hush`) | speaker suppression | 48 k out (16 k core) | tract + `noican-models::stages::hush_wideband` | — (depends on `hush`; no files of its own) | Apache-2.0 |
 
 The license column covers the weights only. Training-data terms also
-decide whether a model can ship in the paid app; models whose training
-data forbids commercial use are not registered
-([tech-research.md §11](tech-research.md), licensing notes).
-`fastenhancer-b` is such a model and stays registered only while it is
-the app's default.
+decide whether a model can ship in the paid app
+([tech-research.md §11](tech-research.md), licensing notes). One
+registered model does not clear that bar: `fastenhancer-b`, whose
+training data forbids commercial use, stays only while it is the app's
+default.
 
 Sample-rate/frame-size differences are absorbed by the engine
 (`noican-core::FramedStage`): 16 kHz models are driven through a

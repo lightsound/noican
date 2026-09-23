@@ -35,7 +35,10 @@ final class AppState: ObservableObject {
     let models = RustEngine.models()
 
     /// Model selected on first launch (also labeled "Default" in the
-    /// model list).
+    /// model list). `fastenhancer-b` must be replaced before a paid
+    /// release: its training data forbids commercial use, and the
+    /// registry keeps it only because it is the default
+    /// (docs/tech-research.md §11, licensing notes).
     nonisolated static let defaultModelID = "fastenhancer-b"
 
     /// `UserDefaults` keys for the persisted preferences. Only picker

@@ -48,9 +48,8 @@ on light models).
    `Rosetta-translated process false`.
 2. For each of `FastEnhancer-B 48k` and `DPDFNet2 48k HR` (light
    controls), then `DPDFNet8 48k HR` and `DeepFilterNet3 48k`
-   (suspects): select the model, speak
-   continuously for at least 60 seconds, and note every diagnostic
-   line (or its absence).
+   (suspects): select the model, speak continuously for at least 60
+   seconds, and note every diagnostic line (or its absence).
 3. Pass criteria for the controls: **no underrun line at all** for
    FastEnhancer-B (and the other light models) — a nonzero count on a
    light model is a false positive and fails this check.
@@ -82,8 +81,8 @@ when:
    log zero underruns over 60+ seconds of continuous speech on the
    aggregate path.
 2. **Counts recorded**: DeepFilterNet3, DPDFNet8 (and any other
-   suspect) have their underrun and block-time numbers
-   recorded verbatim in the result record.
+   suspect) have their underrun and block-time numbers recorded
+   verbatim in the result record.
 3. **Counts match ears**: models that log underruns are exactly the
    models whose virtual-microphone recordings stutter.
 4. **Split transport covered**: at least one model's counters were

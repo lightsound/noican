@@ -72,9 +72,9 @@ pub static ALL_MODELS: &[ModelSpec] = &[
         family: ModelFamily::Denoise,
         sample_rate: 48_000,
         license: "MIT",
-        // The 48 kHz release's training data includes non-commercial
-        // corpora (docs/tech-research.md §11); registered only while it
-        // is the app's default.
+        // The 48 kHz release's training data forbids commercial use
+        // (docs/tech-research.md §11); registered only while it is the
+        // app's default (`AppState.defaultModelID` in macos/).
         files: &[FileSpec {
             name: "fastenhancer_b.onnx",
             url: "https://github.com/aask1357/fastenhancer/releases/download/onnx-48khz-v1/fastenhancer_b.onnx",
