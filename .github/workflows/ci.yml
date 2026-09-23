@@ -125,7 +125,7 @@ jobs:
         # "com.lightsound.noican." prefix with a segment after the dot.
         run: >
           strings external/noican-driver/dist/Noican.driver/Contents/MacOS/Noican
-          | grep -E '^com\.lightsound\.noican\.[^.]+_UID$'
+          | grep -E '^com\.lightsound\.noican\..+_UID$'
       - uses: actions/upload-artifact@v4
         with:
           name: noican-macos-arm64
