@@ -264,6 +264,9 @@ struct LicenseMigrationTests {
         clock.advance(day)
         await license.refreshIfDue()
         #expect(backend.calls.count == 4)
+        clock.advance(-day)
+        await license.refreshIfDue()
+        #expect(backend.calls.count == 5, "a backwards clock makes the re-check due")
     }
 
     @Test("Deactivation releases the slot and forgets the key")
