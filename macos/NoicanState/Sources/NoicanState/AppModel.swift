@@ -208,8 +208,9 @@ public struct AppModel: Hashable, Sendable {
     /// transitions.
     public var isEngineAvailable: Bool
     /// Whether the license lets the user start noise cancellation. Gates
-    /// Preview/On taps only: a running session (and its automatic
-    /// rebuilds) is never interrupted by a license change.
+    /// Preview/On taps and every engine start except a rebuild of a
+    /// session that is still live: a running session is never
+    /// interrupted by a license change (see `LicenseGate.swift`).
     public var isProcessingAllowed: Bool
 
     public init(

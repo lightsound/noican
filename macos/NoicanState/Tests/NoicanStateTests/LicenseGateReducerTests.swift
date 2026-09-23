@@ -63,6 +63,34 @@ struct LicenseGateReducerTests {
         #expect(rebuilt.messages.licenseRequired == nil)
     }
 
+    @Test("A session that died is not restarted by a microphone pick without a license")
+    func deadSessionNotRestarted() {
+        let died = drive(runningModel(), [.processingAllowanceChanged(false), .audioStalled])
+        #expect(died.mode == .on)
+        #expect(died.liveSession == nil, "the runtime stop tore the transport down")
+        let (state, effects) = step(died, .microphoneSelected(usbMic.uid))
+        #expect(effects.isEmpty, "no new engine start")
+        #expect(state.selectedInputUID == usbMic.uid, "the pick itself is kept")
+        #expect(state.messages.licenseRequired == AppReducer.licenseRequiredMessage)
+        #expect(state.machine == died.machine)
+    }
+
+    @Test("A failed live microphone switch still falls back to the working device without a license")
+    func liveSwitchFallbackAllowed() {
+        let switching = drive(runningModel(), [.processingAllowanceChanged(false), .microphoneSelected(usbMic.uid)])
+        let (state, effects) = step(switching, .startCompleted(error: "USB device busy"))
+        #expect(state.selectedInputUID == builtInMic.uid)
+        #expect(effects.contains { if case .startEngine = $0 { true } else { false } })
+        #expect(state.messages.licenseRequired == nil)
+    }
+
+    @Test("A rate-change rebuild of a live session passes without a license")
+    func rateRebuildAllowed() {
+        let running = drive(runningModel(), [.processingAllowanceChanged(false)])
+        let (_, effects) = step(running, .inputSampleRateChanged)
+        #expect(effects.contains { if case .startEngine = $0 { true } else { false } })
+    }
+
     @Test("Pickers keep working without a license")
     func pickersWork() {
         let state = drive(unlicensed(), [.microphoneSelected(usbMic.uid), .modelSelected("dfn3"), .intensityChanged(0.5)])

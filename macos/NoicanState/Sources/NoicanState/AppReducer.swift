@@ -642,6 +642,9 @@ extension AppReducer {
         revertInputUID: String?
     ) -> (state: AppModel, effects: [AppEffect]) {
         var state = state
+        if refusesStartWithoutLicense(&state) {
+            return (state, [])
+        }
         // The teardown clears any live session; a model-switch message
         // would describe the torn-down engine, so it clears with it, and
         // the virtual-output level reading is re-taken once the new
