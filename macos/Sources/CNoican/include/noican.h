@@ -80,7 +80,11 @@ float noican_engine_intensity(const void *handle);
 uint64_t noican_engine_frames_processed(const void *handle);
 
 /* Diagnostics for real-time budget violations (all 0 while stopped or
- * for a null handle). output_underruns counts output callbacks that
+ * for a null handle). input_overruns counts input samples the capture
+ * ring dropped because it was full — the inference worker (or the
+ * capture side) fell behind by more than the whole ring, audible as
+ * clipped input reaching the models. output_underruns counts output
+ * callbacks that
  * delivered no real audio at all — the output ring dry for the entire
  * I/O period — after the ring first carried real audio (start-up ramp
  * excluded; partial zero-fills are benign block-quantization jitter
@@ -102,6 +106,7 @@ uint64_t noican_engine_frames_processed(const void *handle);
  * mutex (1 Hz diagnostics, not the 20 Hz meter path); the reset is a
  * no-op while stopped. */
 uint64_t noican_engine_output_underruns(const void *handle);
+uint64_t noican_engine_input_overruns(const void *handle);
 uint64_t noican_engine_worker_blocks(const void *handle);
 uint64_t noican_engine_worker_blocks_over_budget(const void *handle);
 uint64_t noican_engine_worker_block_max_ns(const void *handle);

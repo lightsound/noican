@@ -88,8 +88,16 @@ final class AggregateDevice: @unchecked Sendable {
             )
         }
         identifier = aggregate
-        try waitUntilAlive()
-        try configureTiming()
+        do {
+            try waitUntilAlive()
+            try configureTiming()
+        } catch {
+            // A thrown create must leave nothing behind: the aggregate
+            // above is this object's only recorded state, so the caller
+            // cannot reach it to destroy it itself.
+            destroy()
+            throw error
+        }
         let composition = AggregateComposition(
             deviceID: aggregate,
             virtualOutputChannels: virtualOutputChannels

@@ -22,6 +22,10 @@ final class EngineDiagnostics {
     /// rebases silently).
     private var lastUnderrunCount: UInt64 = 0
 
+    /// Last input-overrun count already reported. Same reset contract
+    /// as `lastUnderrunCount` (the engine counters reset together).
+    private var lastInputOverrunCount: UInt64 = 0
+
     /// Whether the one-time transport line was written for this start.
     private var startupLogged = false
 
@@ -46,6 +50,7 @@ final class EngineDiagnostics {
     /// Rebases the baseline for a fresh transport (engine start).
     func reset() {
         lastUnderrunCount = 0
+        lastInputOverrunCount = 0
         startupLogged = false
     }
 
@@ -81,21 +86,34 @@ final class EngineDiagnostics {
         }
         let underruns = engine.outputUnderruns
         defer { lastUnderrunCount = underruns }
-        guard underruns > lastUnderrunCount else {
-            return
+        if underruns > lastUnderrunCount {
+            let overBudget = engine.workerBlocksOverBudget
+            let blocks = engine.workerBlocks
+            let maxMs = Double(engine.workerBlockMaxNs) / 1_000_000
+            Self.log.warning(
+                """
+                Output underruns: \(underruns, privacy: .public) \
+                (model: \(activeModelID, privacy: .public)); \
+                worker blocks over 10 ms budget: \(overBudget, privacy: .public)\
+                /\(blocks, privacy: .public), \
+                max \(maxMs, format: .fixed(precision: 1), privacy: .public) ms
+                """
+            )
         }
-        let overBudget = engine.workerBlocksOverBudget
-        let blocks = engine.workerBlocks
-        let maxMs = Double(engine.workerBlockMaxNs) / 1_000_000
-        Self.log.warning(
-            """
-            Output underruns: \(underruns, privacy: .public) \
-            (model: \(activeModelID, privacy: .public)); \
-            worker blocks over 10 ms budget: \(overBudget, privacy: .public)\
-            /\(blocks, privacy: .public), \
-            max \(maxMs, format: .fixed(precision: 1), privacy: .public) ms
-            """
-        )
+        // Input-side counterpart: capture-ring overruns drop real
+        // audio before it ever reaches the engine — underruns alone
+        // cannot show it, and `framesProcessed` still advances.
+        let overruns = engine.inputOverruns
+        defer { lastInputOverrunCount = overruns }
+        if overruns > lastInputOverrunCount {
+            Self.log.warning(
+                """
+                Input overruns: \(overruns, privacy: .public) samples dropped \
+                (model: \(activeModelID, privacy: .public)) — \
+                the capture ring filled faster than the worker drained it
+                """
+            )
+        }
     }
 
     /// Records a reading of the virtual output device's own volume/mute

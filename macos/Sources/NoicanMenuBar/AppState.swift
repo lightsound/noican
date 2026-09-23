@@ -3,6 +3,7 @@ import CoreAudio
 import Foundation
 import NoicanState
 import ServiceManagement
+import os
 
 /// The runtime shell around the pure state machine in the `NoicanState`
 /// package: it samples the environment (Core Audio device lists,
@@ -13,6 +14,10 @@ import ServiceManagement
 /// the reducer; nothing here changes `model` except `dispatch(_:)`.
 @MainActor
 final class AppState: ObservableObject {
+    private static let log = Logger(
+        subsystem: "com.lightsound.noican", category: "engine-diagnostics"
+    )
+
     /// The reducer state, replaced wholesale by `dispatch(_:)`. The UI
     /// renders its projections (`statusText`, `phase`, message slots, …),
     /// which are all derived from settled snapshots.
@@ -405,7 +410,9 @@ final class AppState: ObservableObject {
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-        _ = AudioObjectAddPropertyListenerBlock(
+        // A failed registration would leave topology changes silently
+        // unnoticed — log the status instead of discarding it.
+        let status = AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject),
             &address,
             DispatchQueue.main
@@ -418,6 +425,9 @@ final class AppState: ObservableObject {
                 // machines whose headphone jack is a separate device).
                 self?.checkMonitorSafety()
             }
+        }
+        if status != noErr {
+            Self.log.warning("Device-list listener registration failed (status \(status))")
         }
     }
 }
@@ -598,8 +608,19 @@ extension AppState {
                 }
             }
             var address = Self.monitorDataSourceAddress
-            _ = AudioObjectAddPropertyListenerBlock(device, &address, DispatchQueue.main, block)
-            monitorSafetyListener = (device, block)
+            let status = AudioObjectAddPropertyListenerBlock(
+                device, &address, DispatchQueue.main, block
+            )
+            if status == noErr {
+                monitorSafetyListener = (device, block)
+            } else {
+                // Without the registration the listener is dead — do
+                // not store it, and surface why the safety check
+                // stopped reacting to jack reassignments.
+                Self.log.warning(
+                    "Monitor-safety listener registration failed (status \(status))"
+                )
+            }
         } else if let listener = monitorSafetyListener {
             var address = Self.monitorDataSourceAddress
             _ = AudioObjectRemovePropertyListenerBlock(
@@ -689,9 +710,13 @@ extension AppState {
         if let session = model.transportSession,
            activeCaptureRate != nil,
            let device = allDevices.first(where: { $0.uid == session.inputUID }) {
-            guard inputRateListener == nil else {
+            guard inputRateListener?.device != device.id else {
                 return
             }
+            // The running microphone changed underneath us (a start
+            // attempt switched mics while a listener survived from the
+            // previous transport): rebind before registering.
+            removeInputRateListener()
             let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
                 // Delivered on the main queue, which is the main actor.
                 MainActor.assumeIsolated {
@@ -699,8 +724,18 @@ extension AppState {
                 }
             }
             var address = Self.nominalSampleRateAddress
-            _ = AudioObjectAddPropertyListenerBlock(device.id, &address, DispatchQueue.main, block)
-            inputRateListener = (device.id, block)
+            let status = AudioObjectAddPropertyListenerBlock(
+                device.id, &address, DispatchQueue.main, block
+            )
+            if status == noErr {
+                inputRateListener = (device.id, block)
+            } else {
+                // The 1 Hz stall poll still catches a rate
+                // renegotiation; log why the notification path is dead.
+                Self.log.warning(
+                    "Input-rate listener registration failed (status \(status))"
+                )
+            }
             // The effective rate settles at capture start (Bluetooth
             // renegotiates when the HFP link comes up), which can race
             // the start effect's read: compare once at attach time so a
@@ -708,16 +743,26 @@ extension AppState {
             // rather than waiting for a notification that may never
             // fire again.
             checkInputRate()
-        } else if let listener = inputRateListener {
-            var address = Self.nominalSampleRateAddress
-            _ = AudioObjectRemovePropertyListenerBlock(
-                listener.device,
-                &address,
-                DispatchQueue.main,
-                listener.block
-            )
-            inputRateListener = nil
+        } else {
+            removeInputRateListener()
         }
+    }
+
+    /// Drops the input-rate listener, if any. Removal of a device that
+    /// disappeared in the meantime fails harmlessly, so the status is
+    /// ignored.
+    private func removeInputRateListener() {
+        guard let listener = inputRateListener else {
+            return
+        }
+        var address = Self.nominalSampleRateAddress
+        _ = AudioObjectRemovePropertyListenerBlock(
+            listener.device,
+            &address,
+            DispatchQueue.main,
+            listener.block
+        )
+        inputRateListener = nil
     }
 
     /// Re-reads the running microphone's nominal rate and rebuilds the
@@ -756,7 +801,7 @@ extension AppState {
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-        _ = AudioObjectAddPropertyListenerBlock(
+        let status = AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject),
             &address,
             DispatchQueue.main
@@ -765,6 +810,9 @@ extension AppState {
             MainActor.assumeIsolated {
                 self?.refreshPreviewAvailability()
             }
+        }
+        if status != noErr {
+            Self.log.warning("Default-output listener registration failed (status \(status))")
         }
     }
 }

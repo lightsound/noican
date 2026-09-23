@@ -111,6 +111,11 @@ pub(super) struct CaptureContext {
     /// Heartbeat: capture frames delivered since start (see
     /// [`Runtime::frames_processed`]).
     frames: Arc<AtomicU64>,
+    /// Diagnostic: native samples dropped because the capture ring was
+    /// full — the worker fell behind by more than the whole ring
+    /// (relaxed atomic add, same pattern as `frames`; see
+    /// [`Runtime::input_overruns`]).
+    input_overruns: Arc<AtomicU64>,
 }
 
 /// Render context of the output-only AUHAL on the virtual output.
@@ -180,6 +185,7 @@ pub(super) fn start(
     let faulted = Arc::new(AtomicBool::new(false));
     let frames = Arc::new(AtomicU64::new(0));
     let underruns = Arc::new(AtomicU64::new(0));
+    let input_overruns = Arc::new(AtomicU64::new(0));
     let block_stats = Arc::new(WorkerBlockStats::new());
     let worker_realtime = Arc::new(AtomicBool::new(false));
 
@@ -193,6 +199,7 @@ pub(super) fn start(
         faulted: Arc::clone(&faulted),
         samples_ready: Arc::clone(&samples_ready),
         frames: Arc::clone(&frames),
+        input_overruns: Arc::clone(&input_overruns),
     });
     attach_input_callback(capture_unit.raw(), capture_context.raw().cast())?;
     capture_unit.initialize()?;
@@ -264,6 +271,7 @@ pub(super) fn start(
         samples_ready,
         frames,
         underruns,
+        input_overruns,
         block_stats,
         worker_realtime,
         worker: Some(worker),
@@ -630,7 +638,13 @@ unsafe extern "C" fn capture_input_callback(
         return NO_ERR;
     }
     for sample in &context.buffer[..frames] {
-        let _ignored = context.input.push(*sample);
+        if context.input.push(*sample).is_err() {
+            // The input ring is full: the worker fell behind by more
+            // than the whole ring, so these samples are dropped on the
+            // floor. Relaxed add — real-time safe, same pattern as the
+            // frames heartbeat.
+            context.input_overruns.fetch_add(1, Ordering::Relaxed);
+        }
     }
     context
         .frames
