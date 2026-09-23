@@ -118,3 +118,28 @@ pub fn create_stage(id: &str, models_dir: &Path) -> Result<Box<dyn Stage>, Stage
         ))),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every registry entry reaches the picker and the CLI defaults
+    /// unfiltered, so each must dispatch to a stage: without weights the
+    /// only acceptable failure is the missing file, never the
+    /// no-implementation fallthrough. Embedded models (no files, no
+    /// dependencies) are skipped because they would build for real.
+    #[test]
+    fn every_registry_entry_has_a_stage_implementation() {
+        let empty_dir = std::env::temp_dir().join("noican-factory-test-no-weights");
+        for spec in ALL_MODELS {
+            if spec.files.is_empty() && spec.depends_on.is_empty() {
+                continue;
+            }
+            match create_stage(spec.id, &empty_dir) {
+                Err(StageError::Inference(_)) => {}
+                Err(other) => panic!("{}: unexpected error {other}", spec.id),
+                Ok(_) => panic!("{}: loaded without weights", spec.id),
+            }
+        }
+    }
+}
