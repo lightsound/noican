@@ -8,12 +8,6 @@ doc-valid-idents = [
     "DeepFilterNet",
     "DeepFilterNet3",
     "FastEnhancer",
-    "SpeechBrain",
-    "WeSpeaker",
-    "VoxCeleb",
-    "ECAPA-TDNN",
-    "Conv-TasNet",
-    "TasNet",
     "BlackHole",
     "JoyCast",
     "AUHAL",
@@ -22,5 +16,4 @@ doc-valid-idents = [
     "MenuBarExtra",
     "QuickTime",
     "sherpa-onnx",
-    "tse-conv-tasnet-48k",
 ]

@@ -17,19 +17,18 @@ Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
      model and strength (e.g. "FastEnhancer-B 48k · 100%"). Expanding
      it reveals the Model selector and the Strength slider.
    - the Model selector (inside "Model & strength"): **every registry
-     stage** as rows with a checkmark on the selection — Passthrough, FastEnhancer
-     T/B/S/M/L, DPDFNet2, DPDFNet8, DeepFilterNet3, UL-UNAS, Hush, and
-     TSE Conv-TasNet 48k disabled as "requires enrollment"; the default
-     model row is annotated "Default". Hovering a row pops the model's
-     profile card out beside that row after a short delay: name, tag,
-     four dot ratings (Noise removal / Voice quality / Responsiveness /
+     stage** as rows with a checkmark on the selection — Passthrough,
+     FastEnhancer T/B/S/M/L, DPDFNet2, DPDFNet8, DeepFilterNet3,
+     UL-UNAS, Hush 16k, and Hush 48k, all selectable; the default model
+     row is annotated "Default". Hovering a row pops the model's profile
+     card out beside that row after a short delay: name, tag, four dot
+     ratings (Noise removal / Voice quality / Responsiveness /
      Efficiency, all "more is better"), and the raw facts (native rate,
      measured delay, size). Once up, the card must **stay up while the
      pointer moves between rows, following the hovered row's position
-     and swapping its content in place** (no per-row blink or
-     re-present animation), hide shortly after the pointer leaves the
-     rows, and — critically — hovering must never close the menu
-     popover itself.
+     and swapping its content in place** (no per-row blink or re-present
+     animation), hide shortly after the pointer leaves the rows, and —
+     critically — hovering must never close the menu popover itself.
    The monitoring section (level bars) must be absent while the mode is
    Off and appear while the engine runs.
 4. Select a physical microphone and `FastEnhancer-B 48k`.
@@ -64,11 +63,7 @@ Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
     applied without a limiter, a documented design decision — the
     measured post-gain peak keeps ≈1.9 dB of headroom at a 0.7-peak
     input).
-11. Selecting `TSE Conv-TasNet 48k` must fail gracefully: a clear
-    "requires enrollment" message under the Model picker, the engine
-    still running the previous model (status stays `Running`, meters keep
-    moving, pill stays green), picker reverted.
-12. Select Off. Confirm the private Aggregate Device disappears and
+11. Select Off. Confirm the private Aggregate Device disappears and
     the virtual microphone no longer receives new processed audio.
 
 On a failure the header status shows a one-line `Error` and the full
@@ -95,11 +90,6 @@ While recording one continuous file:
 Model construction (and any weight download) occurs on the control thread.
 The inference thread receives the fully prepared stage through a
 preallocated lock-free queue. The Core Audio callback never loads a model.
-
-TSE requires a valid ECAPA enrollment and authenticated, checksum-confirmed
-model files as described in [models.md](../models.md). It is excluded from this
-step until the upstream access/license blocker is resolved and the app
-grows an enrollment flow.
 
 ## Microphone switching
 
@@ -166,4 +156,4 @@ this build:
    appear on loud speech.
 7. **Full model list** *(new)*: the Model picker shows every `main` registry
    stage (Passthrough, FastEnhancer T/B/S/M/L, DPDFNet2/8, DeepFilterNet3,
-   UL-UNAS, Hush, and TSE marked "requires enrollment").
+   UL-UNAS, Hush 16k, and Hush 48k).

@@ -22,7 +22,7 @@
 
 use std::time::Instant;
 
-use noican_models::{StageOptions, create_stage};
+use noican_models::create_stage;
 
 /// One block is 10 ms at the 48 kHz engine rate.
 const BLOCK_SAMPLES: usize = 480;
@@ -78,8 +78,7 @@ fn main() {
     let models_dir = std::env::var_os("NOICAN_MODELS_DIR")
         .map_or_else(|| "models".into(), std::path::PathBuf::from);
 
-    let mut stage =
-        create_stage(&model, &models_dir, &StageOptions::default()).expect("stage should load");
+    let mut stage = create_stage(&model, &models_dir).expect("stage should load");
 
     // Deterministic noise input: block cost is content-independent for
     // these architectures, and noise avoids shipping an audio fixture.

@@ -129,7 +129,6 @@ size_t noican_engine_last_error(const void *handle, char *buffer, size_t capacit
 size_t noican_model_count(void);
 size_t noican_model_id(size_t index, char *buffer, size_t capacity);
 size_t noican_model_display_name(size_t index, char *buffer, size_t capacity);
-int32_t noican_model_needs_enrollment(size_t index);
 
 /* Picker-facing model characteristics. Ratings are 0-5 with "more is
  * better" on every axis (latency is exposed as responsiveness, compute

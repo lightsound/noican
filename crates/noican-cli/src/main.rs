@@ -52,11 +52,6 @@ enum Command {
         /// Model ids to run (default: passthrough + all fetched models).
         #[arg(long, value_delimiter = ',')]
         models: Vec<String>,
-        /// Enrollment WAV of the target speaker (3–10 s of clean speech).
-        /// Required by models that need speaker enrollment (tse-48k);
-        /// they are skipped otherwise.
-        #[arg(long)]
-        enroll: Option<PathBuf>,
     },
     /// Score speaker-suppression candidates on synthetic mixtures of your
     /// clean voice and an interfering speaker: high-band retention,
@@ -93,8 +88,7 @@ enum Command {
         /// (you / you + other / other). Clamped to the material.
         #[arg(long, default_value_t = 20.0)]
         segment_seconds: f64,
-        /// Model ids to score (default: passthrough + all fetched models
-        /// that need no enrollment).
+        /// Model ids to score (default: passthrough + all fetched models).
         #[arg(long, value_delimiter = ',')]
         models: Vec<String>,
         /// Output directory for mixtures, outputs, metrics.csv and the
@@ -108,50 +102,16 @@ enum Command {
 }
 
 /// The default model list for `process` and `eval`: the bypass plus every
-/// fetched stage (enrollment models only when an enrollment is given).
-fn default_model_ids(models_dir: &std::path::Path, has_enrollment: bool) -> Vec<String> {
+/// fetched model.
+fn default_model_ids(models_dir: &std::path::Path) -> Vec<String> {
     std::iter::once(PASSTHROUGH_ID.to_owned())
         .chain(
-            ModelSpec::stages()
+            ALL_MODELS
+                .iter()
                 .filter(|m| noican_models::fetch::is_fetched(models_dir, m))
-                .filter(|m| !m.needs_enrollment || has_enrollment)
                 .map(|m| m.id.to_owned()),
         )
         .collect()
-}
-
-/// Computes the 192-dim ECAPA-TDNN enrollment embedding from a WAV of the
-/// target speaker: mono 48 kHz conversion, decimation to 16 kHz, then the
-/// SpeechBrain-compatible fbank + ONNX pipeline.
-fn enrollment_embedding(
-    wav_path: &std::path::Path,
-    models_dir: &std::path::Path,
-) -> anyhow::Result<Vec<f32>> {
-    use anyhow::Context as _;
-    let spec = ModelSpec::find("ecapa-tdnn").context("ecapa-tdnn missing from registry")?;
-    if !noican_models::fetch::is_fetched(models_dir, spec) {
-        anyhow::bail!("ecapa-tdnn model not fetched; run: noican fetch ecapa-tdnn");
-    }
-    let audio_48k = audio::read_mono_48k(wav_path)?;
-    let mut decimator = noican_core::resample::Decimator::new(3, audio_48k.len().max(3));
-    let mut audio_16k = Vec::with_capacity(audio_48k.len() / 3);
-    let usable = audio_48k.len() - audio_48k.len() % 3;
-    decimator.process(&audio_48k[..usable], &mut audio_16k);
-    if audio_16k.len() < 16_000 {
-        anyhow::bail!("enrollment clip too short: need at least 1 s of audio");
-    }
-    let onnx_path = noican_models::fetch::model_dir(models_dir, spec).join(spec.files[0].name);
-    let mut embedder = noican_models::embedding::EcapaEmbedder::new(&onnx_path)
-        .map_err(|e| anyhow::anyhow!("loading ECAPA model: {e}"))?;
-    let embedding = embedder
-        .embed(&audio_16k)
-        .map_err(|e| anyhow::anyhow!("computing enrollment embedding: {e}"))?;
-    println!(
-        "enrollment: {} -> {}-dim embedding",
-        wav_path.display(),
-        embedding.len()
-    );
-    Ok(embedding)
 }
 
 fn main() -> anyhow::Result<()> {
@@ -166,16 +126,9 @@ fn main() -> anyhow::Result<()> {
             inputs,
             out_dir,
             models,
-            enroll,
         } => {
-            let options = noican_models::StageOptions {
-                enrollment: enroll
-                    .as_deref()
-                    .map(|path| enrollment_embedding(path, &cli.models_dir))
-                    .transpose()?,
-            };
             let model_ids: Vec<String> = if models.is_empty() {
-                default_model_ids(&cli.models_dir, options.enrollment.is_some())
+                default_model_ids(&cli.models_dir)
             } else {
                 models
             };
@@ -186,7 +139,7 @@ fn main() -> anyhow::Result<()> {
                     &out_dir,
                     &model_ids,
                     |id| {
-                        noican_models::create_stage(id, &cli.models_dir, &options)
+                        noican_models::create_stage(id, &cli.models_dir)
                             .map_err(|e| anyhow::anyhow!("cannot create stage {id}: {e}"))
                     },
                     |line| println!("{line}"),
@@ -205,12 +158,11 @@ fn main() -> anyhow::Result<()> {
             seed,
         } => {
             let model_ids = if models.is_empty() {
-                default_model_ids(&cli.models_dir, false)
+                default_model_ids(&cli.models_dir)
             } else {
                 models
             };
             println!("models: {}", model_ids.join(", "));
-            let options = noican_models::StageOptions::default();
             eval_run::run(
                 &eval_run::EvalRequest {
                     targets: target,
@@ -223,7 +175,7 @@ fn main() -> anyhow::Result<()> {
                     seed,
                 },
                 |id| {
-                    noican_models::create_stage(id, &cli.models_dir, &options)
+                    noican_models::create_stage(id, &cli.models_dir)
                         .map_err(|e| anyhow::anyhow!("cannot create stage {id}: {e}"))
                 },
                 |line| println!("{line}"),
@@ -253,32 +205,22 @@ fn list_models(models_dir: &std::path::Path) {
     }
 }
 
-/// `noican fetch [ids…]`: downloads weights (all freely fetchable models
-/// when no id is given).
+/// `noican fetch [ids…]`: downloads weights (all models when no id is
+/// given).
 fn fetch(models_dir: &std::path::Path, ids: &[String]) -> anyhow::Result<()> {
-    let explicit = !ids.is_empty();
-    let targets: Vec<&ModelSpec> = if explicit {
+    let targets: Vec<&ModelSpec> = if ids.is_empty() {
+        ALL_MODELS.iter().collect()
+    } else {
         ids.iter()
             .map(|id| ModelSpec::find(id).ok_or_else(|| anyhow::anyhow!("unknown model id: {id}")))
             .collect::<Result<_, _>>()?
-    } else {
-        ALL_MODELS.iter().collect()
     };
     let mut failures = Vec::new();
     for model in targets {
-        if let Some(note) = model.fetch_note
-            && !explicit
-        {
-            println!("{}: skipped — {note}", model.id);
-            continue;
-        }
         if let Err(e) = noican_models::fetch::fetch_model(models_dir, model, |line| {
             println!("{line}");
         }) {
             eprintln!("{}: FAILED — {e}", model.id);
-            if let Some(note) = model.fetch_note {
-                eprintln!("{}: note — {note}", model.id);
-            }
             failures.push(model.id);
         }
     }

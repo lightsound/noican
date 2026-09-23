@@ -37,7 +37,7 @@ use noican_core::{IntensityControl, Stage, StagePublisher, SwitchingEngine};
 use noican_coreaudio::{
     Runtime, StreamLevels, VirtualOutputChannels, WORKER_BLOCK_SAMPLES, monitor::MonitorState,
 };
-use noican_models::{CatalogEntry, ModelSpec, StageOptions};
+use noican_models::{CatalogEntry, ModelSpec};
 
 const SUCCESS: i32 = 0;
 const FAILURE: i32 = -1;
@@ -979,13 +979,6 @@ pub unsafe extern "C" fn noican_model_display_name(
     })
 }
 
-/// Returns 1 when the model at `index` needs a speaker-enrollment
-/// embedding (not yet supported by the menu bar app), 0 otherwise.
-#[unsafe(no_mangle)]
-pub extern "C" fn noican_model_needs_enrollment(index: usize) -> i32 {
-    catalog_entry(index).map_or(0, |entry| i32::from(entry.needs_enrollment))
-}
-
 /// Copies a model's one-line picker tagline by catalog index.
 ///
 /// Returns the required byte count including the terminating NUL, or zero
@@ -1069,18 +1062,13 @@ fn guard_panics<T>(model_id: &str, work: impl FnOnce() -> Result<T, String>) -> 
 fn prepare_stage(models_dir: &Path, model_id: &str) -> Result<Box<dyn Stage>, String> {
     // Registry stages may need weights; the bypass (not in the registry's
     // ModelSpec list) needs nothing.
-    if let Some(spec) = ModelSpec::find(model_id) {
-        if spec.needs_enrollment {
-            return Err(format!(
-                "{model_id} needs a speaker enrollment, which the menu bar app does not support yet"
-            ));
-        }
-        if !noican_models::fetch::is_fetched(models_dir, spec) {
-            noican_models::fetch::fetch_model(models_dir, spec, |_line| {})
-                .map_err(|error| format!("downloading {model_id} weights failed: {error}"))?;
-        }
+    if let Some(spec) = ModelSpec::find(model_id)
+        && !noican_models::fetch::is_fetched(models_dir, spec)
+    {
+        noican_models::fetch::fetch_model(models_dir, spec, |_line| {})
+            .map_err(|error| format!("downloading {model_id} weights failed: {error}"))?;
     }
-    noican_models::create_stage(model_id, models_dir, &StageOptions::default())
+    noican_models::create_stage(model_id, models_dir)
         .map_err(|error| format!("loading {model_id} failed: {error}"))
 }
 
@@ -1125,7 +1113,7 @@ unsafe fn copy_string(value: &str, buffer: *mut c_char, capacity: usize) -> usiz
 
 #[cfg(test)]
 mod tests {
-    use noican_models::PASSTHROUGH_ID;
+    use noican_models::{ALL_MODELS, PASSTHROUGH_ID};
 
     use super::*;
 
@@ -1145,8 +1133,7 @@ mod tests {
 
     #[test]
     fn catalog_lists_bypass_and_every_registry_stage() {
-        let stage_count = ModelSpec::stages().count();
-        assert_eq!(noican_model_count(), stage_count + 1);
+        assert_eq!(noican_model_count(), ALL_MODELS.len() + 1);
 
         let ids: Vec<String> = (0..noican_model_count())
             .map(|index| {
@@ -1155,28 +1142,18 @@ mod tests {
             })
             .collect();
         assert_eq!(ids[0], PASSTHROUGH_ID);
-        for spec in ModelSpec::stages() {
+        for spec in ALL_MODELS {
             assert!(ids.iter().any(|id| id == spec.id), "{} missing", spec.id);
         }
     }
 
     #[test]
-    fn display_names_and_enrollment_flags_are_exposed() {
+    fn display_names_are_exposed() {
         let name = read_string(|buffer, capacity| unsafe {
             noican_model_display_name(0, buffer, capacity)
         })
         .expect("bypass has a display name");
         assert_eq!(name, "Passthrough (no processing)");
-        assert_eq!(noican_model_needs_enrollment(0), 0);
-
-        // tse-48k is the only enrollment-gated stage in the registry today.
-        let enrollment_gated = (0..noican_model_count())
-            .filter(|&index| noican_model_needs_enrollment(index) == 1)
-            .count();
-        assert_eq!(
-            enrollment_gated,
-            ModelSpec::stages().filter(|s| s.needs_enrollment).count()
-        );
     }
 
     #[test]

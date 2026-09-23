@@ -17,7 +17,6 @@ struct ModelRatings: Hashable {
 struct ModelInfo: Hashable, Identifiable {
     let id: String
     let displayName: String
-    let needsEnrollment: Bool
     /// One-line purpose tag for the picker row.
     let tagline: String
     /// Raw facts behind the ratings (native rate, measured delay, size),
@@ -270,7 +269,6 @@ final class RustEngine: @unchecked Sendable {
             return ModelInfo(
                 id: id,
                 displayName: displayName,
-                needsEnrollment: noican_model_needs_enrollment(index) != 0,
                 tagline: copyString { buffer, capacity in
                     noican_model_tagline(index, buffer, capacity)
                 } ?? "",

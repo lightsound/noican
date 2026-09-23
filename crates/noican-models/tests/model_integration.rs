@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 
 use noican_core::ENGINE_SAMPLE_RATE;
-use noican_models::{ModelSpec, StageOptions, create_stage};
+use noican_models::{ModelSpec, create_stage};
 
 fn models_dir() -> PathBuf {
     std::env::var_os("NOICAN_MODELS_DIR").map_or_else(
@@ -63,7 +63,7 @@ fn test_signal() -> Vec<f32> {
         .collect()
 }
 
-fn run_model(id: &str, options: &StageOptions) {
+fn run_model(id: &str) {
     let dir = models_dir();
     // `is_fetched` is true for embedded models (no files) and follows
     // `depends_on`, so composites skip when their dependency is missing.
@@ -74,7 +74,7 @@ fn run_model(id: &str, options: &StageOptions) {
         eprintln!("[skip] {id}: weights not fetched under {}", dir.display());
         return;
     }
-    let mut stage = create_stage(id, &dir, options).expect("stage should load");
+    let mut stage = create_stage(id, &dir).expect("stage should load");
     let input = test_signal();
     let mut output = vec![0.0_f32; input.len()];
     for (i, o) in input.chunks(480).zip(output.chunks_mut(480)) {
@@ -102,7 +102,7 @@ macro_rules! model_test {
         #[test]
         #[ignore = "requires downloaded model weights (run: noican fetch)"]
         fn $name() {
-            run_model($id, &StageOptions::default());
+            run_model($id);
         }
     };
 }
@@ -123,30 +123,5 @@ model_test!(hush_48k_runs, "hush-48k");
 #[test]
 #[ignore = "slow (tract plan build); run with --ignored"]
 fn dfn3_runs() {
-    run_model("dfn3", &StageOptions::default());
-}
-
-/// TSE needs its (currently private) weights placed manually plus an
-/// enrollment embedding; a unit-norm pseudo-random embedding exercises the
-/// mechanism.
-#[test]
-#[ignore = "requires manually placed tse-48k weights"]
-fn tse_runs_with_enrollment() {
-    let mut embedding: Vec<f32> = (0..192)
-        .map(|i| {
-            #[expect(clippy::cast_precision_loss, reason = "test embedding values only")]
-            let x = i as f32 * 0.37;
-            x.sin()
-        })
-        .collect();
-    let norm = embedding.iter().map(|v| v * v).sum::<f32>().sqrt();
-    for v in &mut embedding {
-        *v /= norm;
-    }
-    run_model(
-        "tse-48k",
-        &StageOptions {
-            enrollment: Some(embedding),
-        },
-    );
+    run_model("dfn3");
 }

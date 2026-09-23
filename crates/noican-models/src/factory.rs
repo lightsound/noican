@@ -5,12 +5,11 @@ use std::path::Path;
 use noican_core::{FramedStage, Passthrough, Stage, StageError};
 
 use crate::fetch::model_dir;
-use crate::manifest::ModelSpec;
+use crate::manifest::{ALL_MODELS, ModelSpec};
 use crate::stages::dfn_tract::DfTractStage;
 use crate::stages::dpdfnet::DpdfnetStage;
 use crate::stages::fastenhancer::FastEnhancerStage;
 use crate::stages::hush_wideband::HushWidebandStage;
-use crate::stages::tse::TseStage;
 use crate::stages::ulunas::UlunasStage;
 
 /// Identifier of the built-in bypass stage (always available, no weights).
@@ -27,25 +26,20 @@ pub struct CatalogEntry {
     pub id: &'static str,
     /// Human-readable name for UIs.
     pub display_name: &'static str,
-    /// True when the entry needs a speaker-enrollment embedding.
-    pub needs_enrollment: bool,
     /// Picker-facing characteristics (ratings, tagline, details).
     pub traits: crate::traits::ModelTraits,
 }
 
-/// The selectable catalog: the bypass followed by every registry stage
-/// (support models such as speaker-embedding extractors are excluded).
+/// The selectable catalog: the bypass followed by every registry model.
 pub fn catalog() -> impl Iterator<Item = CatalogEntry> {
     std::iter::once(CatalogEntry {
         id: PASSTHROUGH_ID,
         display_name: "Passthrough (no processing)",
-        needs_enrollment: false,
         traits: crate::traits::ModelTraits::for_id(PASSTHROUGH_ID),
     })
-    .chain(ModelSpec::stages().map(|spec| CatalogEntry {
+    .chain(ALL_MODELS.iter().map(|spec| CatalogEntry {
         id: spec.id,
         display_name: spec.display_name,
-        needs_enrollment: spec.needs_enrollment,
         traits: crate::traits::ModelTraits::for_id(spec.id),
     }))
 }
@@ -53,15 +47,6 @@ pub fn catalog() -> impl Iterator<Item = CatalogEntry> {
 /// Largest engine block the returned stages are pre-sized for (larger
 /// blocks still work at the cost of a reallocation).
 pub const MAX_BLOCK_LEN: usize = 2048;
-
-/// Options for stage construction.
-#[derive(Debug, Default, Clone)]
-pub struct StageOptions {
-    /// 192-dim speaker-enrollment embedding, required by models with
-    /// [`ModelSpec::needs_enrollment`] (compute it with
-    /// [`crate::embedding::EcapaEmbedder`]).
-    pub enrollment: Option<Vec<f32>>,
-}
 
 fn file_path(models_dir: &Path, spec: &ModelSpec, index: usize) -> std::path::PathBuf {
     model_dir(models_dir, spec).join(spec.files[index].name)
@@ -93,13 +78,9 @@ fn dependency_file_path(
 ///
 /// # Errors
 ///
-/// Returns [`StageError::Unsupported`] for unknown or non-stage ids and
+/// Returns [`StageError::Unsupported`] for unknown ids and
 /// [`StageError::Inference`] when weights are missing or fail to load.
-pub fn create_stage(
-    id: &str,
-    models_dir: &Path,
-    options: &StageOptions,
-) -> Result<Box<dyn Stage>, StageError> {
+pub fn create_stage(id: &str, models_dir: &Path) -> Result<Box<dyn Stage>, StageError> {
     if id == PASSTHROUGH_ID {
         return Ok(Box::new(Passthrough));
     }
@@ -132,19 +113,33 @@ pub fn create_stage(
             let stage = HushWidebandStage::new(spec.id, &tarball)?;
             Ok(Box::new(FramedStage::new(stage, MAX_BLOCK_LEN)?))
         }
-        "tse-48k" => {
-            let embedding = options.enrollment.as_deref().ok_or_else(|| {
-                StageError::Unsupported(
-                    "tse-48k needs a speaker enrollment (pass an enrollment clip; \
-                     CLI: --enroll <wav>)"
-                        .to_owned(),
-                )
-            })?;
-            let stage = TseStage::new(spec.id, &file_path(models_dir, spec, 0), embedding)?;
-            Ok(Box::new(FramedStage::new(stage, MAX_BLOCK_LEN)?))
-        }
         other => Err(StageError::Unsupported(format!(
-            "{other} is not a processing stage"
+            "{other} has no stage implementation (registry inconsistency)"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every registry entry reaches the picker and the CLI defaults
+    /// unfiltered, so each must dispatch to a stage: without weights the
+    /// only acceptable failure is the missing file, never the
+    /// no-implementation fallthrough. Embedded models (no files, no
+    /// dependencies) are skipped because they would build for real.
+    #[test]
+    fn every_registry_entry_has_a_stage_implementation() {
+        let empty_dir = std::env::temp_dir().join("noican-factory-test-no-weights");
+        for spec in ALL_MODELS {
+            if spec.files.is_empty() && spec.depends_on.is_empty() {
+                continue;
+            }
+            match create_stage(spec.id, &empty_dir) {
+                Err(StageError::Inference(_)) => {}
+                Err(other) => panic!("{}: unexpected error {other}", spec.id),
+                Ok(_) => panic!("{}: loaded without weights", spec.id),
+            }
+        }
     }
 }

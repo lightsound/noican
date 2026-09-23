@@ -14,7 +14,7 @@ noican is a Rust workspace (5 crates) + SwiftPM menu-bar app. Most runtime paths
 
 ## CLI e2e without audio hardware
 
-- `noican fetch <id>` — model ids live in `crates/noican-models/src/manifest.rs`. `fastenhancer-t` is the smallest pinned-sha256 download (~151 KB, GitHub release). `fetch hush-48k` exercises `depends_on` (pulls the `hush` tar.gz into `models/hush/`). `fetch tse-48k` always fails with HTTP 401 (private HF repo) — a good bounded-error negative test; check no `*.part` file remains.
+- `noican fetch <id>` — model ids live in `crates/noican-models/src/manifest.rs`. `fastenhancer-t` is the smallest pinned-sha256 download (~151 KB, GitHub release). `fetch hush-48k` exercises `depends_on` (pulls the `hush` tar.gz into `models/hush/`).
 - `fetch_model` re-verifies sha256 of present files: re-run `fetch` → "already present"; append a byte to a downloaded file → "checksum mismatch, re-downloading".
 - Weights land in `./models/` relative to cwd (gitignored). The app uses `~/Library/Application Support/noican/models` instead.
 - `noican process <wav>` default models = passthrough + every fetched stage → `out/<stem>/<model>.wav` (gitignored).

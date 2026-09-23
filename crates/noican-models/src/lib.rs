@@ -6,12 +6,11 @@
 //! CLI can treat all models uniformly (docs/tech-research.md §12).
 //!
 //! Inference backends: ONNX Runtime (`ort`) for FastEnhancer, DPDFNet,
-//! UL-UNAS, TSE, and ECAPA; tract (via the upstream `deep_filter` crate)
-//! for the DeepFilterNet-architecture models (DeepFilterNet3, Hush),
-//! whose three-graph exports are only streamable through tract-pulse.
+//! and UL-UNAS; tract (via the upstream `deep_filter` crate) for the
+//! DeepFilterNet-architecture models (DeepFilterNet3, Hush), whose
+//! three-graph exports are only streamable through tract-pulse.
 
 pub mod dsp;
-pub mod embedding;
 pub mod factory;
 pub mod fetch;
 pub mod manifest;
@@ -19,8 +18,6 @@ pub mod onnx;
 pub mod stages;
 pub mod traits;
 
-pub use factory::{
-    CatalogEntry, MAX_BLOCK_LEN, PASSTHROUGH_ID, StageOptions, catalog, create_stage,
-};
+pub use factory::{CatalogEntry, MAX_BLOCK_LEN, PASSTHROUGH_ID, catalog, create_stage};
 pub use manifest::{ALL_MODELS, FileSpec, ModelFamily, ModelSpec};
 pub use traits::ModelTraits;

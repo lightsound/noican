@@ -82,7 +82,7 @@ impl<P: FrameProcessor> FramedStage<P> {
         &self.processor
     }
 
-    /// Mutable access to the wrapped processor (e.g. to update enrollment).
+    /// Mutable access to the wrapped processor.
     pub const fn processor_mut(&mut self) -> &mut P {
         &mut self.processor
     }
