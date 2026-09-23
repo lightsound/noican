@@ -53,7 +53,7 @@ enum AudioDeviceCatalog {
     }
 
     /// Device-UID prefix of the Noican-branded driver (trailing dot
-    /// included). The driver build (scripts/build-driver.sh) derives its
+    /// included). The driver build (lightsound/noican-driver) derives its
     /// device UID "com.lightsound.noican.mic_UID" (driver 0.2.0, one
     /// channel) from this prefix, as it did the 0.1.0 driver's
     /// "com.lightsound.noican.2ch_UID"; both are recognized, so old and

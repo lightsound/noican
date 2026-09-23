@@ -9,9 +9,10 @@ Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
 - Rust 1.98.0 with the `aarch64-apple-darwin` target.
 - Swift 6.1 or newer and SwiftLint.
 - A Developer ID Application identity for a distributable app build.
-- A loopback driver: the Noican driver built from this repository
-  (`scripts/build-driver.sh`, Developer-ID-signed; see docs/driver.md), or
-  stock BlackHole 2ch as the Phase 0 fallback.
+- A loopback driver: the Noican driver built from the
+  `external/noican-driver` submodule
+  (`external/noican-driver/scripts/build-driver.sh`, Developer-ID-signed;
+  see docs/driver.md), or stock BlackHole 2ch as the Phase 0 fallback.
 - Headphones. Phase 0 has no AEC and must not be evaluated through speakers.
 - A 48 kHz-capable microphone (the built-in microphone works) for the
   aggregate-path checks, and a microphone that cannot run at 48 kHz for

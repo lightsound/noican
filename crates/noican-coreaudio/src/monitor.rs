@@ -161,9 +161,10 @@ pub fn classify_monitor_target(
 }
 
 // The prefix (trailing dot included) covers every Noican driver UID:
-// scripts/build-driver.sh derives the shipped device UID
-// "com.lightsound.noican.mic_UID" (driver 0.2.0, 1 channel) from it, as it
-// did the 0.1.0 driver's "com.lightsound.noican.2ch_UID"; both stay
+// the driver build (external/noican-driver/scripts/build-driver.sh) derives
+// the shipped device UID "com.lightsound.noican.mic_UID" (driver 0.2.0,
+// 1 channel) from it, as it did the 0.1.0 driver's
+// "com.lightsound.noican.2ch_UID"; both stay
 // recognized while the two are swapped under one app build.
 fn is_noican_loopback_uid(uid: &str) -> bool {
     uid.contains("BlackHole") || uid.to_lowercase().starts_with("com.lightsound.noican.")
@@ -445,7 +446,7 @@ mod tests {
             classify_monitor_target(0, "COM.LIGHTSOUND.NOICAN.mic", None),
             Err(CoreAudioError::MonitorLoopbackOutput { .. })
         ));
-        // The exact UID the Noican driver ships (scripts/build-driver.sh
+        // The exact UID the Noican driver ships (its build-driver.sh
         // derives it from kDriver_Name="com.lightsound.noican.mic").
         assert!(matches!(
             classify_monitor_target(0, "com.lightsound.noican.mic_UID", None),
