@@ -27,37 +27,36 @@ public struct PolarConfiguration: Hashable, Sendable {
     }
 
     public var server: Server
-    /// Polar organization ID (Settings › General). Required: Polar scopes
-    /// every key lookup to it.
+    /// Polar organization ID. Polar scopes every key lookup to it.
     public var organizationID: String
-    /// ID of the license-key benefit attached to the Noican product. When
-    /// set, keys from the seller's other products are refused.
-    public var benefitID: String?
+    /// ID of the license-key benefit attached to the Noican product; keys
+    /// from the seller's other products are refused.
+    public var benefitID: String
     /// Organization slug, for the customer-portal link
     /// (`https://polar.sh/<slug>/portal`).
     public var organizationSlug: String?
 
-    public init(server: Server, organizationID: String, benefitID: String? = nil, organizationSlug: String? = nil) {
+    public init(server: Server, organizationID: String, benefitID: String, organizationSlug: String? = nil) {
         self.server = server
-        self.organizationID = organizationID
-        self.benefitID = benefitID.flatMap(Self.nonEmpty)
-        self.organizationSlug = organizationSlug.flatMap(Self.nonEmpty)
+        self.organizationID = organizationID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.benefitID = benefitID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.organizationSlug = organizationSlug
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .flatMap { $0.isEmpty ? nil : $0 }
     }
 
-    /// Whether the organization ID has been filled in with a UUID.
+    /// Whether both IDs are filled in with UUIDs. Anything less leaves the
+    /// build unconfigured (ungated) rather than half-scoped: a missing
+    /// benefit ID would accept keys for any product of the organization,
+    /// and a malformed one would fail every validation.
     public var isComplete: Bool {
-        UUID(uuidString: organizationID) != nil
+        UUID(uuidString: organizationID) != nil && UUID(uuidString: benefitID) != nil
     }
 
     public var customerPortalURL: URL? {
         organizationSlug.map {
             server.siteBaseURL.appendingPathComponent($0).appendingPathComponent("portal")
         }
-    }
-
-    private static func nonEmpty(_ value: String) -> String? {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
@@ -91,12 +90,11 @@ public struct URLSessionTransport: HTTPTransport {
 ///
 /// No `Polar-Version` header is sent, deliberately: Polar removes each
 /// dated API version about nine months after release and then answers
-/// requests pinned to it with 404, which a shipped app could not tell
-/// from "key not found" — every customer on an old build would lose
-/// their license on the removal date. Unpinned requests use Polar's
-/// Current version; the decoding below reads only the handful of fields
-/// every version has carried, and anything it cannot read is
-/// `.unavailable` (grace period), never a rejection.
+/// requests pinned to it with 404, so every customer on an old build
+/// would run out the grace period and be locked out. Unpinned requests
+/// use Polar's Current version; the decoding below reads only the
+/// handful of fields every version has carried, and anything it cannot
+/// read is `.unavailable` (grace period), never a rejection.
 public struct PolarLicenseBackend: LicenseBackend {
     public let identifier = "polar"
     private let configuration: PolarConfiguration
@@ -260,8 +258,8 @@ public struct PolarLicenseBackend: LicenseBackend {
         return "Couldn't reach the license server: \(error.localizedDescription)"
     }
 
-    /// Polar limits labels and metadata values to 500 characters and
-    /// rejects empty metadata values; keys are limited to 40.
+    /// Polar limits metadata keys to 40 characters and values to 1–500;
+    /// the label has no documented bound and gets the same one.
     private static func clamped(_ text: String) -> String {
         String(text.prefix(500))
     }
@@ -297,7 +295,7 @@ private struct ValidateRequest: Encodable {
     var key: String
     var organizationID: String
     var activationID: String
-    var benefitID: String?
+    var benefitID: String
 
     enum CodingKeys: String, CodingKey {
         case key
@@ -343,11 +341,9 @@ private struct LicenseKeyResponse: Decodable {
         case activation
     }
 
-    func isForBenefit(_ expected: String?) -> Bool {
-        guard let expected, let benefitID else {
-            return true
-        }
-        return benefitID == expected
+    /// A response without the field is not held against the key.
+    func isForBenefit(_ expected: String) -> Bool {
+        benefitID.map { $0 == expected } ?? true
     }
 
     func grant(activationID: String, key: String) -> LicenseGrant {

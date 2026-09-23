@@ -16,8 +16,10 @@ never gated; see `LICENSE.driver`).
 
 - A license that lapses or is rejected while noise cancellation runs does
   not stop it. The check runs in the background, and cutting the microphone
-  off mid-call is worse than one more session. The next Preview/On tap is
-  refused.
+  off mid-call is worse than one more session. Rebuilds of that live session
+  (microphone switch, Bluetooth rate change, the fallback after a failed
+  switch) still pass; the next Preview/On tap, or any restart of a session
+  that already stopped (unplugged microphone, audio stall), is refused.
 - Builds whose configuration is still the placeholder show "License · Not
   configured in this build" and are not gated, so development and device
   testing keep working before the Polar organization exists.
@@ -73,12 +75,17 @@ Production is `https://api.polar.sh`, sandbox `https://sandbox-api.polar.sh`.
   the grace period and the check is retried.
 - **No `Polar-Version` header.** Polar removes each dated API version about
   nine months after release and answers requests pinned to a removed version
-  with `404`, which a shipped app cannot tell from "key not found" — every
-  customer on an old build would lose the license on that date. Unpinned
-  requests use Polar's Current version, and the decoder reads only the few
-  fields every version has carried (the key's `id`, `benefit_id`,
-  `display_key`, `limit_activations`, `expires_at`, `activation.id`), all but
-  `id` optional.
+  with `404` (probed 2026-09-23: `Polar-Version: 2025-01` returns
+  `{"detail":"Not Found"}`). The classifier would read that as `unavailable`,
+  not as a rejection, but every customer on an old build would then run out
+  the grace period and be locked out 30 days after the removal date.
+  Unpinned requests use Polar's Current version (`2026-04` on that date,
+  reported in the `polar-version` response header), and the decoder reads
+  only the few fields both documented versions carry (the key's `id`,
+  `benefit_id`, `display_key`, `limit_activations`, `expires_at`,
+  `activation.id`), all but `id` optional. The same probe confirmed the
+  error bodies: an unknown key returns `404 {"error":"ResourceNotFound"}` on
+  all three endpoints.
 - **Benefit scoping.** Validation sends `benefit_id`, so keys from the seller's
   other products fail server-side. Activation takes no benefit filter, so the
   app checks the returned `benefit_id` and releases the fresh activation of a
@@ -105,9 +112,10 @@ key again re-activates it.
 
 ### Offline grace and revalidation
 
-- Checked at launch and hourly (Swift's continuous clock keeps counting
-  through sleep, so the first tick after a long sleep comes right away);
-  a validation is due 24 hours after the last success.
+- Checked at launch, hourly (Swift's continuous clock keeps counting
+  through sleep, so the first tick after a long sleep comes right away),
+  and when the network comes back; a validation is due 24 hours after the
+  last success.
 - A license works offline for **30 days** after the last success
   (`LicensePolicy.standard`).
 - A rejected record is kept (with its key) and re-checked once a day, so a
@@ -122,7 +130,7 @@ server holding keys exported with Polar's List License Keys API):
 
 1. Implement `LicenseBackend` with a new `identifier`.
 2. Construct it in `LicenseModel` instead of `PolarLicenseBackend`.
-3. Ship the update (Sparkle, I1).
+3. Ship the update (through the app's update channel once it exists).
 
 At the next launch every stored record from the `polar` backend is
 re-activated against the new backend with its stored key — customers do not
@@ -135,11 +143,11 @@ re-enter anything, provided the new backend accepts the same key strings.
   key, expiry, device limit, last validation time, the hashed device ID, and
   the last rejection. Developer ID builds read it back silently across
   updates; ad-hoc builds are a new code identity after every rebuild and get
-  a Keychain prompt. Uninstalling (H4) must delete this item.
+  a Keychain prompt. An uninstaller must delete this item.
 - Sent to Polar: the license key, the organization ID, the benefit ID, the
   computer name (as the activation label, so the customer can tell Macs apart
   in the portal), and the app and macOS versions. The hardware UUID is never
-  sent. The privacy policy (G2) must list these.
+  sent. The privacy policy must list these.
 
 ## Polar setup (owner)
 
@@ -153,7 +161,7 @@ organizations, IDs, and keys.
 2. **License-key benefit.** Benefits → + New Benefit → Type: License Keys.
    - Prefix: e.g. `NOICAN` (branding only; the app accepts any key).
    - Expiration: none (one-time purchase; the app would honor an expiry).
-   - Activation limit: on, set to the number of Macs per license (F3).
+   - Activation limit: on, set to the number of Macs one purchase covers.
      Required: without it Polar refuses every activation ("does not support
      activations"), and the app always activates.
    - "Enable user to deactivate instances via Polar": on (this is the
@@ -163,6 +171,8 @@ organizations, IDs, and keys.
    and USD; tax-inclusive display for Japan), attach the license-key benefit.
 4. **IDs.** Fill `macos/Sources/NoicanMenuBar/LicenseConfiguration.swift`:
    - `organizationID`: the organization ID from the organization settings.
+     Both IDs are required; until both are UUIDs the build stays
+     unconfigured (ungated).
    - `benefitID`: the license-key benefit's ID.
    - `organizationSlug`: the slug from step 1 (enables "Manage devices").
    - `server`: `.sandbox` for the sandbox build, `.production` for release.

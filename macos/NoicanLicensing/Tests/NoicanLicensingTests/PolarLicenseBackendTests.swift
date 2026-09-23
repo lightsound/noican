@@ -19,10 +19,8 @@ private let configuration = PolarConfiguration(
     organizationSlug: "noican"
 )
 
-private func backend(_ transport: FakeTransport, benefit: String? = benefitID) -> PolarLicenseBackend {
-    var configuration = configuration
-    configuration.benefitID = benefit
-    return PolarLicenseBackend(configuration: configuration, transport: transport, userAgent: "Noican/1.0.0")
+private func backend(_ transport: FakeTransport) -> PolarLicenseBackend {
+    PolarLicenseBackend(configuration: configuration, transport: transport, userAgent: "Noican/1.0.0")
 }
 
 private func licenseKeyJSON(benefit: String = benefitID, expiresAt: String = "null", activation: String = "null") -> String {
@@ -100,13 +98,6 @@ struct PolarRequestTests {
         #expect(body["organization_id"] as? String == organizationID)
     }
 
-    @Test("Without a benefit ID the validate body omits the field")
-    func validateWithoutBenefit() async throws {
-        let transport = FakeTransport(.http(200, licenseKeyJSON(activation: ownActivation)))
-        _ = try await backend(transport, benefit: nil).validate(key: "KEY-1", activationID: "b6724bc8-7ad9-4ca0-b143-7c896fcbb6fe")
-        #expect(transport.requests.first?.jsonBody["benefit_id"] == nil)
-    }
-
     @Test("Deactivate posts the key and activation")
     func deactivateRequest() async throws {
         let transport = FakeTransport(.http(204, ""))
@@ -119,12 +110,15 @@ struct PolarRequestTests {
     @Test("The sandbox server and the customer portal URL follow the configuration")
     func sandboxURLs() async throws {
         let transport = FakeTransport(.http(204, ""))
-        let sandbox = PolarConfiguration(server: .sandbox, organizationID: organizationID, organizationSlug: "noican")
+        let sandbox = PolarConfiguration(
+            server: .sandbox, organizationID: organizationID, benefitID: benefitID, organizationSlug: "noican"
+        )
         let backend = PolarLicenseBackend(configuration: sandbox, transport: transport, userAgent: "Noican")
         try await backend.deactivate(key: "KEY-1", activationID: "act-1")
         #expect(transport.requests.first?.url?.host == "sandbox-api.polar.sh")
         #expect(backend.managementURL?.absoluteString == "https://sandbox.polar.sh/noican/portal")
-        #expect(PolarConfiguration(server: .production, organizationID: organizationID).customerPortalURL == nil)
+        let noSlug = PolarConfiguration(server: .production, organizationID: organizationID, benefitID: benefitID, organizationSlug: " ")
+        #expect(noSlug.customerPortalURL == nil)
     }
 
     @Test("Metadata values Polar would refuse are dropped or clamped")
@@ -143,12 +137,14 @@ struct PolarRequestTests {
         #expect(meta["long"]?.count == 500)
     }
 
-    @Test("Placeholder configuration is incomplete")
+    @Test("Placeholder or half-filled configuration is incomplete; pasted IDs are trimmed")
     func placeholderIsIncomplete() {
-        #expect(!PolarConfiguration(server: .production, organizationID: "").isComplete)
-        #expect(!PolarConfiguration(server: .production, organizationID: "YOUR-ORG-ID").isComplete)
+        #expect(!PolarConfiguration(server: .production, organizationID: "", benefitID: "").isComplete)
+        #expect(!PolarConfiguration(server: .production, organizationID: organizationID, benefitID: "").isComplete)
+        #expect(!PolarConfiguration(server: .production, organizationID: organizationID, benefitID: "typo").isComplete)
+        #expect(!PolarConfiguration(server: .production, organizationID: "YOUR-ORG-ID", benefitID: benefitID).isComplete)
         #expect(configuration.isComplete)
-        #expect(PolarConfiguration(server: .production, organizationID: organizationID, benefitID: " ").benefitID == nil)
+        #expect(PolarConfiguration(server: .production, organizationID: " \(organizationID)\n", benefitID: benefitID).isComplete)
     }
 }
 

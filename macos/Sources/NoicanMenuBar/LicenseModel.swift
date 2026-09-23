@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import IOKit
+import Network
 import NoicanLicensing
 import SystemConfiguration
 
@@ -8,7 +9,8 @@ import SystemConfiguration
 /// `LicenseConfiguration`, publishes its state to the menu, forwards
 /// whether noise cancellation may start to the engine reducer, and
 /// re-checks the license hourly (the continuous clock keeps counting
-/// through sleep, so the first tick after a long sleep comes right away).
+/// through sleep, so the first tick after a long sleep comes right away)
+/// and whenever the network comes back.
 @MainActor
 final class LicenseModel: ObservableObject {
     @Published private(set) var state: LicenseState
@@ -19,7 +21,8 @@ final class LicenseModel: ObservableObject {
     let purchaseURL = LicenseConfiguration.purchaseURL
 
     private let controller: LicenseController
-    private var refreshTask: Task<Void, Never>?
+    private let pathMonitor = NWPathMonitor()
+    private var isNetworkSatisfied: Bool?
 
     init(onAllowanceChange: @escaping (Bool) -> Void) {
         let configuration = LicenseConfiguration.polar
@@ -38,13 +41,24 @@ final class LicenseModel: ObservableObject {
             self?.state = newState
             onAllowanceChange(newState.status.allowsProcessing)
         }
-        refreshTask = Task { [weak self] in
-            await self?.controller.refreshIfDue()
-            while !Task.isCancelled {
+        guard backend != nil else {
+            return
+        }
+        Task { [weak self] in
+            while !Task.isCancelled, let controller = self?.controller {
+                await controller.refreshIfDue()
                 try? await Task.sleep(for: .seconds(60 * 60))
-                await self?.controller.refreshIfDue()
             }
         }
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            let isSatisfied = path.status == .satisfied
+            // Delivered on the main queue (see `start`), which is the
+            // main actor.
+            MainActor.assumeIsolated {
+                self?.networkChanged(isSatisfied: isSatisfied)
+            }
+        }
+        pathMonitor.start(queue: .main)
     }
 
     var managementURL: URL? {
@@ -61,6 +75,17 @@ final class LicenseModel: ObservableObject {
 
     func deactivate() {
         Task { await controller.deactivate() }
+    }
+
+    /// Re-checks when connectivity returns (not on the monitor's first
+    /// report, which the launch check already covers). `refreshIfDue`
+    /// only asks the server when a check is actually due.
+    private func networkChanged(isSatisfied: Bool) {
+        defer { isNetworkSatisfied = isSatisfied }
+        guard isSatisfied, isNetworkSatisfied == false else {
+            return
+        }
+        Task { await controller.refreshIfDue() }
     }
 
     // MARK: - This Mac

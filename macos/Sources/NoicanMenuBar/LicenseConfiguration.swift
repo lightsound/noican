@@ -7,8 +7,8 @@ import NoicanLicensing
 ///
 /// Placeholders until the Polar organization exists — see
 /// docs/licensing.md ("Polar setup") for where each value comes from.
-/// While `organizationID` is not a UUID the app reports "License not
-/// configured" and noise cancellation is not gated.
+/// Until both IDs are UUIDs the app reports "Not configured in this
+/// build" and noise cancellation is not gated.
 enum LicenseConfiguration {
     static let polar = PolarConfiguration(
         // Switch to .production for release builds; sandbox keys do not
