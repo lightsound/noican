@@ -129,6 +129,10 @@ public struct PolarLicenseBackend: LicenseBackend {
                 try? await deactivate(key: key, activationID: activation.id)
                 throw .rejected(.wrongProduct)
             }
+            guard activation.licenseKey.isGranted else {
+                try? await deactivate(key: key, activationID: activation.id)
+                throw .rejected(.refused(detail: "the license key is not active"))
+            }
             return activation.licenseKey.grant(activationID: activation.id, key: key)
         case 404 where error?.error == "ResourceNotFound":
             throw .rejected(.unknownKey)
@@ -153,7 +157,7 @@ public struct PolarLicenseBackend: LicenseBackend {
             guard license.isForBenefit(configuration.benefitID) else {
                 throw .rejected(.wrongProduct)
             }
-            guard (license.activation?.id ?? activationID) == activationID else {
+            guard license.isGranted, (license.activation?.id ?? activationID) == activationID else {
                 throw .rejected(.activationRevoked)
             }
             return license.grant(activationID: activationID, key: key)
@@ -326,6 +330,7 @@ private struct LicenseKeyResponse: Decodable {
     }
 
     var id: String
+    var status: String?
     var benefitID: String?
     var displayKey: String?
     var limitActivations: Int?
@@ -334,11 +339,19 @@ private struct LicenseKeyResponse: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case id
+        case status
         case benefitID = "benefit_id"
         case displayKey = "display_key"
         case limitActivations = "limit_activations"
         case expiresAt = "expires_at"
         case activation
+    }
+
+    /// Polar answers 404 for revoked or disabled keys, so a 200 should
+    /// always say `granted`; any other status is still refused. A response
+    /// without the field is not held against the key.
+    var isGranted: Bool {
+        status.map { $0 == "granted" } ?? true
     }
 
     /// A response without the field is not held against the key.

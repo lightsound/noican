@@ -93,9 +93,9 @@ struct LicenseGateReducerTests {
 
     @Test("Pickers keep working without a license")
     func pickersWork() {
-        let state = drive(unlicensed(), [.microphoneSelected(usbMic.uid), .modelSelected("dfn3"), .intensityChanged(0.5)])
+        let state = drive(unlicensed(), [.microphoneSelected(usbMic.uid), .modelSelected("dpdfnet2"), .intensityChanged(0.5)])
         #expect(state.selectedInputUID == usbMic.uid)
-        #expect(state.selectedModelID == "dfn3")
+        #expect(state.selectedModelID == "dpdfnet2")
         #expect(state.intensity == 0.5)
     }
 }

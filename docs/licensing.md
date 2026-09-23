@@ -90,6 +90,12 @@ Production is `https://api.polar.sh`, sandbox `https://sandbox-api.polar.sh`.
   other products fail server-side. Activation takes no benefit filter, so the
   app checks the returned `benefit_id` and releases the fresh activation of a
   foreign key immediately.
+- **Key status.** Polar answers revoked, disabled, and expired keys with
+  `404` (validate) or `403` (activate), and documents `status` in a `200`
+  body as always `granted`. The app still refuses a `200` whose `status` is
+  anything else (validate: rejected; activate: the fresh activation is
+  released and refused), so a refunded or revoked key can never renew the
+  grace period.
 - **No `conditions`.** Server-side conditions must match on every validation;
   binding them to hardware would lock a customer out after a logic-board swap.
 

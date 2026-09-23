@@ -23,7 +23,9 @@ private func backend(_ transport: FakeTransport) -> PolarLicenseBackend {
     PolarLicenseBackend(configuration: configuration, transport: transport, userAgent: "Noican/1.0.0")
 }
 
-private func licenseKeyJSON(benefit: String = benefitID, expiresAt: String = "null", activation: String = "null") -> String {
+private func licenseKeyJSON(
+    benefit: String = benefitID, status: String = "granted", expiresAt: String = "null", activation: String = "null"
+) -> String {
     """
     {
       "id": "508176f7-065a-4b5d-b524-4e9c8a11ed63",
@@ -32,7 +34,7 @@ private func licenseKeyJSON(benefit: String = benefitID, expiresAt: String = "nu
       "benefit_id": "\(benefit)",
       "key": "1C285B2D-6CE6-4BC7-B8BE-ADB6A7E304DA",
       "display_key": "****-E304DA",
-      "status": "granted",
+      "status": "\(status)",
       "limit_activations": 3,
       "usage": 0,
       "limit_usage": null,
@@ -44,7 +46,7 @@ private func licenseKeyJSON(benefit: String = benefitID, expiresAt: String = "nu
     """
 }
 
-private func activationJSON(benefit: String = benefitID) -> String {
+private func activationJSON(benefit: String = benefitID, status: String = "granted") -> String {
     """
     {
       "id": "b6724bc8-7ad9-4ca0-b143-7c896fcbb6fe",
@@ -53,7 +55,7 @@ private func activationJSON(benefit: String = benefitID) -> String {
       "meta": {"app_version": "1.0.0"},
       "created_at": "2024-09-02T13:48:13.251621Z",
       "modified_at": null,
-      "license_key": \(licenseKeyJSON(benefit: benefit))
+      "license_key": \(licenseKeyJSON(benefit: benefit, status: status))
     }
     """
 }
@@ -203,6 +205,19 @@ struct PolarResponseTests {
         await #expect(throws: LicenseBackendError.rejected(.wrongProduct)) {
             try await backend(FakeTransport(.http(200, foreign))).validate(key: "KEY-1", activationID: "act-1")
         }
+    }
+
+    @Test("A 200 carrying a status other than granted is refused")
+    func nonGrantedStatus() async {
+        let revoked = FakeTransport(.http(200, licenseKeyJSON(status: "revoked", activation: ownActivation)))
+        await #expect(throws: LicenseBackendError.rejected(.activationRevoked)) {
+            try await backend(revoked).validate(key: "KEY-1", activationID: "b6724bc8-7ad9-4ca0-b143-7c896fcbb6fe")
+        }
+        let transport = FakeTransport(.http(200, activationJSON(status: "disabled")), .http(204, ""))
+        await #expect(throws: LicenseBackendError.rejected(.refused(detail: "the license key is not active"))) {
+            try await backend(transport).activate(key: "KEY-1", device: thisMac)
+        }
+        #expect(transport.requests.map(\.url?.lastPathComponent) == ["activate", "deactivate"], "the slot is given back")
     }
 
     @Test("Only a well-formed Polar error is definitive; everything else is unavailable")
