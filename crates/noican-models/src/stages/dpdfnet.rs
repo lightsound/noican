@@ -114,6 +114,15 @@ impl DpdfnetStage {
                 "state init vectors do not match their declared sizes".to_owned(),
             ));
         }
+        if erb_len
+            .checked_add(spec_len)
+            .is_none_or(|total| total > state_size)
+        {
+            return Err(StageError::Inference(format!(
+                "norm state sizes ({erb_len} + {spec_len}) exceed the declared \
+                 state size {state_size}"
+            )));
+        }
         let mut init_state = vec![0.0_f32; state_size];
         init_state[..erb_len].copy_from_slice(&erb_init);
         init_state[erb_len..erb_len + spec_len].copy_from_slice(&spec_init);

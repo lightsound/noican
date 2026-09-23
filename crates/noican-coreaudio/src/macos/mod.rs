@@ -342,6 +342,12 @@ struct CallbackContext {
     /// means the device stopped calling back (unplugged microphone,
     /// coreaudiod restart, post-sleep stall).
     frames: Arc<AtomicU64>,
+    /// Diagnostic: input samples dropped because the capture ring was
+    /// full — the inference worker (or the capture side) fell behind by
+    /// more than the whole ring (relaxed atomic add, same pattern as
+    /// `frames`). A count that moves means real audio was silently
+    /// dropped; `frames` alone cannot show that.
+    input_overruns: Arc<AtomicU64>,
     /// Diagnostic: render callbacks that delivered no real audio at all
     /// because the output ring was completely dry (relaxed atomic add,
     /// same pattern as `frames`). Underrun means the inference worker
@@ -458,6 +464,9 @@ pub struct Runtime {
     samples_ready: Arc<DispatchSemaphore>,
     frames: Arc<AtomicU64>,
     underruns: Arc<AtomicU64>,
+    /// The capture callback's drop counter (see
+    /// [`Runtime::input_overruns`]).
+    input_overruns: Arc<AtomicU64>,
     block_stats: Arc<WorkerBlockStats>,
     /// Whether the inference worker's real-time promotion succeeded at
     /// loop start. False until the worker records it; afterwards it keeps
@@ -524,6 +533,7 @@ impl Runtime {
         let faulted = Arc::new(AtomicBool::new(false));
         let frames = Arc::new(AtomicU64::new(0));
         let underruns = Arc::new(AtomicU64::new(0));
+        let input_overruns = Arc::new(AtomicU64::new(0));
         let block_stats = Arc::new(WorkerBlockStats::new());
         let worker_realtime = Arc::new(AtomicBool::new(false));
         let context = ContextGuard::new(CallbackContext {
@@ -535,6 +545,7 @@ impl Runtime {
             samples_ready: Arc::clone(&samples_ready),
             frames: Arc::clone(&frames),
             underruns: Arc::clone(&underruns),
+            input_overruns: Arc::clone(&input_overruns),
             output_primed: false,
         });
         attach_render_callback(
@@ -594,6 +605,7 @@ impl Runtime {
             samples_ready,
             frames,
             underruns,
+            input_overruns,
             block_stats,
             worker_realtime,
             worker: Some(worker),
@@ -701,6 +713,16 @@ impl Runtime {
         self.underruns.load(Ordering::Relaxed)
     }
 
+    /// Diagnostic: input samples the capture ring dropped because it
+    /// was full — the inference worker (or the capture side) fell
+    /// behind by more than the ring's capacity. Audible as clipped
+    /// input reaching the models; resettable via
+    /// [`Runtime::reset_debug_stats`] for per-model attribution.
+    #[must_use]
+    pub fn input_overruns(&self) -> u64 {
+        self.input_overruns.load(Ordering::Relaxed)
+    }
+
     /// Diagnostic: engine blocks the inference worker has processed
     /// since start (or the last [`Runtime::reset_debug_stats`]).
     #[must_use]
@@ -735,12 +757,13 @@ impl Runtime {
         self.worker_realtime.load(Ordering::Acquire)
     }
 
-    /// Zeroes the diagnostic counters (underruns and worker block
-    /// statistics) so a model switch can be measured in isolation.
-    /// Plain relaxed stores — safe while the callbacks and the worker
-    /// run.
+    /// Zeroes the diagnostic counters (underruns, input overruns and
+    /// worker block statistics) so a model switch can be measured in
+    /// isolation. Plain relaxed stores — safe while the callbacks and
+    /// the worker run.
     pub fn reset_debug_stats(&self) {
         self.underruns.store(0, Ordering::Relaxed);
+        self.input_overruns.store(0, Ordering::Relaxed);
         self.block_stats.reset();
     }
 
@@ -1484,7 +1507,13 @@ unsafe extern "C" fn render_callback(
         return NO_ERR;
     }
     for sample in &context.capture[..frames] {
-        let _ignored = context.input.push(*sample);
+        if context.input.push(*sample).is_err() {
+            // The input ring is full: the worker fell behind by more
+            // than the whole ring, so these samples are dropped on the
+            // floor. Relaxed add — real-time safe, same pattern as the
+            // frames heartbeat.
+            context.input_overruns.fetch_add(1, Ordering::Relaxed);
+        }
     }
     context
         .frames

@@ -227,6 +227,13 @@ impl Runtime {
         0
     }
 
+    /// Portable builds never capture, so they never overrun the input
+    /// ring.
+    #[must_use]
+    pub const fn input_overruns(&self) -> u64 {
+        0
+    }
+
     /// Portable builds never run the inference worker.
     #[must_use]
     pub const fn worker_blocks(&self) -> u64 {

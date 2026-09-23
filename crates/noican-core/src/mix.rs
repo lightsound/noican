@@ -136,11 +136,16 @@ impl DryWetMixer {
         let delay = dry_delay.min(DRY_RING_CAPACITY - 1);
         let mask = DRY_RING_CAPACITY - 1;
         let mut intensity = self.smoothed;
+        // For blocks over u16::MAX samples the saturated `len` makes the
+        // per-sample step too large, so clamp to the ramp segment — the
+        // block lands exactly on `target` instead of overshooting.
+        let ramp_lo = self.smoothed.min(target);
+        let ramp_hi = self.smoothed.max(target);
         for (sample, out) in dry.iter().zip(wet.iter_mut()) {
             self.ring[self.write & mask] = *sample;
             let delayed = self.ring[self.write.wrapping_sub(delay) & mask];
             self.write = self.write.wrapping_add(1);
-            intensity += step;
+            intensity = (intensity + step).clamp(ramp_lo, ramp_hi);
             // At intensity 1.0 this is exactly `wet` (adding a true zero),
             // so full strength is bit-identical to the pre-mixer engine.
             *out = intensity.mul_add(*out, (1.0 - intensity) * delayed);

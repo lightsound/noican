@@ -198,6 +198,15 @@ final class RustEngine: @unchecked Sendable {
         noican_engine_output_underruns(handle)
     }
 
+    /// Diagnostic: input samples the capture ring dropped because it
+    /// was full — the inference worker (or the capture side) fell
+    /// behind by more than the whole ring, audible as clipped input
+    /// reaching the models. Cumulative since engine start or the last
+    /// `resetDebugStats()`.
+    var inputOverruns: UInt64 {
+        noican_engine_input_overruns(handle)
+    }
+
     /// Diagnostic: engine blocks the inference worker has processed
     /// since start or the last `resetDebugStats()` (the denominator for
     /// `workerBlocksOverBudget`).

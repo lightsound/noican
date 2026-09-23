@@ -734,6 +734,23 @@ pub unsafe extern "C" fn noican_engine_output_underruns(handle: *const c_void) -
     unsafe { read_runtime_counter(handle, Runtime::output_underruns) }
 }
 
+/// Diagnostic: input samples the capture ring dropped because it was
+/// full.
+///
+/// A full ring means the inference worker (or the capture side) fell
+/// behind by more than the whole ring — audible as clipped input
+/// reaching the models. Counted on both transports (aggregate and
+/// split), cumulative since start or the last
+/// [`noican_engine_reset_debug_stats`]; returns 0 while stopped.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_engine_input_overruns(handle: *const c_void) -> u64 {
+    unsafe { read_runtime_counter(handle, Runtime::input_overruns) }
+}
+
 /// Diagnostic: engine blocks the inference worker has processed since
 /// start or the last [`noican_engine_reset_debug_stats`] (the
 /// denominator for the over-budget count). Returns 0 while stopped.
@@ -794,8 +811,8 @@ pub unsafe extern "C" fn noican_engine_worker_realtime(handle: *const c_void) ->
 
 /// Zeroes the diagnostic counters of the running engine.
 ///
-/// Resets the output underruns and the worker block statistics so a
-/// freshly selected model can be measured in isolation. A no-op while
+/// Resets the output underruns, input overruns and the worker block
+/// statistics so a freshly selected model can be measured in isolation. A no-op while
 /// stopped or for a null handle. Plain atomic stores on the Rust side —
 /// safe while audio runs.
 ///
@@ -1092,7 +1109,13 @@ unsafe fn copy_string(value: &str, buffer: *mut c_char, capacity: usize) -> usiz
     if buffer.is_null() || capacity == 0 {
         return required;
     }
-    let copied = value.len().min(capacity - 1);
+    // A truncated copy must end on a UTF-8 char boundary — a multibyte
+    // sequence cut in the middle yields invalid UTF-8 for the caller
+    // even though it is NUL-terminated.
+    let mut copied = value.len().min(capacity - 1);
+    while !value.is_char_boundary(copied) {
+        copied -= 1;
+    }
     unsafe {
         ptr::copy_nonoverlapping(value.as_ptr(), buffer.cast::<u8>(), copied);
         *buffer.add(copied) = 0;
