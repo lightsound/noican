@@ -40,14 +40,14 @@ visibility); the switch itself is the last step.
    GitHub App access to the private repository (Settings → Applications →
    Configure → Repository access) and confirm one agent run can clone
    and push.
-6. **No app artwork in the driver repository.** Its history never
-   contained the mascot: `git -C external/noican-driver log --all --oneline
-   -- resources/Noican.icns` prints nothing, and the pre-rewrite commits
-   that carried it (`e6210fa`, `bb38f47`, published for about an hour on
-   2026-09-23) no longer resolve at
-   `https://github.com/lightsound/noican-driver/commit/bb38f47`. GitHub
-   keeps force-pushed-away commits reachable by SHA, so if that URL still
-   resolves, delete and recreate the repository (pushing the current
-   history again) or ask GitHub Support to garbage-collect it.
+6. **No app artwork in the driver repository, not even by SHA.** The
+   first two driver commits (`e6210fa`, `bb38f47`, 2026-09-23) carried the
+   mascot as `resources/Noican.icns`; the pinned history replaces them.
+   Check the server, not a local clone (which sees only fetched refs):
+   `curl -s -o /dev/null -w '%{http_code}\n'
+   https://raw.githubusercontent.com/lightsound/noican-driver/bb38f4701e7baf78e161273411d8b32e9eb673e5/resources/Noican.icns`
+   must print `404`. GitHub keeps force-pushed-away commits reachable by
+   SHA, so if it prints `200`, delete and recreate the repository and push
+   the pinned history again, or ask GitHub Support to garbage-collect it.
 7. **No public copies remain attached.** The fork count is 0 (a public
    fork stays public after the switch), and GitHub Pages is off.
