@@ -180,6 +180,19 @@ impl DfTractStage {
         )
     }
 
+    /// DeepFilterNet3's zero-lookahead 48 kHz variant from its ONNX tarball
+    /// (`DeepFilterNet3_ll_onnx.tar.gz`: `df_lookahead = conv_lookahead =
+    /// 0`), with the same runtime thresholds as [`Self::deepfilternet3`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StageError::Inference`] when the tarball cannot be loaded.
+    pub fn deepfilternet3_ll(id: &str, tarball: &Path) -> Result<Self, StageError> {
+        let params = DfParams::new(tarball.to_path_buf())
+            .map_err(|e| StageError::Inference(format!("loading {}: {e}", tarball.display())))?;
+        Self::from_params(id, params, RuntimeParams::default_with_ch(1), 1.0)
+    }
+
     /// Hush 16 kHz from its ONNX tarball (`advanced_dfnet16k_*.tar.gz`),
     /// using the thresholds Hush's own `weya_nc` runtime uses
     /// (min −15 dB, ERB/DF max 35 dB).

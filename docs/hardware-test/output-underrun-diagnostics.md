@@ -51,10 +51,10 @@ one-shot 40 ms stalls even on light models).
    `Rosetta-translated process false`.
 2. For each of `DPDFNet2 48k HR` and `DeepFilterNet3 48k` (controls:
    zero underruns in both dated records), then `DPDFNet8 48k HR` and
-   any model without a hardware baseline, such as `UL-UNAS 16k`,
-   `Hush 16k`, and `Hush 48k` (suspects): select the model, speak
-   continuously for at least 60 seconds, and note every diagnostic
-   line (or its absence).
+   any model without a hardware baseline, such as
+   `DeepFilterNet3 LL 48k`, `UL-UNAS 16k`, `Hush 16k`, and `Hush 48k`
+   (suspects): select the model, speak continuously for at least 60
+   seconds, and note every diagnostic line (or its absence).
 3. Pass criteria for the controls: **no underrun line at all** for
    DPDFNet2 and DeepFilterNet3. A nonzero count on a control is a
    regression and fails this check. Because DeepFilterNet3 is the

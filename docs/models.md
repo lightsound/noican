@@ -26,6 +26,7 @@ raises Hugging Face's rate limits; no token is required.
 | `dpdfnet2` | DPDFNet2 48 kHz HR | denoise | 48 k | ONNX Runtime | [sherpa-onnx release](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speech-enhancement-models) | Apache-2.0 |
 | `dpdfnet8` | DPDFNet8 48 kHz HR | denoise | 48 k | ONNX Runtime | [HF Ceva-IP/DPDFNet](https://huggingface.co/Ceva-IP/DPDFNet) (not on the sherpa release yet) | Apache-2.0 |
 | `dfn3` | DeepFilterNet3 | denoise (**app default**) | 48 k | tract (embedded in the `deep_filter` crate) | — (no download) | MIT OR Apache-2.0 |
+| `dfn3-ll` | DeepFilterNet3 LL (zero lookahead) | denoise (low-latency) | 48 k | tract (`deep_filter` crate, LL tarball) | [commit-pinned repo file](https://github.com/Rikorose/DeepFilterNet/tree/v0.5.6/models) | MIT OR Apache-2.0 |
 | `ul-unas` | UL-UNAS (TASLP 2026) | denoise (low-latency) | 16 k | ONNX Runtime | [commit-pinned repo file](https://github.com/Xiaobin-Rong/ul-unas/tree/main/ulunas_onnx/onnx_models) | MIT |
 | `hush` | Hush (Weya AI) | speaker suppression | 16 k | tract (`deep_filter` crate, Hush tarball) | [HF weya-ai/hush](https://huggingface.co/weya-ai/hush) | Apache-2.0 |
 | `hush-48k` | Hush 48k (band-split wrapper around `hush`) | speaker suppression | 48 k out (16 k core) | tract + `noican-models::stages::hush_wideband` | — (depends on `hush`; no files of its own) | Apache-2.0 |
