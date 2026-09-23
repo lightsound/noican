@@ -2,7 +2,7 @@
 
 - **Date**: 2026-08-24 (five research rounds conducted on this date; round 5 was a zero-based sweep for alternative architectures and produced no stack changes — the stack below is final)
 - **Status**: Research complete; implementation not started
-- **Scope**: macOS only, personal use, fully on-device, Apple Developer Program membership available (Developer ID signing is possible)
+- **Scope**: macOS only, fully on-device, paid public release (one-time purchase through Polar, Japan included; [licensing.md](licensing.md)); this repository goes private before release ([release.md](release.md)) while the GPL-3.0 driver stays public in [lightsound/noican-driver](https://github.com/lightsound/noican-driver); Apple Developer Program membership available (Developer ID signing is possible)
 
 This document consolidates the review of two earlier AI-generated design documents ("design1" and "design2") and three rounds of follow-up research. It records every candidate that was evaluated — including rejected ones and the reasons for rejection — so that later decisions can be revisited with full context and rejected options can serve as fallbacks.
 
@@ -75,7 +75,7 @@ Overall: design1 was the technically reliable backbone; design2 contributed the 
 
 | Candidate | Type | License | Notes |
 |---|---|---|---|
-| **joycast.driver pattern (BlackHole fork)** ✅ | BlackHole as git submodule + build-time renaming | GPL-3.0 | [joymacstudio/joycast.driver](https://github.com/joymacstudio/joycast.driver). Ships JoyCast itself. Customization is isolated to GCC preprocessor definitions, so upstream BlackHole updates merge trivially. Includes build, signing, PKG, install/uninstall scripts. **Chosen approach**: same pattern, our own name/ID, signed with our Developer ID. GPL is irrelevant for personal, non-distributed use |
+| **joycast.driver pattern (BlackHole fork)** ✅ | BlackHole as git submodule + build-time renaming | GPL-3.0 | [joymacstudio/joycast.driver](https://github.com/joymacstudio/joycast.driver). Ships JoyCast itself. Customization is isolated to GCC preprocessor definitions, so upstream BlackHole updates merge trivially. Includes build, signing, PKG, install/uninstall scripts. **Chosen approach**: same pattern, our own name/ID, signed with our Developer ID. The GPL obligation is met by publishing the driver source in [lightsound/noican-driver](https://github.com/lightsound/noican-driver) (§11) |
 | BlackHole (stock) | Prebuilt signed driver | GPL-3.0 | [ExistentialAudio/BlackHole](https://github.com/ExistentialAudio/BlackHole). Zero effort, but device shows up as "BlackHole 2ch" and the single-file C codebase is hard to modify directly |
 | NNA Virtual Audio | Prebuilt signed driver | Free, closed-source | [neutralandnaturalaudio.com](https://neutralandnaturalaudio.com/virtual-audio.html). 1–256 configurable channels, renamable without reinstall, per-channel volume. Good no-build fallback; closed source is the drawback |
 | LitLink | Prebuilt signed driver + companion app | Free (freemium) | [litpads.app/litlink](https://litpads.app/litlink). One-click multi-output / mic passthrough. More consumer-oriented than we need |
@@ -146,7 +146,7 @@ design1 concluded the Rust `df` crate was the only practical route because DeepF
 
 ## 6. Background-Speaker Suppression (the differentiator)
 
-DeepFilterNet-class models learn speech-vs-noise separation: vacuum cleaners and keyboards disappear, but **a family member talking nearby or a TV voice passes straight through** ("speech looks like speech"). Solving this for one known user is the core advantage of a personal build. Three approaches, in order of preference:
+DeepFilterNet-class models learn speech-vs-noise separation: vacuum cleaners and keyboards disappear, but **a family member talking nearby or a TV voice passes straight through** ("speech looks like speech"). Solving this for the user's own voice is the product's core differentiator. Three approaches, in order of preference:
 
 ### 6.1 Pretrained models (new since the original designs)
 
@@ -447,7 +447,7 @@ Status of the two direct competitors as checked on 2026-09-11 (see also the §6.
 
 ### Licensing notes for commercial distribution
 
-Personal (non-distributed) use carries no obligations. If the app is ever **sold or distributed**, the stack splits as follows (not legal advice; re-verify licenses at ship time):
+The app is **sold** (one-time purchase through Polar, [licensing.md](licensing.md)), so the stack splits as follows (not legal advice; re-verify licenses at ship time):
 
 **Permissive — safe for closed-source commercial use** (attribution/notice files required):
 DPDFNet code (Apache-2.0), Hush code (Apache-2.0), DeepFilterNet code + DFN3 weights (MIT/Apache-2.0 dual), sherpa-onnx (Apache-2.0), ONNX Runtime (MIT), libASPL (MIT), Sidon (MIT), speech-swift (MIT), JointAEC-NS (MIT), Krasp / NoNoise-Mac / MetalVoice (MIT), webrtc-audio-processing (BSD-3).

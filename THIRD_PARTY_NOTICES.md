@@ -69,7 +69,7 @@ models, adapted code, and vendored assets.
   separate virtual-device driver and never linked into this application
   (docs/tech-research.md §11, docs/driver.md). Never add
   `external/noican-driver` sources or objects to the app or crate targets.
-- License status of all model weights must be re-verified at ship time if
-  the app is ever sold or distributed (docs/tech-research.md §11).
+- License status of all model weights must be re-verified at ship time:
+  the app is sold (docs/licensing.md, docs/tech-research.md §11).
   The weight licenses above do not settle commercial use on their own:
   the training-data terms count too (docs/models.md, "Excluded models").
