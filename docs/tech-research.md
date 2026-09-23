@@ -477,7 +477,7 @@ DPDFNet code (Apache-2.0), Hush code (Apache-2.0), DeepFilterNet code + DFN3 wei
 
   No component carries an NC or research-only term. The one caveat is AudioSet: its audio comes from YouTube, and that is an industry-wide grey zone that every DNS-trained model shares. The share-alike and database licenses ask for attribution.
 - DFN3-LL (`dfn3-ll`): **unclear.** The weights ship in the same dual-licensed repository as DFN3 (`models/DeepFilterNet3_ll_onnx.tar.gz`), but no source documents their training data. The bundled `config.ini` shows a separately trained, larger model: `emb_hidden_dim = 512`, `df_num_layers = 3`, zero lookahead, and different augmentation settings. DFN3's data (DNS4) is only a presumption for it. Ask the DeepFilterNet author before making it the default.
-- Hush (`hush`, `hush-48k`): noise includes ESC-50 (CC BY-NC 3.0) and unspecified FreeSound clips. The DNS noise it lists is fine: `DATASETS.md` calls it a "Microsoft Research License", but the DNS terms are the permissive per-corpus licenses. Unclear until Weya AI confirms.
+- Hush (`hush`, `hush-48k`): noise includes ESC-50 (CC BY-NC 3.0) and unspecified FreeSound clips. The DNS noise it lists is fine: `DATASETS.md` calls it a "Microsoft Research License", but the DNS terms are the permissive per-corpus licenses. **Shipped by owner decision (2026-09-23)**. The basis is the public statement by Weya AI's CEO at the [Product Hunt launch](https://www.producthunt.com/products/hush-df34eafa-13f7-4d91-856f-162c2a9d81ee) (2026-06-23): "Apache 2.0 - free to use in production today" and "Hush is genuinely open source, no 'open core' catch". The statement does not address the ESC-50 clips, so the training-data question itself stays open. A written answer from Weya AI would close it.
 - DPDFNet2/8: noise includes FSD50K, which contains CC BY-NC clips (about 12 %). Unclear until Ceva confirms that those clips were excluded.
 - UL-UNAS: the released checkpoint is `model_trained_on_dns3`, and the paper adds the DiDiSpeech Mandarin corpus, distributed through DiDi's academic-research program. Unclear until the authors confirm the checkpoint's data.
 
@@ -490,7 +490,7 @@ The BlackHole-fork driver (GPL-3.0) is a separate program loaded by `coreaudiod`
 NNA Virtual Audio (free *for personal use*; commercial use requires a vendor license with no public pricing — contact@neutralandnaturalaudio.com. Dropped from consideration for any sold version), Stream.FM (AGPL-3.0 — would force open-sourcing the entire app).
 
 **Verify before shipping** (license not yet confirmed):
-LocalVQE weights, tympan-aspl, UL-UNAS / Hush / DPDFNet training data (above), GTCRN. The `aec3` crate's license was verified during the PR #19 evaluation (MIT OR BSD-3-Clause, cargo-deny-clean), as was `sonora` (BSD-3-Clause) — see the §7.4 decision record.
+LocalVQE weights, tympan-aspl, UL-UNAS / DPDFNet / DFN3-LL training data (above; Hush ships on the owner decision recorded there), GTCRN. The `aec3` crate's license was verified during the PR #19 evaluation (MIT OR BSD-3-Clause, cargo-deny-clean), as was `sonora` (BSD-3-Clause) — see the §7.4 decision record.
 
 ---
 
