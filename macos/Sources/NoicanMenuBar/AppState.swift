@@ -35,7 +35,9 @@ final class AppState: ObservableObject {
     let models = RustEngine.models()
 
     /// Model selected on first launch (also labeled "Default" in the
-    /// model list).
+    /// model list). The default must be a model whose training data is
+    /// clear for commercial use (docs/tech-research.md §11, licensing
+    /// notes); of the registered models, only `dfn3` is.
     nonisolated static let defaultModelID = "dfn3"
 
     /// `UserDefaults` keys for the persisted preferences. Only picker
