@@ -22,7 +22,8 @@ import SwiftUI
 /// time the menu is visible.
 @MainActor
 final class StatusBarController: NSObject {
-    private let state = AppState()
+    private let state: AppState
+    private let license: LicenseModel
     private let statusItem: NSStatusItem
     private var popover: NSPopover?
     private var iconSubscription: AnyCancellable?
@@ -34,6 +35,9 @@ final class StatusBarController: NSObject {
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let state = AppState()
+        self.state = state
+        license = LicenseModel(onAllowanceChange: { state.setProcessingAllowed($0) })
         super.init()
         if let button = statusItem.button {
             button.target = self
@@ -70,7 +74,7 @@ final class StatusBarController: NSObject {
         else {
             return
         }
-        let hosting = NSHostingController(rootView: MenuView(state: state))
+        let hosting = NSHostingController(rootView: MenuView(state: state, license: license))
         // The popover tracks the SwiftUI content's ideal size through
         // preferredContentSize — the one window-sizing path that is
         // anchored to the status item instead of the bottom-left origin.

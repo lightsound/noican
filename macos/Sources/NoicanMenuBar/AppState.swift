@@ -173,6 +173,11 @@ final class AppState: ObservableObject {
         dispatch(.launchAtLoginToggled(enabled))
     }
 
+    /// Fed by `LicenseModel` whenever the license status changes.
+    func setProcessingAllowed(_ isAllowed: Bool) {
+        dispatch(.processingAllowanceChanged(isAllowed))
+    }
+
     // MARK: - Reducer plumbing
 
     /// The single writer of `model`: reduce, publish, persist changed

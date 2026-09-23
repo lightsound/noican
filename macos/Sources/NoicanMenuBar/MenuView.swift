@@ -9,11 +9,13 @@ import SwiftUI
 /// "Model & strength" section holding the model selector and strength
 /// slider (progressive disclosure: the default model is meant to be good
 /// enough that first-time users only touch the mode control and the
-/// microphone), and a utility footer. Spacing and typography follow
+/// microphone), the License section (`LicenseSection`), and a utility
+/// footer. Spacing and typography follow
 /// macOS menu bar app conventions (14 pt content margins, caption-weight
 /// section labels, secondary text for status detail).
 struct MenuView: View {
     @ObservedObject var state: AppState
+    @ObservedObject var license: LicenseModel
 
     /// Whether the "Model & strength" section is expanded. Pure view
     /// chrome, so it lives in AppStorage rather than the reducer;
@@ -38,6 +40,9 @@ struct MenuView: View {
                     .padding(.horizontal, contentPadding)
             }
             settings
+            Divider()
+                .padding(.horizontal, contentPadding)
+            LicenseSection(license: license)
             Divider()
                 .padding(.horizontal, contentPadding)
             footer
@@ -130,6 +135,12 @@ struct MenuView: View {
                 Text(message)
                     .font(.caption2)
                     .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let message = model.messages.licenseRequired {
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let reason = model.messages.previewUnavailableReason {
