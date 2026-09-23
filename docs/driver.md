@@ -134,3 +134,9 @@ which one the engine feeds.
   sources or objects to the app targets** — the GPL must not extend to the
   app (docs/tech-research.md §11). Nothing under `external/` is part of
   the Cargo workspace or the Swift package.
+- The mascot artwork (`macos/Resources/Noican.icns`, a singing uguisu at
+  a vintage microphone) belongs to the app only and must never be copied
+  into the driver repository or bundle: everything there is published
+  under GPL-3.0. The driver uses its own generated microphone icon
+  (`resources/Microphone.icns`, drawn by that repository's
+  `scripts/make-icon.py`).
