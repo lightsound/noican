@@ -207,5 +207,11 @@ organizations, IDs, and keys.
 8. Refund the test order in the dashboard and observe whether Polar revokes
    the key; on the next check the app should show it as not valid.
 
-Before release, switch `server` to `.production` with the production IDs; the
-popover's "· sandbox" suffix must be gone.
+Before release, switch `server` to `.production` with the production IDs and
+check the signed production build positively — the absence of "· sandbox"
+alone also holds for an unconfigured (ungated) build:
+
+1. Before a key is entered the popover reads "License · Not activated" (not
+   "Not configured in this build") and Preview/On are refused.
+2. After activating a real production key it reads "License · Active" with
+   no suffix, and Preview/On start.

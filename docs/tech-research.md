@@ -681,3 +681,8 @@ Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level 
 - Krasp: https://github.com/pilshchikov/krasp
 - NoNoise-Mac: https://github.com/ivalsaraj/NoNoise-Mac / MetalVoice: https://github.com/Ghostkwebb/MetalVoice
 - HushMic (DPDFNet 48 kHz, `hushmic-denoiser` crate): https://github.com/Fovty/HushMic
+
+### Licensing / distribution
+- Polar license keys: https://polar.sh/docs/features/benefits/license-keys / customer-portal license-key API: https://polar.sh/docs/api-reference/2026-10/customer_portal/validate-license-key
+- Keygen: https://keygen.sh/
+- Paddle Billing: https://developer.paddle.com/
