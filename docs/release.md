@@ -15,8 +15,9 @@ visibility); the switch itself is the last step.
    `CFBundleShortVersionString`; the driver CI fails a tag that does not
    match). The gitlink here points at that tag:
    `git -C external/noican-driver describe --tags --exact-match` prints it.
-2. **Every source offer points at the public repository.** The shipped
-   bundle's notice names it:
+2. **Every source offer points at the public repository.** The notice in
+   the release build of the driver (the Developer ID build, which writes
+   `external/noican-driver/dist/Noican.driver`) names it:
    `grep -F https://github.com/lightsound/noican-driver
    external/noican-driver/dist/Noican.driver/Contents/Resources/LICENSE`.
    Open that URL signed out and confirm it resolves. Nothing public
