@@ -108,6 +108,58 @@ struct LicenseActivationTests {
         #expect(license.state.notice == "Keychain unavailable")
     }
 
+    @Test("A failed Keychain read is retried by the next check and the license comes back")
+    func keychainReadRetriedOnRefresh() async {
+        let backend = MockBackend()
+        let store = InMemoryLicenseStore(storedLicense())
+        store.failLoads = true
+        let clock = TestClock()
+        clock.advance(hour)
+        let license = controller(backend: backend, store: store, clock: clock)
+        #expect(license.state.status == .unlicensed)
+        #expect(license.state.notice == "Keychain unavailable")
+
+        await license.refreshIfDue()
+        #expect(store.loads == 2, "still failing: read again, still unlicensed")
+        #expect(license.state.status == .unlicensed)
+
+        store.failLoads = false
+        await license.refreshIfDue()
+        #expect(isActive(license))
+        #expect(license.state.notice == nil)
+        #expect(backend.calls.isEmpty, "a recent validation needs no request once read back")
+        await license.refreshIfDue()
+        #expect(store.loads == 3, "a successful read is not repeated")
+    }
+
+    @Test("Re-entering the key after a failed Keychain read re-uses this Mac's activation")
+    func keychainReadRetriedOnActivate() async {
+        let backend = MockBackend()
+        let store = InMemoryLicenseStore(storedLicense())
+        store.failLoads = true
+        let license = controller(backend: backend, store: store)
+        store.failLoads = false
+        await license.activate(key: "KEY-1")
+        #expect(backend.calls == [.validate(key: "KEY-1", activationID: "act-1")], "no second device slot")
+        #expect(isActive(license))
+    }
+
+    @Test("A Keychain that stays unreadable falls back to a fresh activation, which then wins")
+    func keychainStaysUnreadable() async {
+        let backend = MockBackend()
+        backend.onActivate(.success(grant("act-2")))
+        let store = InMemoryLicenseStore(storedLicense())
+        store.failLoads = true
+        let license = controller(backend: backend, store: store)
+        await license.activate(key: "KEY-1")
+        #expect(backend.calls == [.activate(key: "KEY-1", deviceID: thisMac.id)])
+        #expect(store.license?.activationID == "act-2")
+        store.failLoads = false
+        await license.refreshIfDue()
+        #expect(store.loads == 2, "the fresh activation is authoritative; no stale read-back")
+        #expect(isActive(license))
+    }
+
     @Test("Without a backend configuration the controller is inert and allows processing")
     func unconfigured() async {
         let license = controller(backend: nil)

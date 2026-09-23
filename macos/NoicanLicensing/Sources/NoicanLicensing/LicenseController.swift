@@ -47,6 +47,11 @@ public final class LicenseController {
     private let policy: LicensePolicy
     private let now: () -> Date
     private var record: StoredLicense?
+    /// Whether the last Keychain read failed (locked Keychain at login,
+    /// a denied access prompt). Every later entry point reads it again
+    /// before acting, so a transient failure does not leave a paying
+    /// customer unlicensed for the whole session.
+    private var needsReload = false
     private var verificationFailed = false
     /// When the server last answered no in this session.
     private var lastRejection: Date?
@@ -65,14 +70,23 @@ public final class LicenseController {
         self.device = device
         self.policy = policy
         self.now = now
-        var notice: String?
+        state = LicenseState(status: .unlicensed)
+        needsReload = true
+        reloadIfNeeded()
+    }
+
+    /// Reads the Keychain record when the last read failed (or at init).
+    private func reloadIfNeeded() {
+        guard needsReload else {
+            return
+        }
         do {
             record = try store.load()
+            needsReload = false
+            state = LicenseState(status: evaluate(), activity: state.activity)
         } catch {
-            notice = error.localizedDescription
+            state = LicenseState(status: evaluate(), activity: state.activity, notice: error.localizedDescription)
         }
-        state = LicenseState(status: .unlicensed, notice: notice)
-        state.status = evaluate()
     }
 
     public var managementURL: URL? {
@@ -86,7 +100,11 @@ public final class LicenseController {
     /// re-validates one that is due — including a rejected record, so a
     /// mistaken rejection heals by itself.
     public func refreshIfDue() async {
-        guard state.activity == nil, let backend, let record, isRecheckDue(record, backend) else {
+        guard state.activity == nil else {
+            return
+        }
+        reloadIfNeeded()
+        guard let backend, let record, isRecheckDue(record, backend) else {
             state.status = evaluate()
             return
         }
@@ -114,7 +132,11 @@ public final class LicenseController {
 
     /// The "Verify now" button.
     public func verifyNow() async {
-        guard state.activity == nil, let backend, let record, isOwn(record, backend) else {
+        guard state.activity == nil else {
+            return
+        }
+        reloadIfNeeded()
+        guard let backend, let record, isOwn(record, backend) else {
             return
         }
         await validate(record, backend: backend)
@@ -123,12 +145,16 @@ public final class LicenseController {
     /// Activates a key the customer entered. When this Mac still holds an
     /// activation (for example after the customer rotated the key in the
     /// portal — activations survive a rotation), the new key is first
-    /// tried against it, so no second device slot is spent.
+    /// tried against it, so no second device slot is spent. The Keychain
+    /// is read again first if the last read failed, for the same reason;
+    /// only when it stays unreadable does the key take a new slot (the
+    /// old one can be released in the customer portal).
     public func activate(key rawKey: String) async {
         let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard state.activity == nil, let backend, !key.isEmpty else {
             return
         }
+        reloadIfNeeded()
         if let record, isOwn(record, backend) {
             begin(.activating)
             do throws(LicenseBackendError) {
@@ -150,7 +176,11 @@ public final class LicenseController {
     /// Assistant) is forgotten locally only: releasing it on the server
     /// would deactivate the other Mac.
     public func deactivate() async {
-        guard state.activity == nil, let record else {
+        guard state.activity == nil else {
+            return
+        }
+        reloadIfNeeded()
+        guard let record else {
             return
         }
         guard let backend, isOwn(record, backend) else {
@@ -216,9 +246,11 @@ public final class LicenseController {
 
     /// A definitive answer from the server (yes or no) was received:
     /// persist it. A Keychain failure is reported but does not undo the
-    /// answer for this session.
+    /// answer for this session, and the in-memory record stays
+    /// authoritative (a later read must not bring back an older item).
     private func finish(saving license: StoredLicense) {
         record = license
+        needsReload = false
         verificationFailed = false
         var notice: String?
         do {
@@ -237,6 +269,7 @@ public final class LicenseController {
             notice = error.localizedDescription
         }
         record = nil
+        needsReload = false
         verificationFailed = false
         state = LicenseState(status: evaluate(), notice: notice)
     }

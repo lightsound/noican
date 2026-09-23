@@ -50,13 +50,19 @@ final class TestClock {
 final class InMemoryLicenseStore: LicenseStore {
     var license: StoredLicense?
     var failSaves = false
+    var failLoads = false
+    private(set) var loads = 0
 
     init(_ license: StoredLicense? = nil) {
         self.license = license
     }
 
     func load() throws -> StoredLicense? {
-        license
+        loads += 1
+        if failLoads {
+            throw StoreFailure()
+        }
+        return license
     }
 
     func save(_ license: StoredLicense) throws {

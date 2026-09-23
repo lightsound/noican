@@ -149,7 +149,11 @@ re-enter anything, provided the new backend accepts the same key strings.
   key, expiry, device limit, last validation time, the hashed device ID, and
   the last rejection. Developer ID builds read it back silently across
   updates; ad-hoc builds are a new code identity after every rebuild and get
-  a Keychain prompt. An uninstaller must delete this item.
+  a Keychain prompt. A failed read (locked Keychain at login, a denied
+  prompt) is retried by every later check and before any activation, so the
+  license comes back without re-entering the key and without spending a
+  second device slot; only a Keychain that stays unreadable makes a
+  re-entered key take a new slot. An uninstaller must delete this item.
 - Sent to Polar: the license key, the organization ID, the benefit ID, the
   computer name (as the activation label, so the customer can tell Macs apart
   in the portal), and the app and macOS versions. The hardware UUID is never
