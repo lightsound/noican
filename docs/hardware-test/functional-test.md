@@ -18,18 +18,17 @@ Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
      it reveals the Model selector and the Strength slider.
    - the Model selector (inside "Model & strength"): **every registry
      stage** as rows with a checkmark on the selection — Passthrough,
-     FastEnhancer T/B/S/M/L, DPDFNet2, DPDFNet8, DeepFilterNet3, UL-UNAS,
-     Hush 16k, and Hush 48k, all selectable; the default model row is
-     annotated "Default". Hovering a row pops the model's
-     profile card out beside that row after a short delay: name, tag,
-     four dot ratings (Noise removal / Voice quality / Responsiveness /
+     FastEnhancer T/B/S/M/L, DPDFNet2, DPDFNet8, DeepFilterNet3,
+     UL-UNAS, Hush 16k, and Hush 48k, all selectable; the default model
+     row is annotated "Default". Hovering a row pops the model's profile
+     card out beside that row after a short delay: name, tag, four dot
+     ratings (Noise removal / Voice quality / Responsiveness /
      Efficiency, all "more is better"), and the raw facts (native rate,
      measured delay, size). Once up, the card must **stay up while the
      pointer moves between rows, following the hovered row's position
-     and swapping its content in place** (no per-row blink or
-     re-present animation), hide shortly after the pointer leaves the
-     rows, and — critically — hovering must never close the menu
-     popover itself.
+     and swapping its content in place** (no per-row blink or re-present
+     animation), hide shortly after the pointer leaves the rows, and —
+     critically — hovering must never close the menu popover itself.
    The monitoring section (level bars) must be absent while the mode is
    Off and appear while the engine runs.
 4. Select a physical microphone and `FastEnhancer-B 48k`.

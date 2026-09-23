@@ -38,9 +38,8 @@ own license (below).
    segment* equals the SIR exactly.
 3. Runs every model (`--models`; default: passthrough plus every fetched
    model) on each mixture in 480-sample blocks with the same stage code
-   the live engine uses, compensates the
-   stage's reported latency (as `process` does), and measures the
-   wall-clock time of every block.
+   the live engine uses, compensates the stage's reported latency (as
+   `process` does), and measures the wall-clock time of every block.
 4. Prints the metric table, writes `metrics.csv`, the mixtures
    (`sir+12/input.wav`, …), every output (`sir+12/<model>.wav`), the
    clean voice (`target.wav`), and a blind listening set

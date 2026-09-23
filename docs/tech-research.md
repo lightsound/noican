@@ -192,11 +192,11 @@ Known tuning risk (from design1): gate fade time constant — too short clips th
 > selected) found that Hush already removes background speech well
 > enough in the tested conditions — "more than enough" — so neither the
 > DIY gate (§6.2) nor the TSE enrollment path (§6.1, `tse-48k`; weights
-> still private) is worth building for this product. The only complaint was quality: Hush runs at 16 kHz, so the
-> user's own voice comes out band-limited to 8 kHz while every denoise
-> model in the app is 48 kHz. The follow-up work (PR #21, merged
-> 2026-09-02) was therefore loudness parity for Hush, not speaker
-> suppression.
+> still private) is worth building for this product. The only complaint
+> was quality: Hush runs at 16 kHz, so the user's own voice comes out
+> band-limited to 8 kHz while every denoise model in the app is 48 kHz.
+> The follow-up work (PR #21, merged 2026-09-02) was therefore loudness
+> parity for Hush, not speaker suppression.
 >
 > Competitive check of 2026-09-11 that confirms the direction:
 > [JoyCast](https://joycast.ai/) (v26.5.17) still sells noise suppression
