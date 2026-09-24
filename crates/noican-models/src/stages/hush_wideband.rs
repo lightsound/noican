@@ -8,12 +8,16 @@
 //! back — gated by what Hush decided for the adjacent band:
 //!
 //! ```text
-//! x ──┬─ decim(3) ─ Hush(16 kHz) ─ interp(3) ───────────────┐
-//!     │        │                                            ├─(+)─ × makeup ─ out
-//!     │        └─ interp(3) ─(−)─ delay(480) ─ × g_hi(t) ───┘
-//!     └───── delay(120) ────┘
+//! x ─ × g_in(t) ─┬─ decim(3) ─ Hush(16 kHz) ─ interp(3) ───────────────┐
+//!                │        │                                            ├─(+)─ ÷ g_in(t−600) ─ × makeup ─ out
+//!                │        └─ interp(3) ─(−)─ delay(480) ─ × g_hi(t) ───┘
+//!                └───── delay(120) ────┘
 //! ```
 //!
+//! `g_in` is the input leveler's trim (see `stages::leveler`): the
+//! loudest sustained talker is brought down to the level at which Hush
+//! passes a lone voice at parity, and the trim is undone on the output,
+//! so only what the core sees changes. Reading `x` as the trimmed input:
 //! `x delayed 120 − interp(decim(x))` is the part of the input the model
 //! never saw (the 8–24 kHz band plus the resampler's transition region),
 //! exactly time-aligned with what it did see, so when the core is the
@@ -87,11 +91,45 @@
 //! Hush's measured level characteristic (the high band is scaled by
 //! Hush's own gain via `g_hi`, hence needs the same correction).
 //!
-//! **Level dependence** (harness, 2026-09-11): Hush attenuates a lone
-//! voice more the hotter it is (parity at −37 dBFS, −2…−17 dB at
-//! −25 dBFS). Normalising the core's input level is out of scope here
-//! and recorded as a follow-up; `noican eval --target-level-dbfs` exists
-//! to measure it.
+//! # Decision record: input level (2026-09-24)
+//!
+//! Hush reads the absolute input level as a primary-speaker cue
+//! (harness sweep, `docs/hush-48k-eval.md` "Level dependence": own-voice
+//! SI-SDR 14.4 dB and level +0.4 dB at −37 dBFS; 4.5 dB / −4.6 dB at
+//! −30; 1.7 dB / −7.8 dB at −22; 4.7 dB at −45; everything zeroed at
+//! −55). On a 36-minute owner recording through this stage the output's
+//! share above 8 kHz fell 9 dB between the quietest and loudest
+//! sentences (−39 dB at −45…−40 dBFS, −48 dB at −30…−20), i.e. the
+//! brightness followed the sentence dynamics. Options:
+//!
+//! - **Status quo**: the measured cause; rejected.
+//! - **Automatic gain control (boost and cut) in this stage**: brings a
+//!   quiet talker up too — and the same sweep shows Hush passing a lone
+//!   voice at −37…−49 dBFS as the primary speaker while suppressing one
+//!   at −52 by 18 dB, so boosting a quiet second talker during the
+//!   owner's pauses would hand them the microphone. Rejected.
+//! - **Attenuation-only leveler anchored to the loudest sustained
+//!   talker (chosen)**: `stages::leveler`. Input at or below the target
+//!   is untouched (the live-accepted regime); hotter input is trimmed
+//!   to the target with a slew-limited anchor and the trim is undone on
+//!   the output. A quieter second talker can at most release the trim
+//!   back to 0 dB, i.e. to the status quo.
+//! - **Level the core inside `DfTractStage` for `hush` too**: one place
+//!   for both entries, but it would change the `hush` entry the
+//!   listening test compares against and whose makeup gain and
+//!   acceptance were measured without it. The leveler is a standalone
+//!   struct so `hush` can adopt it in a later change if wanted.
+//! - **A user-facing input trim in the app**: would fix the level once
+//!   per session by hand; needs Swift work and puts a calibration step
+//!   on the user. Rejected while the automatic trim holds.
+//! - **Upstream fix (a level-robust Hush)**: nothing to adopt; see the
+//!   2026-09-11 record.
+//!
+//! Second round (per-frame normalisation — flattens the dynamics Hush
+//! uses and lifts pauses to speech level; a 60 s level histogram — same
+//! drift onto a lone second talker as AGC, more state) produced nothing
+//! better and stopped. Frames the core still skips as silent are trimmed
+//! input under −70 dBFS; the zero output there is accepted as before.
 
 use std::collections::VecDeque;
 use std::ops::Range;
@@ -101,6 +139,7 @@ use noican_core::resample::{Decimator, Interpolator};
 use noican_core::{ENGINE_SAMPLE_RATE, FrameProcessor, StageError};
 
 use super::dfn_tract::{DfTractStage, HUSH_MAKEUP_GAIN_DB, apply_gain, db_to_linear};
+use super::leveler::{HUSH_TARGET_LEVEL_DBFS, InputLeveler};
 
 /// Hush's native rate; the core is rejected at construction if the
 /// tarball says otherwise.
@@ -255,6 +294,9 @@ pub struct HushWidebandStage {
     id: String,
     core: DfTractStage,
     recombiner: BandRecombiner,
+    leveler: InputLeveler,
+    /// The input after the leveler's trim (what both bands are split from).
+    leveled: Vec<f32>,
     core_out: Vec<f32>,
     makeup_gain: f32,
 }
@@ -294,10 +336,18 @@ impl HushWidebandStage {
             )));
         }
         let recombiner = BandRecombiner::new(core.output_delay() * FACTOR);
+        let leveler = InputLeveler::new(
+            HUSH_TARGET_LEVEL_DBFS,
+            ENGINE_SAMPLE_RATE,
+            HOP * FACTOR,
+            recombiner.output_delay(),
+        );
         Ok(Self {
             id: id.to_owned(),
             core,
             recombiner,
+            leveler,
+            leveled: vec![0.0; HOP * FACTOR],
             core_out: vec![0.0; HOP],
             makeup_gain: db_to_linear(HUSH_MAKEUP_GAIN_DB),
         })
@@ -322,17 +372,31 @@ impl FrameProcessor for HushWidebandStage {
     }
 
     fn process_frame(&mut self, input: &[f32], output: &mut [f32]) -> Result<(), StageError> {
-        let low = self.recombiner.split(input);
-        self.core.process_frame(low, &mut self.core_out)?;
-        let gain = self.core.band_gain(BAND_GAIN_BINS);
+        self.leveled.copy_from_slice(input);
+        self.leveler.apply(&mut self.leveled);
+        let low = self.recombiner.split(&self.leveled);
+        // `apply` and `split` have queued this frame's per-sample state;
+        // `merge` and `restore` must consume it even when the core fails,
+        // or the delay lines run one frame long for the rest of the
+        // session (the worker treats an inference error as one silent
+        // block and keeps calling). A failed frame is a muted frame.
+        let result = self.core.process_frame(low, &mut self.core_out);
+        let gain = if result.is_ok() {
+            self.core.band_gain(BAND_GAIN_BINS)
+        } else {
+            self.core_out.fill(0.0);
+            0.0
+        };
         self.recombiner.merge(&self.core_out, gain, output);
+        self.leveler.restore(output);
         apply_gain(output, self.makeup_gain);
-        Ok(())
+        result
     }
 
     fn reset(&mut self) {
         self.core.reset();
         self.recombiner.reset();
+        self.leveler.reset();
     }
 }
 
@@ -402,6 +466,43 @@ mod tests {
                 "core delay {core_delay_low}: reconstruction error {err}"
             );
         }
+    }
+
+    /// The leveler around the recombiner, identity core: hot input is
+    /// trimmed on the way in and restored on the way out, so the pair is
+    /// still a pure delay.
+    #[test]
+    fn leveler_and_recombiner_are_transparent_with_an_identity_core() {
+        // 0.6× the reference signal: ≈ −12 dBFS, 25 dB above the target.
+        let input: Vec<f32> = wideband_signal(400).iter().map(|s| s * 0.6).collect();
+        let mut rec = BandRecombiner::new(480);
+        let delay = rec.output_delay();
+        let mut leveler =
+            InputLeveler::new(HUSH_TARGET_LEVEL_DBFS, ENGINE_SAMPLE_RATE, FRAME, delay);
+        let mut core_fifo: VecDeque<f32> = std::iter::repeat_n(0.0, 160).collect();
+        let mut out = vec![0.0_f32; input.len()];
+        let mut trimmed = vec![0.0_f32; FRAME];
+        let mut enhanced = vec![0.0_f32; HOP];
+        let mut deepest = 0.0_f32;
+        for (frame_in, frame_out) in input.chunks(FRAME).zip(out.chunks_mut(FRAME)) {
+            trimmed.copy_from_slice(frame_in);
+            leveler.apply(&mut trimmed);
+            let low = rec.split(&trimmed).to_vec();
+            core_fifo.extend(low);
+            for e in &mut enhanced {
+                *e = core_fifo.pop_front().unwrap_or(0.0);
+            }
+            rec.merge(&enhanced, 1.0, frame_out);
+            leveler.restore(frame_out);
+            deepest = deepest.min(leveler.gain_db());
+        }
+        assert!(deepest < -15.0, "the leveler never engaged ({deepest} dB)");
+        let start = delay + FRAME;
+        let err = max_abs_diff(&out[start..], &input[start - delay..input.len() - delay]);
+        assert!(
+            err < 1e-4,
+            "reconstruction error {err} with the leveler engaged"
+        );
     }
 
     #[test]
@@ -674,6 +775,81 @@ mod tests {
         assert!(out.iter().all(|s| *s == 0.0));
     }
 
+    /// With real weights: hot input reaches the core at the target level
+    /// and leaves the stage at the input's own level (plus the makeup
+    /// gain), so the leveler changes what Hush decides, not how loud the
+    /// stage is.
+    #[test]
+    #[ignore = "requires downloaded model weights (run: noican fetch hush-48k)"]
+    fn hot_input_is_trimmed_for_the_core_and_restored_at_the_output() {
+        use noican_core::{FramedStage, Stage as _};
+
+        let Some(tarball) = hush_tarball() else {
+            return;
+        };
+        let rms_dbfs = |s: &[f32]| {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "sample counts of a short test signal fit f32"
+            )]
+            let len = s.len() as f32;
+            10.0 * (s.iter().map(|x| x * x).sum::<f32>() / len).log10()
+        };
+        // Speech-like tone pair at ≈ −20 dBFS: 17 dB above the target.
+        let input: Vec<f32> = (0..600 * FRAME)
+            .map(|n| {
+                #[expect(
+                    clippy::cast_precision_loss,
+                    reason = "sample indices fit f32 for a short test signal"
+                )]
+                let t = n as f32 / 48_000.0;
+                0.04f32.mul_add(
+                    (2.0 * std::f32::consts::PI * 5_000.0 * t).sin(),
+                    0.13 * (2.0 * std::f32::consts::PI * 220.0 * t).sin(),
+                )
+            })
+            .collect();
+        let in_level = rms_dbfs(&input);
+        assert!(
+            (in_level + 20.0).abs() < 1.0,
+            "test signal at {in_level} dBFS"
+        );
+
+        let mut stage = HushWidebandStage::new("hush-48k", &tarball).expect("stage should load");
+        let mut out = vec![0.0_f32; FRAME];
+        for frame in input.chunks(FRAME) {
+            stage
+                .process_frame(frame, &mut out)
+                .expect("processing should succeed");
+        }
+        let trim = stage.leveler.gain_db();
+        assert!(
+            (trim - (HUSH_TARGET_LEVEL_DBFS - in_level)).abs() < 1.0,
+            "trim {trim} dB for input at {in_level} dBFS"
+        );
+
+        let mut framed = FramedStage::new(
+            HushWidebandStage::new("hush-48k", &tarball).expect("stage should load"),
+            crate::factory::MAX_BLOCK_LEN,
+        )
+        .expect("48 kHz divides the engine rate");
+        assert_eq!(framed.latency_samples(), 1080);
+        let mut output = vec![0.0_f32; input.len()];
+        for (i, o) in input.chunks(FRAME).zip(output.chunks_mut(FRAME)) {
+            framed
+                .process_block(i, o)
+                .expect("processing should succeed");
+        }
+        // Steady state (after the trim has settled): the stage's level
+        // is the input's, within the makeup gain and Hush's own ±3 dB.
+        let tail = &output[300 * FRAME..];
+        let out_level = rms_dbfs(tail);
+        assert!(
+            (out_level - rms_dbfs(&input[300 * FRAME..])).abs() < HUSH_MAKEUP_GAIN_DB + 3.0,
+            "output at {out_level} dBFS for input at {in_level} dBFS"
+        );
+    }
+
     #[test]
     #[ignore = "requires downloaded model weights (run: noican fetch hush-48k)"]
     fn wideband_matches_hush_on_band_limited_input() {
@@ -696,8 +872,10 @@ mod tests {
         assert_eq!(wide.latency_samples(), 1080);
 
         // Band-limit the test signal the same way the 16 kHz path does,
-        // so the high band the wideband stage would add is ~zero.
-        let raw = wideband_signal(100);
+        // so the high band the wideband stage would add is ~zero. At
+        // 0.03× (≈ −38 dBFS) it sits under the leveler's target, so the
+        // two stages feed the core the same samples.
+        let raw: Vec<f32> = wideband_signal(100).iter().map(|s| s * 0.03).collect();
         let mut dec = Decimator::new(FACTOR, FRAME);
         let mut int = Interpolator::new(FACTOR, HOP);
         let mut input = Vec::with_capacity(raw.len());

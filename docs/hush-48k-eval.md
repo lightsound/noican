@@ -158,6 +158,109 @@ acceptance record) the voice passes at parity. Two consequences:
 - The VCTK stand-in numbers in this document are not a statement about
   the owner's voice; the owner's recording is what counts.
 
+The full sweep (`--target-level-dbfs`, SIR +12, `hush` and the
+unleveled `hush-48k` behave alike in these columns):
+
+| Voice RMS | SI-SDR you | level | resid all |
+|---|---|---|---|
+| −55 dBFS | −120 dB (output zeroed) | −49 dB | — |
+| −45 | 4.7 dB | +1.1 dB | −18.2 dB |
+| −40 | 9.1 dB | +1.3 dB | −17.7 dB |
+| −38 | 14.6 dB | +0.9 dB | −2.1 dB |
+| −37 | 14.4 dB | +0.4 dB | −1.4 dB |
+| −34 | 10.2 dB | −1.8 dB | −0.5 dB |
+| −30 | 4.5 dB | −4.6 dB | −1.0 dB |
+| −22 | 1.7 dB | −7.8 dB | −2.3 dB |
+| −15 | 6.1 dB | −8.8 dB | −2.3 dB |
+
+Two readings. The own-voice columns have a narrow optimum at −38…−37:
+hotter input is progressively attenuated and loses its 4–7 kHz band
+(and, through the gate, the restored band), colder input has its quiet
+syllables zeroed by the model's silence short-circuit. And `resid all`
+flips from −18 dB to ≈ 0 dB between −40 and −38: on this material the
+"suppression" of the lone interferer below −40 dBFS is Hush's level
+gate, not speaker separation — another reason the stand-in `resid`
+columns are diagnostic only.
+
+### Input leveler in `hush-48k` (2026-09-24)
+
+A 36-minute owner recording through `hush-48k` (voice median
+−39 dBFS, loud sentences −30…−20) showed the output's share above
+8 kHz falling 9 dB from the quietest to the loudest sentences — the
+level dependence above, heard as brightness following the sentence
+dynamics. `hush-48k` therefore trims input hotter than −35 dBFS down to
+that level before the core and restores it on the output (attenuation
+only, anchored to the loudest sustained talker, never below a floor on
+the talker's sentence-scale level; design record in
+`crates/noican-models/src/stages/leveler.rs`). The same sweep before
+(the 2026-09-11 stage) and after, `hush-48k` at SIR +12, every column
+the command reports:
+
+| Voice RMS | | HF keep | level | SI-SDR you | SI-SDR both | resid all | resid HF |
+|---|---|---|---|---|---|---|---|
+| −45 dBFS | before | −4.0 dB | +1.1 dB | 4.7 dB | 12.4 dB | −18.1 dB | −9.5 dB |
+| | after | −4.0 dB | +1.1 dB | 4.7 dB | 12.4 dB | −18.1 dB | −9.5 dB |
+| −37 | before | −4.5 dB | +0.4 dB | 14.6 dB | 9.6 dB | −1.4 dB | −5.4 dB |
+| | after | −3.7 dB | +0.9 dB | 14.6 dB | 9.7 dB | +0.4 dB | −4.2 dB |
+| −30 | before | −10.1 dB | −4.6 dB | 4.5 dB | 3.0 dB | −1.0 dB | −5.9 dB |
+| | after | −5.9 dB | −0.1 dB | 14.7 dB | 7.9 dB | +1.5 dB | −4.2 dB |
+| −22 | before | −12.0 dB | −7.8 dB | 1.8 dB | 0.5 dB | −2.3 dB | −7.5 dB |
+| | after | −7.1 dB | −1.7 dB | 13.4 dB | 7.6 dB | +1.1 dB | −4.6 dB |
+| −15 | before | −8.7 dB | −8.8 dB | 6.1 dB | 4.5 dB | −2.3 dB | −6.3 dB |
+| | after | −7.1 dB | −1.9 dB | 12.7 dB | 7.7 dB | +0.8 dB | −4.8 dB |
+
+The "after" rows were measured on the leveler as shipped (hold 0.6 s,
+fall 30 dB/s, no re-arm band — the constants in `leveler.rs`); across
+the four earlier tunings of the floor's hold and fall the same rows
+moved by at most 0.3 dB. Input at or below the target is untouched
+(the −45 rows are identical), and the hot rows now sit within 1.9 dB
+of the −37 row on `SI-SDR you` and within 2.8 dB on `level`. Per-second output/input
+level in the you-only segment at −22 dBFS went from −17…+1 dB to
+−3…+1 dB (the first two seconds of a session, while the trim settles,
+are the −3).
+
+The cost, against the accepted stage at the one level where it was at
+its best (−37): `SI-SDR both` 9.6 → 9.7 dB, `resid all` −1.4 → +0.4 dB,
+`resid HF` −5.4 → −4.2 dB — the second talker comes through 1–2 dB
+more. Two mechanisms, both inherent to steering by level: the anchor
+sits on the loud frames, so at −37 the core runs 1–2 dB colder than
+before; and a second talker heard during the owner's pauses is lifted
+onto the same floor as the owner's own quiet sentences (the two are
+the same level to a level cue). At the hot levels the `resid` columns
+also read 2–3 dB higher than before, where the old stage's extra
+suppression was the same level gate that was attenuating the owner's
+own voice by 5–9 dB. With the caveat below on what `resid` measures on
+this material, the trade is the owner's to hear.
+
+The sweep scales one recording by one factor, so it cannot show the
+trim following a talker whose sentences move. A stand-in with 4 s
+sentences alternating −20 / −42 / −30 dBFS (`hush` is the unleveled
+reference, same core; per-sentence output level and own-voice SI-SDR):
+
+| sentence | hush | hush-48k |
+|---|---|---|
+| −21 dBFS | −4.0 dB, 12.5 dB | −2.4 dB, 12.6 dB |
+| −48 | −9.7 dB, −7.1 dB | −1.7 dB, 11.1 dB |
+| −36 | −3.4 dB, 11.5 dB | −1.8 dB, 16.2 dB |
+| −17 | −8.2 dB, 6.5 dB | −1.0 dB, 16.2 dB |
+| −41 | −13.3 dB, −5.4 dB | −0.1 dB, 15.8 dB |
+
+Without the floor the −36 sentence, arriving after the anchor had
+pinned to −21, reached the core at −50 dBFS and read −0.1 dB; the
+floor returns it to 16.2 dB and leaves the loud sentences within
+1.2 dB of the unfloored figures (12.6 / 16.2 against 12.6 / 17.4).
+Sentences under −40 dBFS are not trimmed; they read better than
+through the unleveled `hush` because the core's running normalisation
+has seen a steadier level in the sentences before them. The floor's
+peak-hold runs through pauses (its 0.6 s hold and 30 dB/s fall are
+wall time): a pause of 1.1 s or longer hands the next sentence over
+with its floor set from its first frame, a 1.0 s pause leaves a quiet
+sentence 3 dB under the floor for 0.3 s. Hold and fall were chosen on
+these two stand-ins (hold 1.0 / 0.6 / 0.4 s: static −22 dBFS row
+13.6 / 13.4 / 12.5 dB, dynamic quiet sentences 9.1 / 11.1 / 14.1 dB;
+a 1 dB re-arm band around the peak was tried and dropped because it
+kept the hold full at every sentence end).
+
 ## Candidate `hush-48k` (stand-in numbers, 2026-09-11)
 
 `hush-48k` (registry entry; design record in
@@ -173,6 +276,10 @@ voice at −37 dBFS, p226 as the interferer):
 | hush-48k | +12 | −4.5 | +0.4 | 14.6 | 9.6 | −1.4 | −5.4 | 22.5 ms | 0.76/0.83 |
 | hush | 0 | −81.3 | +0.4 | 14.4 | −3.7 | 0.1 | −78.6 | 22.5 ms | 0.71/0.78 |
 | hush-48k | 0 | −4.5 | +0.4 | 14.6 | −3.7 | 0.1 | −6.6 | 22.5 ms | 0.76/0.85 |
+
+(Measured before the input leveler of 2026-09-24; at −37 dBFS the
+leveled stage reads HF keep −4.0, level +0.8, SI-SDR you 14.3 — see
+"Input leveler" above for the other levels.)
 
 Reading: the restored band follows Hush's own spectral tilt (Hush
 leaves a passed voice at ≈ −6 dB in 6–7 kHz, so `HF keep` lands near

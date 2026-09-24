@@ -64,8 +64,12 @@ its dependency is, and the weights live in the dependency's directory
 only. `hush-48k` is such an entry: it wraps the 16 kHz Hush core in a
 48 kHz band-split stage — the input's band above 8 kHz is added back to
 Hush's output, scaled by the gain Hush applied in 4–7 kHz, so the added
-band is muted whenever Hush mutes. Same latency as `hush` (1080
-samples, 22.5 ms), ≈ 0.01 ms added per 10 ms block; design record in
+band is muted whenever Hush mutes. Because Hush's decisions depend on
+the absolute input level, the stage also trims input hotter than
+−35 dBFS down to that level before the core and undoes the trim on the
+output (attenuation only; `stages/leveler.rs`), so the output's level
+and dynamics are the input's. Same latency as `hush` (1080
+samples, 22.5 ms), ≈ 0.02 ms added per 10 ms block; design record in
 the module documentation of `crates/noican-models/src/stages/hush_wideband.rs`
 and in [tech-research.md §6.4](tech-research.md).
 
