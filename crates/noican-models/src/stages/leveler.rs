@@ -41,8 +41,8 @@
 //!   `CORE_FLOOR_DBFS`. Loud sentences get the anchor's full trim with
 //!   their syllable dynamics intact, sentences already under the floor
 //!   get none, and a sentence in between is lifted onto the floor within
-//!   about a second — at once when a pause of a second or more precedes
-//!   it.
+//!   about a second and a half — at once when a pause of a little over a
+//!   second precedes it.
 //!   (The anchor alone would send a −42 dBFS sentence after a −20 dBFS
 //!   one to the core at −57 dBFS, where the sweep records the output
 //!   zeroed.)
@@ -535,10 +535,10 @@ mod tests {
             let level = frame_level_dbfs(frame);
             leveler.apply(frame);
             let core_sees = level + leveler.applied_db();
-            // Skip the first 2.5 s of every sentence: the floor's
+            // Skip the first 1.5 s of every sentence: the floor's
             // peak-hold (0.6 s hold, then 30 dB/s: 1.3 s for the 22 dB
             // step) and the anchor's attack are still moving there.
-            if i < 400 || i % 400 < 250 {
+            if i < 400 || i % 400 < 150 {
                 continue;
             }
             // Never trimmed under the floor (sentences already under it
@@ -582,8 +582,12 @@ mod tests {
         let mut leveler = InputLeveler::new(HUSH_TARGET_LEVEL_DBFS, SR, FRAME, 0);
         run_apply(&mut leveler, &tone(-20.0, 400));
         assert!((leveler.gain_db() - (HUSH_TARGET_LEVEL_DBFS + 20.0)).abs() < 0.05);
-        // Three seconds of digital silence: anchor held, peak-hold fallen.
-        run_apply(&mut leveler, &vec![0.0; 300 * FRAME]);
+        // 1.2 s of digital silence — an ordinary sentence boundary, and
+        // just past the 0.6 s hold + 0.5 s fall the constants give for a
+        // 15 dB trim: anchor held, peak-hold fallen. This is what pins
+        // the tuning: with the earlier 1 s hold and 20 dB/s fall the
+        // −42 dBFS frame below is still trimmed 11 dB here.
+        run_apply(&mut leveler, &vec![0.0; 120 * FRAME]);
         assert!((leveler.gain_db() - (HUSH_TARGET_LEVEL_DBFS + 20.0)).abs() < 0.05);
         // A −42 dBFS sentence: untouched from the very first frame, even
         // though the anchor still asks for the full trim.
