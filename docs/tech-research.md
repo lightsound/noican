@@ -280,8 +280,8 @@ Known tuning risk (from design1): gate fade time constant — too short clips th
 > within 12 dB of the anchor, 0.5 dB/s further below, held under
 > −60 dBFS), the input is trimmed by `min(0, −35 − anchor)` dB before
 > the band split — never below a floor on the talker's sentence-scale
-> level (peak-hold with a 1 s hold, then 20 dB/s; not under −35 dBFS on
-> that peak-hold, ≈ −40 dBFS RMS), so the talker's own quieter
+> level (peak-hold with a 0.6 s hold, then 30 dB/s; not under −35 dBFS
+> on that peak-hold, ≈ −40 dBFS RMS), so the talker's own quieter
 > sentences stay in the region where Hush still passes a lone voice —
 > and the output is divided by the same per-sample gain 600 samples
 > later, so the stage's level and latency are unchanged (identity core
@@ -291,11 +291,11 @@ Known tuning risk (from design1): gate fade time constant — too short clips th
 > −15 → 12.9 / −1.8 (before, unleveled `hush-48k`: 14.6 / +0.4,
 > 4.5 / −4.6, 1.8 / −7.8, 6.1 / −8.8). On material whose sentences
 > alternate −20 / −42 / −30 dBFS, the −30 sentence after the −20 one
-> reads 15.7 dB where the anchor alone sent it to the core at −50 dBFS
-> and zeroed it (−0.1 dB), the loud sentences read 12.6 / 16.7 against
-> `hush`'s 12.5 / 6.5, and the −42 ones 9.1 / 13.5 against −7.1 / −5.4
+> reads 16.2 dB where the anchor alone sent it to the core at −50 dBFS
+> and zeroed it (−0.1 dB), the loud sentences read 12.6 / 16.2 against
+> `hush`'s 12.5 / 6.5, and the −42 ones 11.1 / 15.8 against −7.1 / −5.4
 > (the peak-hold's hold and fall run through pauses, so a sentence
-> after a pause gets its floor on its first frame). `block_bench` (Apple Silicon) hush p50
+> after a pause of 1.1 s or more gets its floor on its first frame). `block_bench` (Apple Silicon) hush p50
 > 0.24 / p99 0.31 ms, hush-48k p50 0.26 / p99 0.35 ms.
 >
 > Options and why they lost — automatic gain control (boost and cut):
@@ -313,8 +313,13 @@ Known tuning risk (from design1): gate fade time constant — too short clips th
 > second talker as AGC, with more state. Floor measured per 10 ms frame
 > or on a 0.3–1 s one-pole: the pauses and soft syllables inside a loud
 > sentence pulled it down and the next onset reached the core hot
-> (second loud sentence 8.0 / 7.3 dB against 16.7 with the held
-> peak-hold; static −22 dBFS row 11.6 against 13.6). Target −35 rather than the
+> (second loud sentence 8.0 / 7.3 dB against 16.2 with the held
+> peak-hold; static −22 dBFS row 11.6 against 13.4). A 1 s hold: kept
+> the loud level through an ordinary sentence boundary, so a quiet
+> sentence after a 1 s pause spent 0.6 s in the gated region (0.6 s
+> hold and 30 dB/s chosen; hold 1.0 / 0.6 / 0.4 s measured 13.6 / 13.4 /
+> 12.5 dB on the static −22 dBFS row and 9.1 / 11.1 / 14.1 dB on the
+> dynamic quiet sentences). Target −35 rather than the
 > −37 parity point because the anchor sits on the loud frames, a few dB
 > above the segment RMS (−37 / −35 / −33 measured: −35 is the flattest
 > across levels). The `hush` entry is unchanged.
