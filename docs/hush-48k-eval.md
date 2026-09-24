@@ -190,24 +190,49 @@ A 36-minute owner recording through `hush-48k` (voice median
 level dependence above, heard as brightness following the sentence
 dynamics. `hush-48k` therefore trims input hotter than −35 dBFS down to
 that level before the core and restores it on the output (attenuation
-only, anchored to the loudest sustained talker; design record in
+only, anchored to the loudest sustained talker, never below a floor on
+the talker's sentence-scale level; design record in
 `crates/noican-models/src/stages/leveler.rs`). The same sweep after the
 change, `hush-48k` at SIR +12:
 
 | Voice RMS | HF keep | level | SI-SDR you | SI-SDR both | resid HF |
 |---|---|---|---|---|---|
 | −45 dBFS | −4.0 dB | +1.1 dB | 4.7 dB | 12.4 dB | −9.5 dB |
-| −37 | −4.0 dB | +0.8 dB | 14.3 dB | 11.2 dB | −4.6 dB |
-| −30 | −6.0 dB | −0.3 dB | 14.1 dB | 10.7 dB | −4.6 dB |
-| −22 | −7.2 dB | −1.6 dB | 14.0 dB | 10.6 dB | −4.2 dB |
-| −15 | −7.1 dB | −1.8 dB | 13.5 dB | 10.7 dB | −4.1 dB |
+| −37 | −4.0 dB | +0.8 dB | 14.3 dB | 8.4 dB | −4.3 dB |
+| −30 | −6.0 dB | −0.2 dB | 14.3 dB | 6.6 dB | −4.3 dB |
+| −22 | −7.1 dB | −1.6 dB | 13.6 dB | 6.8 dB | −4.5 dB |
+| −15 | −7.1 dB | −1.8 dB | 12.9 dB | 6.8 dB | −4.7 dB |
 
 Input at or below the target is untouched (the −45 row is the
-unleveled stage), and the hot rows now sit within 1 dB of the −37 row
+unleveled stage), and the hot rows now sit within 1.5 dB of the −37 row
 on SI-SDR and within 2.6 dB on level, against 4.5 / 1.8 / 6.1 dB and
 −4.6 / −7.8 / −8.8 dB before. Per-second output/input level in the
 you-only segment at −22 dBFS went from −17…+1 dB to −3…+1 dB (the
 first two seconds of a session, while the trim settles, are the −3).
+`SI-SDR both` is lower than without the floor (10.7 → 6.6 at −30): a
+second talker heard during the owner's pauses is lifted onto the same
+floor as the owner's own quiet sentences — the two are the same level
+to a level cue — so it is the price of keeping those sentences.
+
+The sweep scales one recording by one factor, so it cannot show the
+trim following a talker whose sentences move. A stand-in with 4 s
+sentences alternating −20 / −42 / −30 dBFS (`hush` is the unleveled
+reference, same core; per-sentence output level and own-voice SI-SDR):
+
+| sentence | hush | hush-48k |
+|---|---|---|
+| −21 dBFS | −4.0 dB, 12.5 dB | −2.4 dB, 12.6 dB |
+| −48 | −9.7 dB, −7.1 dB | −8.8 dB, −5.7 dB |
+| −36 | −3.4 dB, 11.5 dB | −3.3 dB, 13.1 dB |
+| −17 | −8.2 dB, 6.5 dB | −0.8 dB, 17.4 dB |
+| −41 | −13.3 dB, −5.4 dB | −1.4 dB, 6.2 dB |
+
+Without the floor the −36 sentence, arriving after the anchor had
+pinned to −21, reached the core at −50 dBFS and read −0.1 dB; the
+floor returns it to 13.1 dB while leaving the loud sentences at the
+unfloored figures. Sentences under −40 dBFS are not trimmed and read
+as the unleveled stage does (slightly better, the core's running
+normalisation having seen a steadier level).
 
 ## Candidate `hush-48k` (stand-in numbers, 2026-09-11)
 

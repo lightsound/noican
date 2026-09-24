@@ -375,12 +375,22 @@ impl FrameProcessor for HushWidebandStage {
         self.leveled.copy_from_slice(input);
         self.leveler.apply(&mut self.leveled);
         let low = self.recombiner.split(&self.leveled);
-        self.core.process_frame(low, &mut self.core_out)?;
-        let gain = self.core.band_gain(BAND_GAIN_BINS);
+        // `apply` and `split` have queued this frame's per-sample state;
+        // `merge` and `restore` must consume it even when the core fails,
+        // or the delay lines run one frame long for the rest of the
+        // session (the worker treats an inference error as one silent
+        // block and keeps calling). A failed frame is a muted frame.
+        let result = self.core.process_frame(low, &mut self.core_out);
+        let gain = if result.is_ok() {
+            self.core.band_gain(BAND_GAIN_BINS)
+        } else {
+            self.core_out.fill(0.0);
+            0.0
+        };
         self.recombiner.merge(&self.core_out, gain, output);
         self.leveler.restore(output);
         apply_gain(output, self.makeup_gain);
-        Ok(())
+        result
     }
 
     fn reset(&mut self) {

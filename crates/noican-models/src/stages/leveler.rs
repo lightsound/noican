@@ -31,6 +31,18 @@
 //!   do not hand the next loud sentence to the core hot. Frames below
 //!   `SPEECH_FLOOR_DBFS` hold the anchor, so pauses of any length leave
 //!   the trim as it is.
+//! - The trim is **floored on the sentence-scale level** so the talker's
+//!   own quiet sentences never reach the core in the region the sweep
+//!   shows a lone voice being gated or zeroed: a peak-hold of the frame
+//!   level (held for `FLOOR_HOLD_SECONDS`, then falling at
+//!   `FLOOR_DECAY_DB_PER_SECOND`) is never trimmed below
+//!   `CORE_FLOOR_DBFS`. Loud sentences get the anchor's full trim with
+//!   their syllable dynamics and pauses intact, sentences already under
+//!   the floor get none, and a sentence in between is lifted onto the
+//!   floor within about two seconds.
+//!   (The anchor alone would send a −42 dBFS sentence after a −20 dBFS
+//!   one to the core at −57 dBFS, where the sweep records the output
+//!   zeroed.)
 //! - The gain ramps linearly across each frame (no zipper noise) and the
 //!   per-sample gain is remembered for `delay` samples so the restore
 //!   divides each output sample by the gain that was applied to the
@@ -92,6 +104,34 @@ const LEAK_DB_PER_SECOND: f32 = 0.5;
 /// the microphone's own clipping point; the trim stops there.
 const MAX_ATTENUATION_DB: f32 = -30.0;
 
+/// The talker's sustained level is not trimmed below this. It is
+/// measured on a peak-hold of the frame level (see
+/// [`FLOOR_DECAY_DB_PER_SECOND`]), which sits about 5 dB above the
+/// segment RMS the sweep in `docs/hush-48k-eval.md` is expressed in, so
+/// −35 here corresponds to ≈ −40 dBFS RMS there: a lone voice at −40
+/// still comes through (own-voice SI-SDR 9.1 dB, level +1.3 dB) while
+/// one at −40 and below is still suppressed as background (−17.7 dB);
+/// at −38 the second flips (−2.1 dB). The floor therefore keeps the
+/// talker's quiet sentences audible without lifting a second talker
+/// into the primary window.
+const CORE_FLOOR_DBFS: f32 = -35.0;
+
+/// How long the peak-hold level the floor is measured on keeps its
+/// value before it starts to fall. The floor must react to a *sentence*
+/// getting quieter, not to the pauses and soft syllables inside a loud
+/// one: measured per 10 ms frame, on a 0.3–1 s one-pole, or on a
+/// peak-hold that starts falling at once, the level dropped during
+/// every pause and the next onset reached the core hot (dynamic
+/// stand-in, second loud block: SI-SDR 8.0 / 7.3 dB; static stand-in at
+/// −22 dBFS: 11.6 dB against 14.0 dB without a floor). Pauses and
+/// syllable dips are shorter than a second; a quieter sentence lasts
+/// longer.
+const FLOOR_HOLD_SECONDS: f32 = 1.0;
+
+/// Fall rate of the peak-hold level once the hold has run out: a 22 dB
+/// quieter sentence is followed 1.1 s after the hold, 2.1 s in all.
+const FLOOR_DECAY_DB_PER_SECOND: f32 = 20.0;
+
 /// Trims the input toward a target level and restores the output.
 #[derive(Debug)]
 pub(crate) struct InputLeveler {
@@ -105,6 +145,15 @@ pub(crate) struct InputLeveler {
     frame_len: usize,
     /// Linear gain at the end of the previous frame.
     previous_gain: f32,
+    /// Trim applied to the last frame in dB (anchor trim, floored).
+    applied_db: f32,
+    /// Sentence-scale level (peak-hold over speech frames), dBFS: what
+    /// the floor is measured against.
+    sustained_dbfs: f32,
+    /// Speech frames left before `sustained_dbfs` starts to fall.
+    hold_frames_left: u32,
+    hold_frames: u32,
+    floor_decay_per_frame: f32,
     /// Per-sample gains applied to the input, delayed by `delay` for the
     /// restore; primed with unity.
     history: VecDeque<f32>,
@@ -146,21 +195,56 @@ impl InputLeveler {
             leak_per_frame: LEAK_DB_PER_SECOND / frames_per_second,
             frame_len,
             previous_gain: 1.0,
+            applied_db: 0.0,
+            sustained_dbfs: target_dbfs,
+            hold_frames_left: 0,
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a positive frame count of the order of 100"
+            )]
+            hold_frames: (FLOOR_HOLD_SECONDS * frames_per_second).round() as u32,
+            floor_decay_per_frame: FLOOR_DECAY_DB_PER_SECOND / frames_per_second,
             history,
             delay,
         }
     }
 
-    /// Current trim in dB (≤ 0), as it stands after the last frame.
+    /// The anchor's trim in dB (≤ 0), as it stands after the last frame:
+    /// what a frame at or above the anchor is trimmed by.
     pub(crate) fn gain_db(&self) -> f32 {
         (self.target_dbfs - self.anchor_dbfs).clamp(MAX_ATTENUATION_DB, 0.0)
     }
 
-    /// Moves the anchor toward this frame's level under the slew limits;
-    /// frames under the speech floor leave it alone.
+    /// Trim actually applied to the last frame in dB (≤ 0): the anchor's
+    /// trim, floored so the frame did not go under [`CORE_FLOOR_DBFS`].
+    #[cfg(test)]
+    pub(crate) const fn applied_db(&self) -> f32 {
+        self.applied_db
+    }
+
+    /// Trim for the current frame: the anchor's trim, but never enough to
+    /// push the talker's sustained level under the core floor.
+    fn frame_trim_db(&self) -> f32 {
+        let floor_trim = (CORE_FLOOR_DBFS - self.sustained_dbfs).min(0.0);
+        self.gain_db().max(floor_trim)
+    }
+
+    /// Moves the anchor toward this frame's level under the slew limits
+    /// and updates the peak-hold sustained level; frames under the speech
+    /// floor leave both alone.
     fn track(&mut self, level_dbfs: f32) {
         if level_dbfs <= SPEECH_FLOOR_DBFS {
             return;
+        }
+        if level_dbfs >= self.sustained_dbfs {
+            self.sustained_dbfs = level_dbfs;
+            self.hold_frames_left = self.hold_frames;
+        } else if self.hold_frames_left > 0 {
+            self.hold_frames_left -= 1;
+        } else {
+            self.sustained_dbfs =
+                (self.sustained_dbfs - self.floor_decay_per_frame).max(level_dbfs);
         }
         if level_dbfs > self.anchor_dbfs {
             self.anchor_dbfs = (self.anchor_dbfs + self.attack_per_frame).min(level_dbfs);
@@ -175,8 +259,10 @@ impl InputLeveler {
     /// to the new one, and records the per-sample gain for [`Self::restore`].
     pub(crate) fn apply(&mut self, frame: &mut [f32]) {
         debug_assert_eq!(frame.len(), self.frame_len);
-        self.track(frame_level_dbfs(frame));
-        let target = 10.0_f32.powf(self.gain_db() / 20.0);
+        let level = frame_level_dbfs(frame);
+        self.track(level);
+        self.applied_db = self.frame_trim_db();
+        let target = 10.0_f32.powf(self.applied_db / 20.0);
         #[expect(
             clippy::cast_precision_loss,
             reason = "frame length is a few hundred samples; exact in f32"
@@ -204,7 +290,10 @@ impl InputLeveler {
     /// Back to the fresh state: no trim, unity history.
     pub(crate) fn reset(&mut self) {
         self.anchor_dbfs = self.target_dbfs;
+        self.sustained_dbfs = self.target_dbfs;
+        self.hold_frames_left = 0;
         self.previous_gain = 1.0;
+        self.applied_db = 0.0;
         self.history.clear();
         self.history.extend(std::iter::repeat_n(1.0, self.delay));
     }
@@ -392,6 +481,69 @@ mod tests {
             leveler.gain_db().abs() < f32::EPSILON,
             "gain {}",
             leveler.gain_db()
+        );
+    }
+
+    /// The owner's spread: sentences at −20 dBFS and at −42 dBFS. The
+    /// anchor pins to the loud ones; the quiet ones must still reach the
+    /// core at or above the floor, and the loud ones at the target.
+    #[test]
+    fn quiet_sentences_of_the_same_talker_stay_above_the_core_floor() {
+        let mut leveler = InputLeveler::new(HUSH_TARGET_LEVEL_DBFS, SR, FRAME, 0);
+        let mut input = Vec::new();
+        for _ in 0..4 {
+            input.extend(tone(-20.0, 400));
+            input.extend(tone(-42.0, 400));
+            input.extend(tone(-30.0, 400));
+        }
+        let mut worst_quiet = 0.0_f32;
+        let mut worst_loud = 0.0_f32;
+        for (i, frame) in input.chunks_mut(FRAME).enumerate() {
+            let level = frame_level_dbfs(frame);
+            leveler.apply(frame);
+            let core_sees = level + leveler.applied_db();
+            // Skip the first 2.5 s of every sentence: the floor's
+            // peak-hold (1 s hold, then 20 dB/s: 2.1 s for the 22 dB step)
+            // and the anchor's attack are still moving there.
+            if i < 400 || i % 400 < 250 {
+                continue;
+            }
+            // Never trimmed under the floor (sentences already under it
+            // pass untouched).
+            assert!(
+                core_sees > level.min(CORE_FLOOR_DBFS) - 0.05,
+                "frame {i}: level {level}, core sees {core_sees}"
+            );
+            // Quiet sentences pass untouched, loud ones sit at the
+            // target, the ones in between never exceed the target.
+            {
+                if (level + 42.0).abs() < 0.1 {
+                    assert!(
+                        leveler.applied_db().abs() < 0.05,
+                        "frame {i} trimmed by {}",
+                        leveler.applied_db()
+                    );
+                    worst_quiet = worst_quiet.min(core_sees + 42.0);
+                } else if (level + 20.0).abs() < 0.1 {
+                    worst_loud = worst_loud.max((core_sees - HUSH_TARGET_LEVEL_DBFS).abs());
+                } else if (level + 30.0).abs() < 0.1 {
+                    // Lifted onto the floor while the anchor is pinned to
+                    // the loud sentence, then released toward the target
+                    // (−30 is inside the release gate); never above it.
+                    assert!(
+                        core_sees <= HUSH_TARGET_LEVEL_DBFS + 0.01,
+                        "frame {i}: core sees {core_sees}"
+                    );
+                }
+            }
+        }
+        assert!(
+            worst_quiet.abs() < 1e-3,
+            "quiet sentences moved by {worst_quiet} dB"
+        );
+        assert!(
+            worst_loud < 1.0,
+            "loud sentences off target by {worst_loud} dB"
         );
     }
 
