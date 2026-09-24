@@ -192,27 +192,42 @@ dynamics. `hush-48k` therefore trims input hotter than −35 dBFS down to
 that level before the core and restores it on the output (attenuation
 only, anchored to the loudest sustained talker, never below a floor on
 the talker's sentence-scale level; design record in
-`crates/noican-models/src/stages/leveler.rs`). The same sweep after the
-change, `hush-48k` at SIR +12:
+`crates/noican-models/src/stages/leveler.rs`). The same sweep before
+(the 2026-09-11 stage) and after, `hush-48k` at SIR +12, every column
+the command reports:
 
-| Voice RMS | HF keep | level | SI-SDR you | SI-SDR both | resid HF |
-|---|---|---|---|---|---|
-| −45 dBFS | −4.0 dB | +1.1 dB | 4.7 dB | 12.4 dB | −9.5 dB |
-| −37 | −4.0 dB | +0.8 dB | 14.3 dB | 8.4 dB | −4.3 dB |
-| −30 | −6.0 dB | −0.2 dB | 14.3 dB | 6.6 dB | −4.3 dB |
-| −22 | −7.1 dB | −1.6 dB | 13.6 dB | 6.8 dB | −4.5 dB |
-| −15 | −7.1 dB | −1.8 dB | 12.9 dB | 6.8 dB | −4.7 dB |
+| Voice RMS | | HF keep | level | SI-SDR you | SI-SDR both | resid all | resid HF |
+|---|---|---|---|---|---|---|---|
+| −45 dBFS | before | −4.0 dB | +1.1 dB | 4.7 dB | 12.4 dB | −18.1 dB | −9.5 dB |
+| | after | −4.0 dB | +1.1 dB | 4.7 dB | 12.4 dB | −18.1 dB | −9.5 dB |
+| −37 | before | −4.5 dB | +0.4 dB | 14.6 dB | 9.6 dB | −1.4 dB | −5.4 dB |
+| | after | −4.0 dB | +0.8 dB | 14.3 dB | 8.3 dB | +0.5 dB | −4.4 dB |
+| −30 | before | −10.1 dB | −4.6 dB | 4.5 dB | 3.0 dB | −1.0 dB | −5.9 dB |
+| | after | −6.0 dB | −0.2 dB | 14.3 dB | 6.5 dB | +1.3 dB | −4.3 dB |
+| −22 | before | −12.0 dB | −7.8 dB | 1.8 dB | 0.5 dB | −2.3 dB | −7.5 dB |
+| | after | −7.1 dB | −1.6 dB | 13.6 dB | 6.7 dB | +1.1 dB | −4.5 dB |
+| −15 | before | −8.7 dB | −8.8 dB | 6.1 dB | 4.5 dB | −2.3 dB | −6.3 dB |
+| | after | −7.1 dB | −1.8 dB | 12.9 dB | 6.8 dB | +0.9 dB | −4.7 dB |
 
-Input at or below the target is untouched (the −45 row is the
-unleveled stage), and the hot rows now sit within 1.5 dB of the −37 row
-on SI-SDR and within 2.6 dB on level, against 4.5 / 1.8 / 6.1 dB and
-−4.6 / −7.8 / −8.8 dB before. Per-second output/input level in the
-you-only segment at −22 dBFS went from −17…+1 dB to −3…+1 dB (the
-first two seconds of a session, while the trim settles, are the −3).
-`SI-SDR both` is lower than without the floor (10.7 → 6.6 at −30): a
-second talker heard during the owner's pauses is lifted onto the same
-floor as the owner's own quiet sentences — the two are the same level
-to a level cue — so it is the price of keeping those sentences.
+Input at or below the target is untouched (the −45 rows are
+identical), and the hot rows now sit within 1.5 dB of the −37 row on
+`SI-SDR you` and within 2.6 dB on `level`. Per-second output/input
+level in the you-only segment at −22 dBFS went from −17…+1 dB to
+−3…+1 dB (the first two seconds of a session, while the trim settles,
+are the −3).
+
+The cost, against the accepted stage at the one level where it was at
+its best (−37): `SI-SDR both` 9.6 → 8.3 dB, `resid all` −1.4 → +0.5 dB,
+`resid HF` −5.4 → −4.4 dB — the second talker comes through 1–2 dB
+more. Two mechanisms, both inherent to steering by level: the anchor
+sits on the loud frames, so at −37 the core runs 1–2 dB colder than
+before; and a second talker heard during the owner's pauses is lifted
+onto the same floor as the owner's own quiet sentences (the two are
+the same level to a level cue). At the hot levels the `resid` columns
+also read 2–3 dB higher than before, where the old stage's extra
+suppression was the same level gate that was attenuating the owner's
+own voice by 5–9 dB. With the caveat below on what `resid` measures on
+this material, the trade is the owner's to hear.
 
 The sweep scales one recording by one factor, so it cannot show the
 trim following a talker whose sentences move. A stand-in with 4 s
