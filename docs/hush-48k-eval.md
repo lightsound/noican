@@ -244,8 +244,9 @@ reference, same core; per-sentence output level and own-voice SI-SDR):
 
 Without the floor the −36 sentence, arriving after the anchor had
 pinned to −21, reached the core at −50 dBFS and read −0.1 dB; the
-floor returns it to 15.7 dB while leaving the loud sentences at the
-unfloored figures. Sentences under −40 dBFS are not trimmed; they read
+floor returns it to 15.7 dB and leaves the loud sentences within
+0.7 dB of the unfloored figures (12.6 / 16.7 against 12.6 / 17.4 —
+inside the run-to-run spread of this material). Sentences under −40 dBFS are not trimmed; they read
 better than through the unleveled `hush` because the core's running
 normalisation has seen a steadier level in the sentences before them.
 The floor's peak-hold runs through pauses (its hold and fall are wall

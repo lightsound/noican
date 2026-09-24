@@ -588,6 +588,32 @@ mod tests {
         assert!((leveler.applied_db() - (HUSH_TARGET_LEVEL_DBFS + 20.0)).abs() < 0.05);
     }
 
+    /// The other half of the hold: a pause shorter than it (a breath, a
+    /// comma) must not release the floor, or every loud sentence's soft
+    /// syllables would be lifted onto it and the next onset would reach
+    /// the core hot.
+    #[test]
+    fn a_short_pause_keeps_the_floor_held() {
+        let mut leveler = InputLeveler::new(HUSH_TARGET_LEVEL_DBFS, SR, FRAME, 0);
+        run_apply(&mut leveler, &tone(-20.0, 400));
+        let full = HUSH_TARGET_LEVEL_DBFS + 20.0;
+        // Half a second of digital silence: inside the hold.
+        run_apply(&mut leveler, &vec![0.0; 50 * FRAME]);
+        let mut frame = tone(-20.0, 1);
+        leveler.apply(&mut frame);
+        assert!((leveler.applied_db() - full).abs() < 0.05);
+        // A −30 dBFS frame right after that pause still takes the
+        // anchor's full trim — the floor has not moved (contrast the 3 s
+        // pause above, after which the same frame lands on the floor).
+        let mut frame = tone(-30.0, 1);
+        leveler.apply(&mut frame);
+        assert!(
+            (leveler.applied_db() - full).abs() < 0.05,
+            "floor released across a short pause: trim {}",
+            leveler.applied_db()
+        );
+    }
+
     #[test]
     fn trim_is_capped() {
         let mut leveler = InputLeveler::new(HUSH_TARGET_LEVEL_DBFS, SR, FRAME, 0);
