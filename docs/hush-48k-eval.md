@@ -222,17 +222,22 @@ reference, same core; per-sentence output level and own-voice SI-SDR):
 | sentence | hush | hush-48k |
 |---|---|---|
 | −21 dBFS | −4.0 dB, 12.5 dB | −2.4 dB, 12.6 dB |
-| −48 | −9.7 dB, −7.1 dB | −8.8 dB, −5.7 dB |
-| −36 | −3.4 dB, 11.5 dB | −3.3 dB, 13.1 dB |
-| −17 | −8.2 dB, 6.5 dB | −0.8 dB, 17.4 dB |
-| −41 | −13.3 dB, −5.4 dB | −1.4 dB, 6.2 dB |
+| −48 | −9.7 dB, −7.1 dB | −2.4 dB, 9.1 dB |
+| −36 | −3.4 dB, 11.5 dB | −2.1 dB, 15.7 dB |
+| −17 | −8.2 dB, 6.5 dB | −0.8 dB, 16.7 dB |
+| −41 | −13.3 dB, −5.4 dB | +0.1 dB, 13.5 dB |
 
 Without the floor the −36 sentence, arriving after the anchor had
 pinned to −21, reached the core at −50 dBFS and read −0.1 dB; the
-floor returns it to 13.1 dB while leaving the loud sentences at the
-unfloored figures. Sentences under −40 dBFS are not trimmed and read
-as the unleveled stage does (slightly better, the core's running
-normalisation having seen a steadier level).
+floor returns it to 15.7 dB while leaving the loud sentences at the
+unfloored figures. Sentences under −40 dBFS are not trimmed; they read
+better than through the unleveled `hush` because the core's running
+normalisation has seen a steadier level in the sentences before them.
+The floor's peak-hold runs through pauses (its hold and fall are wall
+time), so after a pause longer than a second the next sentence gets
+its floor on its first frame; measured against a peak-hold that only
+advanced on speech frames, the −48 / −41 sentences moved from −5.7 /
+6.2 dB to 9.1 / 13.5 dB.
 
 ## Candidate `hush-48k` (stand-in numbers, 2026-09-11)
 

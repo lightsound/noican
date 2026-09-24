@@ -291,9 +291,11 @@ Known tuning risk (from design1): gate fade time constant — too short clips th
 > −15 → 12.9 / −1.8 (before, unleveled `hush-48k`: 14.6 / +0.4,
 > 4.5 / −4.6, 1.8 / −7.8, 6.1 / −8.8). On material whose sentences
 > alternate −20 / −42 / −30 dBFS, the −30 sentence after the −20 one
-> reads 13.1 dB where the anchor alone sent it to the core at −50 dBFS
-> and zeroed it (−0.1 dB), and the loud sentences read 12.6 / 17.4
-> against `hush`'s 12.5 / 6.5. `block_bench` (Apple Silicon) hush p50
+> reads 15.7 dB where the anchor alone sent it to the core at −50 dBFS
+> and zeroed it (−0.1 dB), the loud sentences read 12.6 / 16.7 against
+> `hush`'s 12.5 / 6.5, and the −42 ones 9.1 / 13.5 against −7.1 / −5.4
+> (the peak-hold's hold and fall run through pauses, so a sentence
+> after a pause gets its floor on its first frame). `block_bench` (Apple Silicon) hush p50
 > 0.24 / p99 0.31 ms, hush-48k p50 0.26 / p99 0.35 ms.
 >
 > Options and why they lost — automatic gain control (boost and cut):
@@ -311,7 +313,7 @@ Known tuning risk (from design1): gate fade time constant — too short clips th
 > second talker as AGC, with more state. Floor measured per 10 ms frame
 > or on a 0.3–1 s one-pole: the pauses and soft syllables inside a loud
 > sentence pulled it down and the next onset reached the core hot
-> (second loud sentence 8.0 / 7.3 dB against 17.4 with the held
+> (second loud sentence 8.0 / 7.3 dB against 16.7 with the held
 > peak-hold; static −22 dBFS row 11.6 against 13.6). Target −35 rather than the
 > −37 parity point because the anchor sits on the loud frames, a few dB
 > above the segment RMS (−37 / −35 / −33 measured: −35 is the flattest

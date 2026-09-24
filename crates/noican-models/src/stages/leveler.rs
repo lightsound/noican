@@ -129,7 +129,10 @@ const CORE_FLOOR_DBFS: f32 = -35.0;
 const FLOOR_HOLD_SECONDS: f32 = 1.0;
 
 /// Fall rate of the peak-hold level once the hold has run out: a 22 dB
-/// quieter sentence is followed 1.1 s after the hold, 2.1 s in all.
+/// quieter sentence that follows a loud one without a pause is followed
+/// 1.1 s after the hold, 2.1 s in all. Across a pause longer than the
+/// hold the fall happens during the pause, and the next sentence gets
+/// its floor on its first frame.
 const FLOOR_DECAY_DB_PER_SECOND: f32 = 20.0;
 
 /// Trims the input toward a target level and restores the output.
@@ -216,6 +219,25 @@ impl InputLeveler {
         (self.target_dbfs - self.anchor_dbfs).clamp(MAX_ATTENUATION_DB, 0.0)
     }
 
+    /// Peak-hold of the frame level: rises at once, holds for
+    /// `FLOOR_HOLD_SECONDS`, then falls at `FLOOR_DECAY_DB_PER_SECOND`
+    /// toward the frame level (no further than the speech floor). It runs
+    /// through pauses too — the hold and the fall are wall time, not
+    /// speech time — so after a pause longer than the hold the next
+    /// sentence sets it on its first frame, whatever its level, and the
+    /// floor is right for that sentence from the start.
+    fn track_sustained(&mut self, level_dbfs: f32) {
+        if level_dbfs >= self.sustained_dbfs {
+            self.sustained_dbfs = level_dbfs;
+            self.hold_frames_left = self.hold_frames;
+        } else if self.hold_frames_left > 0 {
+            self.hold_frames_left -= 1;
+        } else {
+            self.sustained_dbfs = (self.sustained_dbfs - self.floor_decay_per_frame)
+                .max(level_dbfs.max(SPEECH_FLOOR_DBFS));
+        }
+    }
+
     /// Trim actually applied to the last frame in dB (≤ 0): the anchor's
     /// trim, floored so the frame did not go under [`CORE_FLOOR_DBFS`].
     #[cfg(test)]
@@ -230,21 +252,13 @@ impl InputLeveler {
         self.gain_db().max(floor_trim)
     }
 
-    /// Moves the anchor toward this frame's level under the slew limits
-    /// and updates the peak-hold sustained level; frames under the speech
-    /// floor leave both alone.
+    /// Updates the peak-hold sustained level on every frame and moves the
+    /// anchor toward this frame's level under the slew limits; frames
+    /// under the speech floor leave the anchor alone.
     fn track(&mut self, level_dbfs: f32) {
+        self.track_sustained(level_dbfs);
         if level_dbfs <= SPEECH_FLOOR_DBFS {
             return;
-        }
-        if level_dbfs >= self.sustained_dbfs {
-            self.sustained_dbfs = level_dbfs;
-            self.hold_frames_left = self.hold_frames;
-        } else if self.hold_frames_left > 0 {
-            self.hold_frames_left -= 1;
-        } else {
-            self.sustained_dbfs =
-                (self.sustained_dbfs - self.floor_decay_per_frame).max(level_dbfs);
         }
         if level_dbfs > self.anchor_dbfs {
             self.anchor_dbfs = (self.anchor_dbfs + self.attack_per_frame).min(level_dbfs);
@@ -496,7 +510,6 @@ mod tests {
             input.extend(tone(-42.0, 400));
             input.extend(tone(-30.0, 400));
         }
-        let mut worst_quiet = 0.0_f32;
         let mut worst_loud = 0.0_f32;
         for (i, frame) in input.chunks_mut(FRAME).enumerate() {
             let level = frame_level_dbfs(frame);
@@ -516,35 +529,63 @@ mod tests {
             );
             // Quiet sentences pass untouched, loud ones sit at the
             // target, the ones in between never exceed the target.
-            {
-                if (level + 42.0).abs() < 0.1 {
-                    assert!(
-                        leveler.applied_db().abs() < 0.05,
-                        "frame {i} trimmed by {}",
-                        leveler.applied_db()
-                    );
-                    worst_quiet = worst_quiet.min(core_sees + 42.0);
-                } else if (level + 20.0).abs() < 0.1 {
-                    worst_loud = worst_loud.max((core_sees - HUSH_TARGET_LEVEL_DBFS).abs());
-                } else if (level + 30.0).abs() < 0.1 {
-                    // Lifted onto the floor while the anchor is pinned to
-                    // the loud sentence, then released toward the target
-                    // (−30 is inside the release gate); never above it.
-                    assert!(
-                        core_sees <= HUSH_TARGET_LEVEL_DBFS + 0.01,
-                        "frame {i}: core sees {core_sees}"
-                    );
-                }
+            if (level + 42.0).abs() < 0.1 {
+                assert!(
+                    leveler.applied_db().abs() < 0.05,
+                    "frame {i} trimmed by {}",
+                    leveler.applied_db()
+                );
+            } else if (level + 20.0).abs() < 0.1 {
+                worst_loud = worst_loud.max((core_sees - HUSH_TARGET_LEVEL_DBFS).abs());
+            } else if (level + 30.0).abs() < 0.1 {
+                // Lifted onto the floor while the anchor is pinned to
+                // the loud sentence, then released toward the target
+                // (−30 is inside the release gate); never above it.
+                assert!(
+                    core_sees <= HUSH_TARGET_LEVEL_DBFS + 0.01,
+                    "frame {i}: core sees {core_sees}"
+                );
             }
         }
-        assert!(
-            worst_quiet.abs() < 1e-3,
-            "quiet sentences moved by {worst_quiet} dB"
-        );
         assert!(
             worst_loud < 1.0,
             "loud sentences off target by {worst_loud} dB"
         );
+    }
+
+    /// The owner's pauses sit far under the speech floor. The hold and
+    /// the fall of the floor's peak-hold run through them, so a quiet
+    /// sentence after a loud one and a pause is untrimmed from its first
+    /// frame — the first second is not spent in the gated region.
+    #[test]
+    fn a_pause_lets_the_floor_follow_the_next_sentence_at_once() {
+        let mut leveler = InputLeveler::new(HUSH_TARGET_LEVEL_DBFS, SR, FRAME, 0);
+        run_apply(&mut leveler, &tone(-20.0, 400));
+        assert!((leveler.gain_db() - (HUSH_TARGET_LEVEL_DBFS + 20.0)).abs() < 0.05);
+        // Three seconds of digital silence: anchor held, peak-hold fallen.
+        run_apply(&mut leveler, &vec![0.0; 300 * FRAME]);
+        assert!((leveler.gain_db() - (HUSH_TARGET_LEVEL_DBFS + 20.0)).abs() < 0.05);
+        // A −42 dBFS sentence: untouched from the very first frame, even
+        // though the anchor still asks for the full trim.
+        let mut frame = tone(-42.0, 1);
+        let original = frame.clone();
+        leveler.apply(&mut frame);
+        assert_eq!(frame, original);
+        // A −30 dBFS sentence after the same pause: on the floor at once.
+        run_apply(&mut leveler, &tone(-20.0, 400));
+        run_apply(&mut leveler, &vec![0.0; 300 * FRAME]);
+        let mut frame = tone(-30.0, 1);
+        leveler.apply(&mut frame);
+        assert!(
+            (-30.0 + leveler.applied_db() - CORE_FLOOR_DBFS).abs() < 0.05,
+            "core sees {}",
+            -30.0 + leveler.applied_db()
+        );
+        // And a loud sentence after a pause gets the anchor's trim at once.
+        run_apply(&mut leveler, &vec![0.0; 300 * FRAME]);
+        let mut frame = tone(-20.0, 1);
+        leveler.apply(&mut frame);
+        assert!((leveler.applied_db() - (HUSH_TARGET_LEVEL_DBFS + 20.0)).abs() < 0.05);
     }
 
     #[test]
