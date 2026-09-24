@@ -29,8 +29,10 @@
 //!   (`LEAK_DB_PER_SECOND`) for anything further below — breaths and
 //!   room tone between sentences, or a quieter second talker — so they
 //!   do not hand the next loud sentence to the core hot. Frames below
-//!   `SPEECH_FLOOR_DBFS` hold the anchor, so pauses of any length leave
-//!   the trim as it is.
+//!   `SPEECH_FLOOR_DBFS` hold the anchor, but not the floor's peak-hold
+//!   below, whose hold and fall are wall time: after a second or two of
+//!   pause the floor has released the trim to 0 dB, and the next
+//!   sentence is trimmed from its own level.
 //! - The trim is **floored on the sentence-scale level** so the talker's
 //!   own quiet sentences never reach the core in the region the sweep
 //!   shows a lone voice being gated or zeroed: a peak-hold of the frame
@@ -128,6 +130,12 @@ const CORE_FLOOR_DBFS: f32 = -35.0;
 /// longer.
 const FLOOR_HOLD_SECONDS: f32 = 1.0;
 
+/// A frame this close under the peak-hold level counts as being at it
+/// and re-arms the hold (without lowering the level): a steady sentence
+/// whose frames jitter a hair under its first peak must not spend the
+/// hold while it is still going on.
+const HOLD_REARM_DB: f32 = 1.0;
+
 /// Fall rate of the peak-hold level once the hold has run out: a 22 dB
 /// quieter sentence that follows a loud one without a pause is followed
 /// 1.1 s after the hold, 2.1 s in all. Across a pause longer than the
@@ -220,21 +228,34 @@ impl InputLeveler {
     }
 
     /// Peak-hold of the frame level: rises at once, holds for
-    /// `FLOOR_HOLD_SECONDS`, then falls at `FLOOR_DECAY_DB_PER_SECOND`
-    /// toward the frame level (no further than the speech floor). It runs
+    /// `FLOOR_HOLD_SECONDS` after the last frame at (or within
+    /// `HOLD_REARM_DB` of) its level, then falls at
+    /// `FLOOR_DECAY_DB_PER_SECOND` toward the frame level (no further
+    /// than the speech floor), re-arming the hold when it lands on it. It runs
     /// through pauses too — the hold and the fall are wall time, not
     /// speech time — so after a pause longer than the hold the next
     /// sentence sets it on its first frame, whatever its level, and the
     /// floor is right for that sentence from the start.
     fn track_sustained(&mut self, level_dbfs: f32) {
-        if level_dbfs >= self.sustained_dbfs {
-            self.sustained_dbfs = level_dbfs;
+        let level_dbfs = level_dbfs.max(SPEECH_FLOOR_DBFS);
+        if level_dbfs >= self.sustained_dbfs - HOLD_REARM_DB {
+            self.sustained_dbfs = self.sustained_dbfs.max(level_dbfs);
             self.hold_frames_left = self.hold_frames;
         } else if self.hold_frames_left > 0 {
             self.hold_frames_left -= 1;
         } else {
-            self.sustained_dbfs = (self.sustained_dbfs - self.floor_decay_per_frame)
-                .max(level_dbfs.max(SPEECH_FLOOR_DBFS));
+            let fallen = self.sustained_dbfs - self.floor_decay_per_frame;
+            if fallen <= level_dbfs {
+                // Landed on the frame level: this frame *is* the
+                // sustained level, so it re-arms the hold like any other
+                // peak. Otherwise a level trailing off for longer than
+                // the hold would leave the hold spent when the pause
+                // comes, and the pause would release the floor.
+                self.sustained_dbfs = level_dbfs;
+                self.hold_frames_left = self.hold_frames;
+            } else {
+                self.sustained_dbfs = fallen;
+            }
         }
     }
 
@@ -597,19 +618,46 @@ mod tests {
         let mut leveler = InputLeveler::new(HUSH_TARGET_LEVEL_DBFS, SR, FRAME, 0);
         run_apply(&mut leveler, &tone(-20.0, 400));
         let full = HUSH_TARGET_LEVEL_DBFS + 20.0;
-        // Half a second of digital silence: inside the hold.
+        // Half a second of digital silence: inside the hold. The first
+        // frame after it is the quiet one, so nothing re-arms the hold
+        // before the check.
         run_apply(&mut leveler, &vec![0.0; 50 * FRAME]);
-        let mut frame = tone(-20.0, 1);
-        leveler.apply(&mut frame);
-        assert!((leveler.applied_db() - full).abs() < 0.05);
-        // A −30 dBFS frame right after that pause still takes the
-        // anchor's full trim — the floor has not moved (contrast the 3 s
-        // pause above, after which the same frame lands on the floor).
         let mut frame = tone(-30.0, 1);
         leveler.apply(&mut frame);
         assert!(
             (leveler.applied_db() - full).abs() < 0.05,
             "floor released across a short pause: trim {}",
+            leveler.applied_db()
+        );
+        // The same after a level that trails off for longer than the
+        // hold (each frame 0.05 dB under the last, 2 s). The floor is
+        // then legitimately engaged for the quieter level; the point is
+        // that landing on the frame level re-armed the hold, so the
+        // pause does not release it any further.
+        let mut leveler = InputLeveler::new(HUSH_TARGET_LEVEL_DBFS, SR, FRAME, 0);
+        run_apply(&mut leveler, &tone(-20.0, 400));
+        for i in 0..200 {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "frame indices fit f32 for a short test signal"
+            )]
+            let mut frame = tone(0.05f32.mul_add(-(i as f32), -20.0), 1);
+            leveler.apply(&mut frame);
+        }
+        let mut frame = tone(-30.0, 1);
+        leveler.apply(&mut frame);
+        let before_pause = leveler.applied_db();
+        assert!(
+            before_pause > full + 1.0,
+            "floor should be engaged: {before_pause}"
+        );
+        run_apply(&mut leveler, &vec![0.0; 50 * FRAME]);
+        let mut frame = tone(-30.0, 1);
+        leveler.apply(&mut frame);
+        assert!(
+            (leveler.applied_db() - before_pause).abs() < 0.05,
+            "short pause released the floor after a trailing-off level: {} → {}",
+            before_pause,
             leveler.applied_db()
         );
     }
