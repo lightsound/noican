@@ -287,8 +287,8 @@ Known tuning risk (from design1): gate fade time constant — too short clips th
 > later, so the stage's level and latency are unchanged (identity core
 > → identity, unit test) and only the core's decisions change. Harness
 > after the change (VCTK stand-in, SIR +12, own-voice SI-SDR / output
-> level): −37 → 14.3 dB / +0.8 dB, −30 → 14.3 / −0.2, −22 → 13.6 / −1.6,
-> −15 → 12.9 / −1.8 (before, unleveled `hush-48k`: 14.6 / +0.4,
+> level): −37 → 14.6 dB / +0.9 dB, −30 → 14.7 / −0.1, −22 → 13.4 / −1.7,
+> −15 → 12.7 / −1.9 (before, unleveled `hush-48k`: 14.6 / +0.4,
 > 4.5 / −4.6, 1.8 / −7.8, 6.1 / −8.8). On material whose sentences
 > alternate −20 / −42 / −30 dBFS, the −30 sentence after the −20 one
 > reads 16.2 dB where the anchor alone sent it to the core at −50 dBFS

@@ -201,24 +201,27 @@ the command reports:
 | −45 dBFS | before | −4.0 dB | +1.1 dB | 4.7 dB | 12.4 dB | −18.1 dB | −9.5 dB |
 | | after | −4.0 dB | +1.1 dB | 4.7 dB | 12.4 dB | −18.1 dB | −9.5 dB |
 | −37 | before | −4.5 dB | +0.4 dB | 14.6 dB | 9.6 dB | −1.4 dB | −5.4 dB |
-| | after | −4.0 dB | +0.8 dB | 14.3 dB | 8.3 dB | +0.5 dB | −4.4 dB |
+| | after | −3.7 dB | +0.9 dB | 14.6 dB | 9.7 dB | +0.4 dB | −4.2 dB |
 | −30 | before | −10.1 dB | −4.6 dB | 4.5 dB | 3.0 dB | −1.0 dB | −5.9 dB |
-| | after | −6.0 dB | −0.2 dB | 14.3 dB | 6.5 dB | +1.3 dB | −4.3 dB |
+| | after | −5.9 dB | −0.1 dB | 14.7 dB | 7.9 dB | +1.5 dB | −4.2 dB |
 | −22 | before | −12.0 dB | −7.8 dB | 1.8 dB | 0.5 dB | −2.3 dB | −7.5 dB |
-| | after | −7.1 dB | −1.6 dB | 13.6 dB | 6.7 dB | +1.1 dB | −4.5 dB |
+| | after | −7.1 dB | −1.7 dB | 13.4 dB | 7.6 dB | +1.1 dB | −4.6 dB |
 | −15 | before | −8.7 dB | −8.8 dB | 6.1 dB | 4.5 dB | −2.3 dB | −6.3 dB |
-| | after | −7.1 dB | −1.8 dB | 12.9 dB | 6.8 dB | +0.9 dB | −4.7 dB |
+| | after | −7.1 dB | −1.9 dB | 12.7 dB | 7.7 dB | +0.8 dB | −4.8 dB |
 
-Input at or below the target is untouched (the −45 rows are
-identical), and the hot rows now sit within 1.5 dB of the −37 row on
-`SI-SDR you` and within 2.6 dB on `level`. Per-second output/input
+The "after" rows were measured on the leveler as shipped (hold 0.6 s,
+fall 30 dB/s, no re-arm band — the constants in `leveler.rs`); across
+the four earlier tunings of the floor's hold and fall the same rows
+moved by at most 0.3 dB. Input at or below the target is untouched
+(the −45 rows are identical), and the hot rows now sit within 1.9 dB
+of the −37 row on `SI-SDR you` and within 2.8 dB on `level`. Per-second output/input
 level in the you-only segment at −22 dBFS went from −17…+1 dB to
 −3…+1 dB (the first two seconds of a session, while the trim settles,
 are the −3).
 
 The cost, against the accepted stage at the one level where it was at
-its best (−37): `SI-SDR both` 9.6 → 8.3 dB, `resid all` −1.4 → +0.5 dB,
-`resid HF` −5.4 → −4.4 dB — the second talker comes through 1–2 dB
+its best (−37): `SI-SDR both` 9.6 → 9.7 dB, `resid all` −1.4 → +0.4 dB,
+`resid HF` −5.4 → −4.2 dB — the second talker comes through 1–2 dB
 more. Two mechanisms, both inherent to steering by level: the anchor
 sits on the loud frames, so at −37 the core runs 1–2 dB colder than
 before; and a second talker heard during the owner's pauses is lifted
