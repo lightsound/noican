@@ -7,12 +7,18 @@ objective numbers from a controlled mixture, then decided by the owner's
 ears on a blind listening set. Both come out of one CLI command:
 
 ```sh
+cargo run -p noican-cli --release -- fetch hush-48k
 cargo run -p noican-cli --release -- eval \
   --target  ~/Desktop/noican-eval/voice-builtin.m4a \
   --interferer ~/Desktop/noican-eval/interferer/*.flac \
   --models passthrough,hush,hush-48k,dfn3 \
   --out-dir ~/Desktop/noican-eval/out-builtin
 ```
+
+`eval` loads weights from `--models-dir` (default `./models`, the same
+directory `fetch` writes; [models.md](models.md)) and never downloads:
+a listed model that is not fetched there stops the run with `cannot
+create stage <id>`. `dfn3` needs no files.
 
 Nothing under `~/Desktop/noican-eval/` is ever committed: the recordings
 are personal and the public corpus material is redistributed under its
