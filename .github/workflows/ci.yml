@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded runs — on macos-15 (10x per-minute billing) a stale run is
+# the most expensive kind of waste there is.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -15,8 +21,14 @@ jobs:
   fmt:
     name: rustfmt
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          # No step pushes or fetches from origin after checkout (same on every
+          # job below), so the GITHUB_TOKEN does not need to stay in the
+          # workspace git config.
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.98.0
@@ -26,8 +38,11 @@ jobs:
   clippy:
     name: clippy (all lints as errors)
     runs-on: ubuntu-26.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.98.0
@@ -38,10 +53,13 @@ jobs:
   docs:
     name: rustdoc (lints as errors)
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     env:
       RUSTDOCFLAGS: -D warnings
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.98.0
@@ -51,8 +69,11 @@ jobs:
   test:
     name: tests
     runs-on: ubuntu-26.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.98.0
@@ -62,8 +83,11 @@ jobs:
   deny:
     name: cargo-deny (licenses & advisories)
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
@@ -72,16 +96,40 @@ jobs:
   machete:
     name: cargo-machete (unused dependencies)
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-machete
       - run: cargo machete
 
+  actionlint:
+    name: jactionlint (workflow lint)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # jactionlint is the only workflow linter that parses the
+      # parallel:/background:/wait:/cancel: step syntax the macos job uses.
+      # Needs only the checkout and fails fast; shellcheck rides along when the
+      # image ships it, with an apt fallback so run: scripts are never skipped.
+      - name: Lint the GitHub Actions workflows
+        run: |
+          scripts/install-jactionlint.sh linux-x64 "$RUNNER_TEMP/jactionlint"
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get install -y shellcheck
+          fi
+          "$RUNNER_TEMP/jactionlint/jactionlint"
+
   macos:
     name: macOS (Rust + Swift, warnings as errors)
     runs-on: macos-15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -89,6 +137,8 @@ jobs:
           # BlackHole submodule are only needed to build the virtual
           # driver, which only the macOS job does.
           submodules: recursive
+          # Both submodules are public, so no token needs to persist.
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.98.0
@@ -171,9 +221,10 @@ jobs:
         # that must accept it (AudioDeviceCatalog.isNoicanVirtualDevice,
         # is_noican_loopback_uid) live here and require the
         # "com.lightsound.noican." prefix with a segment after the dot.
-        run: >
-          strings external/noican-driver/dist/Noican.driver/Contents/MacOS/Noican
-          | grep -E '^com\.lightsound\.noican\..+_UID$'
+        run: |
+          set -o pipefail
+          strings external/noican-driver/dist/Noican.driver/Contents/MacOS/Noican \
+            | grep -E '^com\.lightsound\.noican\..+_UID$'
       - parallel:
           - uses: actions/upload-artifact@v4
             with:
