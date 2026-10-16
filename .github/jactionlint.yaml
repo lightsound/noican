@@ -1,0 +1,33 @@
+# jactionlint configuration (https://jactionlint.jdx.dev — the maintained actionlint
+# fork, and the only workflow linter that parses the parallel:/background:/wait:/cancel:
+# step syntax used by the macos job). The `actionlint` job in ci.yml runs the binary
+# installed by scripts/install-jactionlint.sh. Profile is the default (`default`);
+# `pedantic` was triaged and rejected — see the PR that introduced this file.
+
+rules:
+  # The repository pins actions by tag (@v4, @stable, ...), not by commit SHA — unlike
+  # rererepo's digest pinning, that is the convention here. Re-pinning 25 uses: lines is
+  # a deliberate policy change, out of scope for adopting the linter.
+  unpinned-uses: off
+
+# Secrets referenced from pullfrog.yml. Declaring them makes `secrets.X` references
+# strict — a typo fails lint instead of silently expanding to "". The commented-out
+# provider presets in the pullfrog template are listed too, so enabling one later
+# does not break the gate.
+config-secrets:
+  - ANTHROPIC_API_KEY
+  - CLAUDE_CODE_OAUTH_TOKEN
+  - OPENAI_API_KEY
+  - GOOGLE_GENERATIVE_AI_API_KEY
+  - GEMINI_API_KEY
+  - XAI_API_KEY
+  - DEEPSEEK_API_KEY
+  - MOONSHOT_API_KEY
+  - OPENROUTER_API_KEY
+  - OPENCODE_API_KEY
+  - AWS_BEARER_TOKEN_BEDROCK
+  - AWS_ACCESS_KEY_ID
+  - AWS_SECRET_ACCESS_KEY
+  - VERTEX_SERVICE_ACCOUNT_JSON
+  - AZURE_API_KEY
+  - OPENAI_COMPATIBLE_API_KEY
