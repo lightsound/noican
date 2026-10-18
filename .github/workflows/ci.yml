@@ -109,6 +109,44 @@ jobs:
         # before the UID check is what fails the job if this build fails.
         run: bash external/noican-driver/scripts/build-driver.sh
         background: true
+      # SwiftPM caches restore while the driver builds in the background.
+      # swiftc --version fingerprints the toolchain: compiled modules are
+      # only reusable by the same compiler, so it goes in every key.
+      - name: Hash the Swift toolchain for the cache keys
+        id: swift-toolchain
+        run: echo "hash=$(swiftc --version | shasum -a 256 | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      # One entry per package's .build dir, each keyed on that package's
+      # manifest and Swift sources. A source change misses the primary key
+      # and falls back to the newest entry built by the same toolchain
+      # (restore-keys), then saves under the new key on success — the
+      # cache stays warm without ever restoring one package's objects
+      # into another's directory. The app package's key covers all of
+      # macos/ because its NoicanState/NoicanLicensing path dependencies
+      # compile into macos/.build too.
+      # The `!**/.build/**` exclusions keep restored build dirs out of the
+      # hashes: `.build` trees contain generated .swift files (e.g. derived
+      # test runners), and the app key is evaluated after the other two
+      # caches restore, so hashing them would make the key depend on
+      # restore order and never exact-hit.
+      # Every pattern stays under macos/: SwiftPM only reads the root
+      # package's Package.resolved, and a workspace-wide `**` glob would
+      # walk target/ and the driver's dist/, which the background
+      # xcodebuild is writing to while these keys are evaluated.
+      - uses: actions/cache@v4
+        with:
+          path: macos/NoicanState/.build
+          key: ${{ runner.os }}-swiftpm-state-${{ steps.swift-toolchain.outputs.hash }}-${{ hashFiles('macos/NoicanState/Package.swift', 'macos/NoicanState/**/*.swift', 'macos/NoicanState/Package.resolved', '!macos/NoicanState/.build/**') }}
+          restore-keys: ${{ runner.os }}-swiftpm-state-${{ steps.swift-toolchain.outputs.hash }}-
+      - uses: actions/cache@v4
+        with:
+          path: macos/NoicanLicensing/.build
+          key: ${{ runner.os }}-swiftpm-licensing-${{ steps.swift-toolchain.outputs.hash }}-${{ hashFiles('macos/NoicanLicensing/Package.swift', 'macos/NoicanLicensing/**/*.swift', 'macos/NoicanLicensing/Package.resolved', '!macos/NoicanLicensing/.build/**') }}
+          restore-keys: ${{ runner.os }}-swiftpm-licensing-${{ steps.swift-toolchain.outputs.hash }}-
+      - uses: actions/cache@v4
+        with:
+          path: macos/.build
+          key: ${{ runner.os }}-swiftpm-app-${{ steps.swift-toolchain.outputs.hash }}-${{ hashFiles('macos/Package.swift', 'macos/**/*.swift', 'macos/Sources/CNoican/**', 'macos/Package.resolved', '!macos/**/.build/**') }}
+          restore-keys: ${{ runner.os }}-swiftpm-app-${{ steps.swift-toolchain.outputs.hash }}-
       - name: Install SwiftLint
         run: brew install swiftlint
       # The three Swift checks are independent: swiftlint only reads
