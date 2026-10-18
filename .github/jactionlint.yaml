@@ -1,8 +1,12 @@
 # jactionlint configuration (https://jactionlint.jdx.dev — the maintained actionlint
 # fork, and the only workflow linter that parses the parallel:/background:/wait:/cancel:
 # step syntax used by the macos job). The `actionlint` job in ci.yml runs the binary
-# installed by scripts/install-jactionlint.sh. Profile is the default (`default`);
-# `pedantic` was triaged and rejected — see the PR that introduced this file.
+# installed by scripts/install-jactionlint.sh. Profile is the default (`default`).
+# `pedantic` was triaged and rejected: its ~110 extra findings are stylistic or
+# contradict this repo's conventions (`require-shell`, `secrets-outside-env` on
+# pullfrog's env block, `superfluous-actions` on dtolnay/rust-toolchain). Its one
+# real signal, `deprecated-node-runtime` (actions/checkout@v4 declares node20), is
+# fixed by bumping checkout across ci.yml, not by a lint profile.
 
 rules:
   # The repository pins actions by tag (@v4, @stable, ...), not by commit SHA — unlike
