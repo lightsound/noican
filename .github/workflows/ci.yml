@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # No step pushes or fetches from origin after checkout (same on every
           # job below), so the GITHUB_TOKEN does not need to stay in the
@@ -42,7 +42,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
@@ -59,7 +59,7 @@ jobs:
     env:
       RUSTDOCFLAGS: -D warnings
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
@@ -73,7 +73,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
@@ -87,7 +87,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: EmbarkStudios/cargo-deny-action@v2
@@ -100,7 +100,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: taiki-e/install-action@v2
@@ -113,7 +113,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       # jactionlint is the only workflow linter that parses the
@@ -133,7 +133,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The driver submodule (lightsound/noican-driver) and its nested
           # BlackHole submodule are only needed to build the virtual
@@ -184,17 +184,17 @@ jobs:
       # package's Package.resolved, and a workspace-wide `**` glob would
       # walk target/ and the driver's dist/, which the background
       # xcodebuild is writing to while these keys are evaluated.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: macos/NoicanState/.build
           key: ${{ runner.os }}-swiftpm-state-${{ steps.swift-toolchain.outputs.hash }}-${{ hashFiles('macos/NoicanState/Package.swift', 'macos/NoicanState/**/*.swift', 'macos/NoicanState/Package.resolved', '!macos/NoicanState/.build/**') }}
           restore-keys: ${{ runner.os }}-swiftpm-state-${{ steps.swift-toolchain.outputs.hash }}-
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: macos/NoicanLicensing/.build
           key: ${{ runner.os }}-swiftpm-licensing-${{ steps.swift-toolchain.outputs.hash }}-${{ hashFiles('macos/NoicanLicensing/Package.swift', 'macos/NoicanLicensing/**/*.swift', 'macos/NoicanLicensing/Package.resolved', '!macos/NoicanLicensing/.build/**') }}
           restore-keys: ${{ runner.os }}-swiftpm-licensing-${{ steps.swift-toolchain.outputs.hash }}-
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: macos/.build
           key: ${{ runner.os }}-swiftpm-app-${{ steps.swift-toolchain.outputs.hash }}-${{ hashFiles('macos/Package.swift', 'macos/**/*.swift', 'macos/Sources/CNoican/**', 'macos/Package.resolved', '!macos/**/.build/**') }}
@@ -232,11 +232,11 @@ jobs:
           strings external/noican-driver/dist/Noican.driver/Contents/MacOS/Noican \
             | grep -E '^com\.lightsound\.noican\..+_UID$'
       - parallel:
-          - uses: actions/upload-artifact@v4
+          - uses: actions/upload-artifact@v7
             with:
               name: noican-macos-arm64
               path: dist/Noican.app
-          - uses: actions/upload-artifact@v4
+          - uses: actions/upload-artifact@v7
             with:
               name: noican-driver-universal-adhoc
               path: external/noican-driver/dist/Noican.driver

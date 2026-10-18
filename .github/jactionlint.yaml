@@ -5,8 +5,8 @@
 # `pedantic` was triaged and rejected: its ~110 extra findings are stylistic or
 # contradict this repo's conventions (`require-shell`, `secrets-outside-env` on
 # pullfrog's env block, `superfluous-actions` on dtolnay/rust-toolchain). Its one
-# real signal, `deprecated-node-runtime` (actions/checkout@v4 declares node20), is
-# fixed by bumping checkout across ci.yml, not by a lint profile.
+# real signal, `deprecated-node-runtime` (checkout/cache/upload-artifact@v4 declared
+# node20), was fixed by bumping them to their Node 24 majors, not by a lint profile.
 
 rules:
   # The repository pins actions by tag (@v4, @stable, ...), not by commit SHA — unlike
