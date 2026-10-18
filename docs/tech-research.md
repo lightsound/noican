@@ -582,6 +582,9 @@ impossible, with a written reason.**
   `swift build -Xswiftc -warnings-as-errors`; the same runner lints and
   tests the whole Rust workspace for `aarch64-apple-darwin` and builds the
   release app bundle.
+- Workflows: jactionlint (default profile; `.github/jactionlint.yaml` records
+  the rule opt-outs and why `pedantic` is not used) lints
+  `.github/workflows/`, with shellcheck on every `run:` script.
 - TS/JS: none in the repo today. PR #2 (fallow + ImportLint, branch
   `cursor/lint-tooling-3722`) was closed for that reason; revive that branch if
   TS/JS ever enters the repo.
