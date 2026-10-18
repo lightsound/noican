@@ -97,16 +97,31 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: macos-arm64
+      - name: Build and ad-hoc sign the virtual driver (BlackHole fork)
+        id: build-driver
+        # Compile check only: coreaudiod loads Developer-ID-signed drivers,
+        # so the installable artifact is built on a machine with the
+        # identity (NOICAN_CODESIGN_IDENTITY), not in CI.
+        # Runs in the background: the Xcode build is self-contained inside
+        # external/noican-driver (its own dist/), so it shares neither the
+        # cargo target/ lock nor the Swift packages' .build dirs and can
+        # overlap the Swift checks and the Rust chain below. The wait
+        # before the UID check is what fails the job if this build fails.
+        run: bash external/noican-driver/scripts/build-driver.sh
+        background: true
       - name: Install SwiftLint
         run: brew install swiftlint
-      - name: Lint the Swift control plane (strict)
-        run: swiftlint lint --strict --config .swiftlint.yml
-      - name: Test the state machine (reducer transition tests)
-        # NoicanState is a standalone pure-Swift package, so its tests
-        # need neither the Rust staticlib nor an app build.
-        run: swift test --package-path macos/NoicanState
-      - name: Test the license logic (mock backend, no network)
-        run: swift test --package-path macos/NoicanLicensing
+      # The three Swift checks are independent: swiftlint only reads
+      # sources, and each swift test builds inside its own package's
+      # .build dir (NoicanState and NoicanLicensing are standalone
+      # packages that need neither the Rust staticlib nor an app build).
+      - parallel:
+          - name: Lint the Swift control plane (strict)
+            run: swiftlint lint --strict --config .swiftlint.yml
+          - name: Test the state machine (reducer transition tests)
+            run: swift test --package-path macos/NoicanState
+          - name: Test the license logic (mock backend, no network)
+            run: swift test --package-path macos/NoicanLicensing
       - name: Lint the workspace on the Apple Silicon target
         run: >
           cargo clippy --workspace --all-targets --all-features --locked
@@ -115,11 +130,8 @@ jobs:
         run: cargo test --workspace --all-features --locked
       - name: Build and ad-hoc sign the menu bar app (release, warnings as errors)
         run: bash scripts/build-macos-app.sh
-      - name: Build and ad-hoc sign the virtual driver (BlackHole fork)
-        # Compile check only: coreaudiod loads Developer-ID-signed drivers,
-        # so the installable artifact is built on a machine with the
-        # identity (NOICAN_CODESIGN_IDENTITY), not in CI.
-        run: bash external/noican-driver/scripts/build-driver.sh
+      - name: Wait for the driver build
+        wait: build-driver
       - name: Check the driver's device UID against the app's matchers
         # The UID base is set in lightsound/noican-driver; the matchers
         # that must accept it (AudioDeviceCatalog.isNoicanVirtualDevice,
@@ -128,11 +140,12 @@ jobs:
         run: >
           strings external/noican-driver/dist/Noican.driver/Contents/MacOS/Noican
           | grep -E '^com\.lightsound\.noican\..+_UID$'
-      - uses: actions/upload-artifact@v4
-        with:
-          name: noican-macos-arm64
-          path: dist/Noican.app
-      - uses: actions/upload-artifact@v4
-        with:
-          name: noican-driver-universal-adhoc
-          path: external/noican-driver/dist/Noican.driver
+      - parallel:
+          - uses: actions/upload-artifact@v4
+            with:
+              name: noican-macos-arm64
+              path: dist/Noican.app
+          - uses: actions/upload-artifact@v4
+            with:
+              name: noican-driver-universal-adhoc
+              path: external/noican-driver/dist/Noican.driver
