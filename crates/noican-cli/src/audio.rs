@@ -17,13 +17,11 @@ use anyhow::Context as _;
 use audioadapter_buffers::owned::InterleavedOwned;
 use noican_core::ENGINE_SAMPLE_RATE;
 use rubato::{Fft, FixedSync, Resampler as _};
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{CODEC_TYPE_NULL, DecoderOptions};
-use symphonia::core::errors::Error as SymphoniaError;
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::codecs::audio::AudioDecoderOptions;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
 
 /// Reads an audio file (WAV, AIFF/AIFC, CAF, FLAC, or M4A) and converts
 /// it to mono 48 kHz f32.
@@ -96,12 +94,12 @@ fn read_symphonia(path: &Path, extension: Option<&str>) -> anyhow::Result<(Vec<f
     if let Some(extension) = extension {
         hint.with_extension(extension);
     }
-    let probed = symphonia::default::get_probe()
-        .format(
+    let mut format = symphonia::default::get_probe()
+        .probe(
             &hint,
             stream,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
+            FormatOptions::default(),
+            MetadataOptions::default(),
         )
         .with_context(|| {
             format!(
@@ -110,19 +108,20 @@ fn read_symphonia(path: &Path, extension: Option<&str>) -> anyhow::Result<(Vec<f
                 path.display()
             )
         })?;
-    let mut format = probed.format;
     let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .first_track_known_codec(TrackType::Audio)
         .with_context(|| format!("no decodable audio track in {}", path.display()))?;
     let track_id = track.id;
-    let sample_rate = track
+    let params = track
         .codec_params
+        .as_ref()
+        .and_then(|params| params.audio())
+        .with_context(|| format!("no audio codec parameters in {}", path.display()))?;
+    let sample_rate = params
         .sample_rate
         .with_context(|| format!("missing sample rate in {}", path.display()))?;
     let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
+        .make_audio_decoder(params, &AudioDecoderOptions::default())
         .with_context(|| {
             format!(
                 "unsupported codec in {} — convert it with \
@@ -132,33 +131,23 @@ fn read_symphonia(path: &Path, extension: Option<&str>) -> anyhow::Result<(Vec<f
         })?;
 
     let mut mono = Vec::new();
-    loop {
-        let packet = match format.next_packet() {
-            Ok(packet) => packet,
-            Err(SymphoniaError::IoError(error))
-                if error.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                break;
-            }
-            Err(error) => {
-                return Err(anyhow::Error::new(error))
-                    .with_context(|| format!("reading {}", path.display()));
-            }
-        };
-        if packet.track_id() != track_id {
+    let mut interleaved = Vec::<f32>::new();
+    while let Some(packet) = format
+        .next_packet()
+        .with_context(|| format!("reading {}", path.display()))?
+    {
+        if packet.track_id != track_id {
             continue;
         }
         let audio_buf = decoder
             .decode(&packet)
             .with_context(|| format!("decoding {}", path.display()))?;
-        let spec = *audio_buf.spec();
-        let frames = audio_buf.frames();
-        if frames == 0 {
+        if audio_buf.frames() == 0 {
             continue;
         }
-        let mut buffer = SampleBuffer::<f32>::new(frames as u64, spec);
-        buffer.copy_interleaved_ref(audio_buf);
-        mono.extend(mix_to_mono(buffer.samples(), spec.channels.count()));
+        let channels = audio_buf.spec().channels().count();
+        audio_buf.copy_to_vec_interleaved(&mut interleaved);
+        mono.extend(mix_to_mono(&interleaved, channels));
     }
     if mono.is_empty() {
         anyhow::bail!("no audio frames decoded from {}", path.display());

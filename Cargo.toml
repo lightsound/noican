@@ -55,7 +55,7 @@ audioadapter-buffers = "5.2"
 # pcm for the uncompressed/µ-law/A-law payloads of AIFF-C and CAF, and
 # FLAC for the public speech corpora the `eval` command mixes in
 # (VCTK is distributed as 48 kHz FLAC).
-symphonia = { version = "0.5", default-features = false, features = [
+symphonia = { version = "0.6", default-features = false, features = [
     "aiff",
     "caf",
     "isomp4",
@@ -108,9 +108,9 @@ all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
 cargo = { level = "deny", priority = -1 }
-# `ort`, `tract` (via deep_filter), and `symphonia` pin duplicated minor
-# versions in their transitive trees that we do not control; the lint fires
-# on the dependency graph rather than on our code.
+# `ort` and `tract` (via deep_filter) pin duplicated minor versions in
+# their transitive trees that we do not control; the lint fires on the
+# dependency graph rather than on our code.
 multiple_crate_versions = "allow"
 # Conflicts with `rust.unreachable_pub` (which we deny): the two lints
 # demand opposite visibility spellings for crate-internal items.
