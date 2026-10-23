@@ -1001,50 +1001,22 @@ fn configure_auhal(
     device: AudioDeviceId,
     virtual_output: VirtualOutputChannels,
 ) -> Result<String, CoreAudioError> {
-    let enabled = 1_u32;
-    set_property(
+    set_io_enabled(unit, Direction::Capture, true, "enable AUHAL input")?;
+    set_io_enabled(unit, Direction::Render, true, "enable AUHAL output")?;
+    set_current_device(unit, device, "select Aggregate Device")?;
+    set_client_format(
         unit,
-        AUDIO_OUTPUT_UNIT_PROPERTY_ENABLE_IO,
-        AUDIO_UNIT_SCOPE_INPUT,
-        INPUT_BUS,
-        &enabled,
-        "enable AUHAL input",
-    )?;
-    set_property(
-        unit,
-        AUDIO_OUTPUT_UNIT_PROPERTY_ENABLE_IO,
-        AUDIO_UNIT_SCOPE_OUTPUT,
-        OUTPUT_BUS,
-        &enabled,
-        "enable AUHAL output",
-    )?;
-    set_property(
-        unit,
-        AUDIO_OUTPUT_UNIT_PROPERTY_CURRENT_DEVICE,
-        AUDIO_UNIT_SCOPE_GLOBAL,
-        OUTPUT_BUS,
-        &device,
-        "select Aggregate Device",
-    )?;
-    let capture_format = pcm_format(1);
-    set_property(
-        unit,
-        AUDIO_UNIT_PROPERTY_STREAM_FORMAT,
-        AUDIO_UNIT_SCOPE_OUTPUT,
-        INPUT_BUS,
-        &capture_format,
+        Direction::Capture,
+        &pcm_format(1),
         "set AUHAL capture format",
     )?;
     // Dual mono: as many client channels as the virtual output has, so a
     // one-to-one channel map can feed every one of them (crate::routing).
     // A 1-channel virtual output yields the mono format of old.
-    let render_format = pcm_format(virtual_output.count());
-    set_property(
+    set_client_format(
         unit,
-        AUDIO_UNIT_PROPERTY_STREAM_FORMAT,
-        AUDIO_UNIT_SCOPE_INPUT,
-        OUTPUT_BUS,
-        &render_format,
+        Direction::Render,
+        &pcm_format(virtual_output.count()),
         "set AUHAL render format",
     )?;
     set_max_frames_per_slice(unit, "set AUHAL frame bound")?;
@@ -1066,6 +1038,101 @@ fn set_max_frames_per_slice(
         AUDIO_UNIT_SCOPE_GLOBAL,
         OUTPUT_BUS,
         &max_frames,
+        operation,
+    )
+}
+
+/// One of AUHAL's two I/O directions. Each has its own element (bus),
+/// split into a device-facing and an app-facing scope: capture enters
+/// the input element from the device on its input scope and reaches the
+/// app on its output scope; render enters the output element from the
+/// app on its input scope and reaches the device on its output scope
+/// (Apple TN2091). The setup helpers below take a direction, so each
+/// unit's configuration names what it switches or formats instead of
+/// spelling out that scope and element.
+#[derive(Debug, Clone, Copy)]
+enum Direction {
+    /// Device input to the app, through the input element.
+    Capture,
+    /// The app to device output, through the output element.
+    Render,
+}
+
+impl Direction {
+    /// The element that carries this direction.
+    const fn element(self) -> u32 {
+        match self {
+            Self::Capture => INPUT_BUS,
+            Self::Render => OUTPUT_BUS,
+        }
+    }
+
+    /// The element's device-facing scope, where `EnableIO` switches the
+    /// direction on or off.
+    const fn device_scope(self) -> u32 {
+        match self {
+            Self::Capture => AUDIO_UNIT_SCOPE_INPUT,
+            Self::Render => AUDIO_UNIT_SCOPE_OUTPUT,
+        }
+    }
+
+    /// The element's app-facing scope, where the client stream format
+    /// lives.
+    const fn client_scope(self) -> u32 {
+        match self {
+            Self::Capture => AUDIO_UNIT_SCOPE_OUTPUT,
+            Self::Render => AUDIO_UNIT_SCOPE_INPUT,
+        }
+    }
+}
+
+/// Switches `direction` on or off (`EnableIO`).
+fn set_io_enabled(
+    unit: AudioUnit,
+    direction: Direction,
+    enabled: bool,
+    operation: &'static str,
+) -> Result<(), CoreAudioError> {
+    set_property(
+        unit,
+        AUDIO_OUTPUT_UNIT_PROPERTY_ENABLE_IO,
+        direction.device_scope(),
+        direction.element(),
+        &u32::from(enabled),
+        operation,
+    )
+}
+
+/// Points the unit at `device` (`CurrentDevice`, a global property).
+fn set_current_device(
+    unit: AudioUnit,
+    device: AudioDeviceId,
+    operation: &'static str,
+) -> Result<(), CoreAudioError> {
+    set_property(
+        unit,
+        AUDIO_OUTPUT_UNIT_PROPERTY_CURRENT_DEVICE,
+        AUDIO_UNIT_SCOPE_GLOBAL,
+        OUTPUT_BUS,
+        &device,
+        operation,
+    )
+}
+
+/// Sets the client format: the stream format the app exchanges with the
+/// unit in `direction`.
+fn set_client_format(
+    unit: AudioUnit,
+    direction: Direction,
+    format: &AudioStreamBasicDescription,
+    operation: &'static str,
+) -> Result<(), CoreAudioError> {
+    set_property(
+        unit,
+        AUDIO_UNIT_PROPERTY_STREAM_FORMAT,
+        direction.client_scope(),
+        direction.element(),
+        format,
         operation,
     )
 }

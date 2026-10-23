@@ -23,11 +23,9 @@ use crate::monitor::{
 };
 
 use super::{
-    AUDIO_OUTPUT_UNIT_PROPERTY_CURRENT_DEVICE, AUDIO_OUTPUT_UNIT_PROPERTY_ENABLE_IO,
-    AUDIO_UNIT_PROPERTY_STREAM_FORMAT, AUDIO_UNIT_SCOPE_GLOBAL, AUDIO_UNIT_SCOPE_INPUT,
-    AUDIO_UNIT_SCOPE_OUTPUT, AudioBufferList, AudioDeviceId, AudioUnit, AudioUnitRenderActionFlags,
-    AuhalUnit, INPUT_BUS, NO_ERR, OSStatus, OUTPUT_BUS, PARAM_ERR, attach_render_callback,
-    check_status, dispose_unit, pcm_format, render_samples, set_property, size_u32,
+    AudioBufferList, AudioDeviceId, AudioUnit, AudioUnitRenderActionFlags, AuhalUnit, Direction,
+    NO_ERR, OSStatus, PARAM_ERR, attach_render_callback, check_status, dispose_unit, pcm_format,
+    render_samples, set_client_format, set_current_device, set_io_enabled, size_u32,
     start_output_unit, stop_output_unit,
 };
 
@@ -419,39 +417,18 @@ fn start_monitor_unit(
 /// engine samples rendered as interleaved stereo (AUHAL's converter
 /// handles the device's own rate and format).
 fn configure_monitor_auhal(unit: AudioUnit, device: AudioDeviceId) -> Result<(), CoreAudioError> {
-    let disabled = 0_u32;
-    let enabled = 1_u32;
-    set_property(
+    set_io_enabled(
         unit,
-        AUDIO_OUTPUT_UNIT_PROPERTY_ENABLE_IO,
-        AUDIO_UNIT_SCOPE_INPUT,
-        INPUT_BUS,
-        &disabled,
+        Direction::Capture,
+        false,
         "disable monitor AUHAL input",
     )?;
-    set_property(
+    set_io_enabled(unit, Direction::Render, true, "enable monitor AUHAL output")?;
+    set_current_device(unit, device, "select monitor output device")?;
+    set_client_format(
         unit,
-        AUDIO_OUTPUT_UNIT_PROPERTY_ENABLE_IO,
-        AUDIO_UNIT_SCOPE_OUTPUT,
-        OUTPUT_BUS,
-        &enabled,
-        "enable monitor AUHAL output",
-    )?;
-    set_property(
-        unit,
-        AUDIO_OUTPUT_UNIT_PROPERTY_CURRENT_DEVICE,
-        AUDIO_UNIT_SCOPE_GLOBAL,
-        OUTPUT_BUS,
-        &device,
-        "select monitor output device",
-    )?;
-    let format = pcm_format(2);
-    set_property(
-        unit,
-        AUDIO_UNIT_PROPERTY_STREAM_FORMAT,
-        AUDIO_UNIT_SCOPE_INPUT,
-        OUTPUT_BUS,
-        &format,
+        Direction::Render,
+        &pcm_format(2),
         "set monitor render format",
     )
 }

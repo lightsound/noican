@@ -55,15 +55,14 @@ use crate::routing::split_render_channels;
 use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
 
 use super::{
-    AUDIO_OUTPUT_UNIT_PROPERTY_CURRENT_DEVICE, AUDIO_OUTPUT_UNIT_PROPERTY_ENABLE_IO,
-    AUDIO_OUTPUT_UNIT_PROPERTY_SET_INPUT_CALLBACK, AUDIO_UNIT_PROPERTY_STREAM_FORMAT,
-    AUDIO_UNIT_SCOPE_GLOBAL, AUDIO_UNIT_SCOPE_INPUT, AUDIO_UNIT_SCOPE_OUTPUT, AudioBufferList,
-    AudioDeviceId, AudioUnit, AudioUnitRenderActionFlags, AudioUnitRenderCallback,
-    AudioUnitSetProperty, AuhalUnit, Capture, ContextGuard, INPUT_BUS, NO_ERR, OSStatus,
+    AUDIO_OUTPUT_UNIT_PROPERTY_SET_INPUT_CALLBACK, AUDIO_UNIT_SCOPE_GLOBAL, AUDIO_UNIT_SCOPE_INPUT,
+    AudioBufferList, AudioDeviceId, AudioUnit, AudioUnitRenderActionFlags, AudioUnitRenderCallback,
+    AudioUnitSetProperty, AuhalUnit, Capture, ContextGuard, Direction, NO_ERR, OSStatus,
     OUTPUT_BUS, PARAM_ERR, RING_CAPACITY, Runtime, Shared, Transport, WORKER_WAIT_NS, WorkerLinks,
     attach_render_callback, audio_workgroup, check_status, device_output_channels, monitor,
-    pcm_format, pcm_format_at, render_samples, set_max_frames_per_slice, set_property, size_u32,
-    spawn_worker, start_output_unit, stop_output_unit, stop_worker, stream_format_channels,
+    pcm_format, pcm_format_at, render_samples, set_client_format, set_current_device,
+    set_io_enabled, set_max_frames_per_slice, size_u32, spawn_worker, start_output_unit,
+    stop_output_unit, stop_worker, stream_format_channels,
 };
 
 /// Native-rate samples drained from the capture ring per worker pass
@@ -260,39 +259,18 @@ fn configure_capture_auhal(
     device: AudioDeviceId,
     capture_rate: u32,
 ) -> Result<(), CoreAudioError> {
-    let enabled = 1_u32;
-    let disabled = 0_u32;
-    set_property(
+    set_io_enabled(unit, Direction::Capture, true, "enable capture AUHAL input")?;
+    set_io_enabled(
         unit,
-        AUDIO_OUTPUT_UNIT_PROPERTY_ENABLE_IO,
-        AUDIO_UNIT_SCOPE_INPUT,
-        INPUT_BUS,
-        &enabled,
-        "enable capture AUHAL input",
-    )?;
-    set_property(
-        unit,
-        AUDIO_OUTPUT_UNIT_PROPERTY_ENABLE_IO,
-        AUDIO_UNIT_SCOPE_OUTPUT,
-        OUTPUT_BUS,
-        &disabled,
+        Direction::Render,
+        false,
         "disable capture AUHAL output",
     )?;
-    set_property(
+    set_current_device(unit, device, "select capture device")?;
+    set_client_format(
         unit,
-        AUDIO_OUTPUT_UNIT_PROPERTY_CURRENT_DEVICE,
-        AUDIO_UNIT_SCOPE_GLOBAL,
-        OUTPUT_BUS,
-        &device,
-        "select capture device",
-    )?;
-    let format = pcm_format_at(f64::from(capture_rate), 1);
-    set_property(
-        unit,
-        AUDIO_UNIT_PROPERTY_STREAM_FORMAT,
-        AUDIO_UNIT_SCOPE_OUTPUT,
-        INPUT_BUS,
-        &format,
+        Direction::Capture,
+        &pcm_format_at(f64::from(capture_rate), 1),
         "set capture client format",
     )?;
     // Bound the callback size so the preallocated render buffer always
@@ -329,41 +307,25 @@ fn configure_capture_auhal(
 /// from the buffer AUHAL hands it, so the callback code is the same for
 /// any width.
 fn configure_output_auhal(unit: AudioUnit, device: AudioDeviceId) -> Result<u32, CoreAudioError> {
-    let enabled = 1_u32;
-    let disabled = 0_u32;
-    set_property(
+    set_io_enabled(
         unit,
-        AUDIO_OUTPUT_UNIT_PROPERTY_ENABLE_IO,
-        AUDIO_UNIT_SCOPE_INPUT,
-        INPUT_BUS,
-        &disabled,
+        Direction::Capture,
+        false,
         "disable split output AUHAL input",
     )?;
-    set_property(
+    set_io_enabled(
         unit,
-        AUDIO_OUTPUT_UNIT_PROPERTY_ENABLE_IO,
-        AUDIO_UNIT_SCOPE_OUTPUT,
-        OUTPUT_BUS,
-        &enabled,
+        Direction::Render,
+        true,
         "enable split output AUHAL output",
     )?;
-    set_property(
-        unit,
-        AUDIO_OUTPUT_UNIT_PROPERTY_CURRENT_DEVICE,
-        AUDIO_UNIT_SCOPE_GLOBAL,
-        OUTPUT_BUS,
-        &device,
-        "select virtual output device",
-    )?;
+    set_current_device(unit, device, "select virtual output device")?;
     let device_channels = device_output_channels(unit, "read virtual output device format")?;
     let channels = split_render_channels(device_channels)?;
-    let format = pcm_format(channels);
-    set_property(
+    set_client_format(
         unit,
-        AUDIO_UNIT_PROPERTY_STREAM_FORMAT,
-        AUDIO_UNIT_SCOPE_INPUT,
-        OUTPUT_BUS,
-        &format,
+        Direction::Render,
+        &pcm_format(channels),
         "set split output render format",
     )?;
     Ok(channels)
