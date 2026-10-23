@@ -43,16 +43,14 @@
 use std::ffi::c_void;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering},
+    atomic::{AtomicI32, AtomicU64, Ordering},
 };
-use std::thread;
 
 use noican_core::{DriftServo, InputResampler, SwitchingEngine};
-use rtrb::{Consumer, Producer, RingBuffer};
+use rtrb::RingBuffer;
 
-use crate::callback::{CaptureFeed, OutputFeed};
-use crate::monitor::MonitorTee;
-use crate::observe::{StreamLevels, WorkerBlockStats};
+use crate::callback::OutputFeed;
+use crate::observe::StreamLevels;
 use crate::routing::split_render_channels;
 use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
 
@@ -61,12 +59,11 @@ use super::{
     AUDIO_OUTPUT_UNIT_PROPERTY_SET_INPUT_CALLBACK, AUDIO_UNIT_PROPERTY_STREAM_FORMAT,
     AUDIO_UNIT_SCOPE_GLOBAL, AUDIO_UNIT_SCOPE_INPUT, AUDIO_UNIT_SCOPE_OUTPUT, AudioBufferList,
     AudioDeviceId, AudioUnit, AudioUnitRenderActionFlags, AudioUnitRenderCallback,
-    AudioUnitSetProperty, AuhalUnit, Capture, ContextGuard, DispatchSemaphore, INPUT_BUS, NO_ERR,
-    OSStatus, OUTPUT_BUS, PARAM_ERR, RING_CAPACITY, Runtime, Transport, WORKER_WAIT_NS,
-    WorkgroupGuard, attach_render_callback, audio_workgroup, check_status, device_output_channels,
-    monitor, pcm_format, pcm_format_at, promote_current_thread_to_realtime, render_samples,
-    run_block, saturating_elapsed_ns, set_max_frames_per_slice, set_property, size_u32,
-    start_output_unit, stop_output_unit, stream_format_channels,
+    AudioUnitSetProperty, AuhalUnit, Capture, ContextGuard, INPUT_BUS, NO_ERR, OSStatus,
+    OUTPUT_BUS, PARAM_ERR, RING_CAPACITY, Runtime, Shared, Transport, WORKER_WAIT_NS, WorkerLinks,
+    attach_render_callback, audio_workgroup, check_status, device_output_channels, monitor,
+    pcm_format, pcm_format_at, render_samples, set_max_frames_per_slice, set_property, size_u32,
+    spawn_worker, start_output_unit, stop_output_unit, stop_worker, stream_format_channels,
 };
 
 /// Native-rate samples drained from the capture ring per worker pass
@@ -114,22 +111,14 @@ pub(super) struct OutputContext {
     pulses: Arc<AtomicU64>,
 }
 
-/// Everything the split-transport inference worker owns or shares.
+/// Everything the split-transport inference worker owns or shares: the
+/// links every worker has, plus the clock-domain bridge.
 struct SplitWorkerLinks {
-    engine: SwitchingEngine,
-    input: Consumer<f32>,
-    output: Producer<f32>,
-    tee: MonitorTee,
-    levels: Arc<StreamLevels>,
+    worker: WorkerLinks,
     resampler: InputResampler,
     servo: DriftServo,
     /// The output callback's pulse counter (see [`OutputContext`]).
     output_pulses: Arc<AtomicU64>,
-    /// Per-block processing-time statistics (see [`WorkerBlockStats`]).
-    block_stats: Arc<WorkerBlockStats>,
-    /// Set by the worker to whether its real-time promotion succeeded
-    /// (see `promote_current_thread_to_realtime`).
-    realtime: Arc<AtomicBool>,
 }
 
 /// Builds and starts the split transport (see the module docs and
@@ -146,7 +135,7 @@ pub(super) fn start(
     // touching any audio object.
     let resampler = InputResampler::new(capture_rate, NATIVE_CHUNK_SAMPLES)
         .map_err(|error| CoreAudioError::Worker(error.to_string()))?;
-    let samples_ready = Arc::new(DispatchSemaphore::new()?);
+    let shared = Shared::new()?;
 
     let (input_producer, input_consumer) = RingBuffer::new(RING_CAPACITY);
     let (mut output_producer, output_consumer) = RingBuffer::new(RING_CAPACITY);
@@ -155,23 +144,12 @@ pub(super) fn start(
     for _ in 0..OUTPUT_PRIME_SAMPLES {
         let _ignored = output_producer.push(0.0);
     }
-    let faulted = Arc::new(AtomicBool::new(false));
-    let frames = Arc::new(AtomicU64::new(0));
-    let underruns = Arc::new(AtomicU64::new(0));
-    let input_overruns = Arc::new(AtomicU64::new(0));
-    let block_stats = Arc::new(WorkerBlockStats::new());
-    let worker_realtime = Arc::new(AtomicBool::new(false));
 
     // Capture half: input-only AUHAL at the microphone's native rate.
     let mut capture_unit = AuhalUnit::create()?;
     configure_capture_auhal(capture_unit.raw(), input_device, capture_rate)?;
-    let capture_context = ContextGuard::new(Capture::new(
-        capture_unit.raw(),
-        CaptureFeed::new(input_producer, Arc::clone(&input_overruns)),
-        Arc::clone(&faulted),
-        Arc::clone(&samples_ready),
-        Arc::clone(&frames),
-    ));
+    let capture_context =
+        ContextGuard::new(Capture::new(capture_unit.raw(), input_producer, &shared));
     attach_input_callback(capture_unit.raw(), capture_context.raw().cast())?;
     capture_unit.initialize()?;
     let workgroup = audio_workgroup(capture_unit.raw())?;
@@ -180,57 +158,36 @@ pub(super) fn start(
     let output_pulses = Arc::new(AtomicU64::new(0));
     let (output_unit, output_context, routing) = build_output_half(
         output_device,
-        OutputFeed::new(output_consumer, Arc::clone(&underruns)),
+        OutputFeed::new(output_consumer, Arc::clone(&shared.underruns)),
         &output_pulses,
     )?;
 
-    let (monitor_control, tee) = monitor::monitor_pair(monitor_state);
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let worker_shutdown = Arc::clone(&shutdown);
-    let worker_fault = Arc::clone(&faulted);
-    let worker_semaphore = Arc::clone(&samples_ready);
+    let (monitor, tee) = monitor::monitor_pair(monitor_state);
     let links = SplitWorkerLinks {
-        engine,
-        input: input_consumer,
-        output: output_producer,
-        tee,
-        levels,
+        worker: WorkerLinks {
+            engine,
+            input: input_consumer,
+            output: output_producer,
+            tee,
+            levels,
+            shared: shared.clone(),
+        },
         resampler,
         servo: DriftServo::new(OUTPUT_PRIME_SAMPLES),
         output_pulses,
-        block_stats: Arc::clone(&block_stats),
-        realtime: Arc::clone(&worker_realtime),
     };
-    let worker = thread::Builder::new()
-        .name("noican-inference".to_owned())
-        .spawn(move || {
-            split_processing_loop(
-                links,
-                &worker_shutdown,
-                &worker_fault,
-                &worker_semaphore,
-                workgroup,
-            );
-        })
-        .map_err(|error| CoreAudioError::Worker(error.to_string()))?;
+    let worker = spawn_worker(move || split_processing_loop(links, workgroup))?;
 
     // Start the units, unwinding everything on failure (the RAII guards
-    // release the units and contexts; the worker is joined explicitly).
-    let stop_worker = |error: CoreAudioError| {
-        shutdown.store(true, Ordering::Release);
-        samples_ready.signal();
-        error
-    };
+    // release the units and contexts; the worker is stopped explicitly).
     if let Err(error) = start_output_unit(capture_unit.raw(), "AudioOutputUnitStart(capture)") {
-        let error = stop_worker(error);
-        let _ignored = worker.join();
+        stop_worker(&shared, worker);
         return Err(error);
     }
     if let Err(error) = start_output_unit(output_unit.raw(), "AudioOutputUnitStart(virtual output)")
     {
         stop_output_unit(capture_unit.raw());
-        let error = stop_worker(error);
-        let _ignored = worker.join();
+        stop_worker(&shared, worker);
         return Err(error);
     }
     Ok(Runtime {
@@ -240,17 +197,10 @@ pub(super) fn start(
             output_unit: output_unit.into_raw() as usize,
             output_context: output_context.into_raw() as usize,
         },
-        shutdown,
-        faulted,
-        samples_ready,
-        frames,
-        underruns,
-        input_overruns,
-        block_stats,
-        worker_realtime,
+        shared,
         worker: Some(worker),
         running: true,
-        monitor: monitor_control,
+        monitor,
         routing,
     })
 }
@@ -446,38 +396,15 @@ fn attach_input_callback(unit: AudioUnit, context: *mut c_void) -> Result<(), Co
 /// samples, converts them to 48 kHz with the drift-compensated
 /// resampler, and runs the unchanged engine in 10 ms blocks. All state
 /// is preallocated; the loop never locks (docs/tech-research.md §9).
-fn split_processing_loop(
-    links: SplitWorkerLinks,
-    shutdown: &Arc<AtomicBool>,
-    faulted: &Arc<AtomicBool>,
-    samples_ready: &DispatchSemaphore,
-    workgroup: usize,
-) {
+fn split_processing_loop(links: SplitWorkerLinks, workgroup: usize) {
     let SplitWorkerLinks {
-        mut engine,
-        mut input,
-        mut output,
-        mut tee,
-        levels,
+        mut worker,
         mut resampler,
         mut servo,
         output_pulses,
-        block_stats,
-        realtime,
     } = links;
-    levels.reset();
-    block_stats.reset();
-    // Real-time promotion must precede the workgroup join (see
-    // promote_current_thread_to_realtime); failure degrades, not faults.
-    // The stored value is the promotion result at loop start; XNU may
-    // later demote a persistently overrunning thread, which this flag
-    // does not track.
-    realtime.store(promote_current_thread_to_realtime(), Ordering::Release);
-    let membership = WorkgroupGuard::join(workgroup);
-    if !membership.joined() {
-        faulted.store(true, Ordering::Release);
-    }
-    let output_capacity = output.buffer().capacity();
+    let membership = worker.enter(workgroup);
+    let output_capacity = worker.output.buffer().capacity();
     let mut native_chunk = [0.0_f32; NATIVE_CHUNK_SAMPLES];
     // Converted samples per pass, bounded by the resampler at the
     // largest drift correction so the buffer never grows afterwards.
@@ -490,10 +417,10 @@ fn split_processing_loop(
     let mut output_block = [0.0_f32; WORKER_BLOCK_SAMPLES];
     let mut last_output_pulses = 0_u64;
     let mut output_idle_blocks = 0_usize;
-    while !shutdown.load(Ordering::Acquire) {
+    while !worker.shared.shutdown.load(Ordering::Acquire) {
         let mut popped = 0;
         while popped < NATIVE_CHUNK_SAMPLES {
-            match input.pop() {
+            match worker.input.pop() {
                 Ok(sample) => {
                     native_chunk[popped] = sample;
                     popped += 1;
@@ -504,7 +431,7 @@ fn split_processing_loop(
         if popped == 0 {
             // Block until the capture callback signals more input (or
             // the timeout elapses, so shutdown is always noticed).
-            samples_ready.wait_ns(WORKER_WAIT_NS);
+            worker.shared.samples_ready.wait_ns(WORKER_WAIT_NS);
             continue;
         }
         converted.clear();
@@ -514,27 +441,14 @@ fn split_processing_loop(
             for slot in &mut input_block {
                 *slot = pending.pop_front().unwrap_or(0.0);
             }
-            // Timing the block on the worker (not a callback):
-            // `Instant::now` is a non-blocking clock read, fine on the
-            // inference thread that runs whole models.
-            let started = std::time::Instant::now();
-            run_block(
-                &mut engine,
-                &input_block,
-                &mut output_block,
-                &levels,
-                &mut tee,
-                &mut output,
-                faulted,
-            );
-            block_stats.record(saturating_elapsed_ns(started));
+            worker.run_block(&input_block, &mut output_block);
             // Drift servo: total samples buffered between the capture
             // clock (producer) and the output clock (consumer), in
             // engine-rate samples (the native ring's occupancy converted
             // through the nominal ratio). A trend here *is* clock drift.
-            let buffered = (output_capacity - output.slots())
+            let buffered = (output_capacity - worker.output.slots())
                 + pending.len()
-                + resampler.to_engine_samples(input.slots());
+                + resampler.to_engine_samples(worker.input.slots());
             resampler.set_drift_ppm(servo.update(buffered));
             // Output-side heartbeat (see OUTPUT_STALL_BLOCKS): blocks
             // only run while capture delivers, so a pulse counter that
@@ -544,7 +458,7 @@ fn split_processing_loop(
             if pulses == last_output_pulses {
                 output_idle_blocks = output_idle_blocks.saturating_add(1);
                 if output_idle_blocks >= OUTPUT_STALL_BLOCKS {
-                    faulted.store(true, Ordering::Release);
+                    worker.shared.faulted.store(true, Ordering::Release);
                 }
             } else {
                 last_output_pulses = pulses;
@@ -552,10 +466,7 @@ fn split_processing_loop(
             }
         }
     }
-    drop(membership);
-    // Meters and stats read 0 whenever no worker is running.
-    levels.reset();
-    block_stats.reset();
+    worker.exit(membership);
 }
 
 /// Input callback of the capture AUHAL: renders the microphone's frames

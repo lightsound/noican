@@ -349,20 +349,16 @@ struct Capture {
 }
 
 impl Capture {
-    fn new(
-        unit: AudioUnit,
-        feed: CaptureFeed,
-        faulted: Arc<AtomicBool>,
-        samples_ready: Arc<DispatchSemaphore>,
-        frames: Arc<AtomicU64>,
-    ) -> Self {
+    /// The capture half for `unit`, queueing into `input` and reporting
+    /// through the transport's `shared` flags and counters.
+    fn new(unit: AudioUnit, input: Producer<f32>, shared: &Shared) -> Self {
         Self {
             unit,
             buffer: vec![0.0; MAX_CALLBACK_FRAMES],
-            feed,
-            faulted,
-            samples_ready,
-            frames,
+            feed: CaptureFeed::new(input, Arc::clone(&shared.input_overruns)),
+            faulted: Arc::clone(&shared.faulted),
+            samples_ready: Arc::clone(&shared.samples_ready),
+            frames: Arc::clone(&shared.frames),
         }
     }
 
@@ -427,18 +423,149 @@ struct CallbackContext {
     output: OutputFeed,
 }
 
-/// Everything the inference worker owns or shares. Bundled so the worker
-/// spawn passes one value instead of a long argument list.
+/// The flags, counters and wake-up semaphore a running transport shares
+/// between the control thread ([`Runtime`]), the device callbacks, and
+/// the inference worker. Both transports create the same set, once per
+/// start; each party holds the handles it needs.
+#[derive(Debug, Clone)]
+struct Shared {
+    /// Raised by the control thread to end the worker loop.
+    shutdown: Arc<AtomicBool>,
+    /// Raised by a callback or the worker on any failure (see
+    /// [`Runtime::is_faulted`]).
+    faulted: Arc<AtomicBool>,
+    /// Signaled by the capture side once samples are queued; the worker
+    /// blocks on it between device callbacks.
+    samples_ready: Arc<DispatchSemaphore>,
+    /// Heartbeat: input frames delivered since start (see [`Capture`]).
+    frames: Arc<AtomicU64>,
+    /// Diagnostic: fully starved output callbacks (see [`OutputFeed`]).
+    underruns: Arc<AtomicU64>,
+    /// Diagnostic: capture samples a full ring dropped (see
+    /// [`CaptureFeed`]).
+    input_overruns: Arc<AtomicU64>,
+    /// Per-block processing-time statistics, recorded by the worker.
+    block_stats: Arc<WorkerBlockStats>,
+    /// Whether the inference worker's real-time promotion succeeded at
+    /// loop start. False until the worker records it; afterwards it keeps
+    /// that start-time result — it is not live scheduling-band membership
+    /// (XNU may demote a thread that persistently overruns its declared
+    /// computation), and a stopped-but-not-dropped runtime retains the
+    /// last start's value.
+    worker_realtime: Arc<AtomicBool>,
+}
+
+impl Shared {
+    fn new() -> Result<Self, CoreAudioError> {
+        Ok(Self {
+            shutdown: Arc::new(AtomicBool::new(false)),
+            faulted: Arc::new(AtomicBool::new(false)),
+            samples_ready: Arc::new(DispatchSemaphore::new()?),
+            frames: Arc::new(AtomicU64::new(0)),
+            underruns: Arc::new(AtomicU64::new(0)),
+            input_overruns: Arc::new(AtomicU64::new(0)),
+            block_stats: Arc::new(WorkerBlockStats::new()),
+            worker_realtime: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    /// Raises the shutdown flag and wakes the worker so it notices at
+    /// once instead of at its next wait timeout.
+    fn request_shutdown(&self) {
+        self.shutdown.store(true, Ordering::Release);
+        self.samples_ready.signal();
+    }
+}
+
+/// Spawns the inference worker thread running `body`.
+fn spawn_worker(body: impl FnOnce() + Send + 'static) -> Result<JoinHandle<()>, CoreAudioError> {
+    thread::Builder::new()
+        .name("noican-inference".to_owned())
+        .spawn(body)
+        .map_err(|error| CoreAudioError::Worker(error.to_string()))
+}
+
+/// Stops a worker whose transport failed to start and waits for it (the
+/// RAII guards release the units and contexts).
+fn stop_worker(shared: &Shared, worker: JoinHandle<()>) {
+    shared.request_shutdown();
+    let _ignored = worker.join();
+}
+
+/// Everything the inference worker owns or shares, on either transport.
+/// Bundled so the worker spawn passes one value instead of a long
+/// argument list.
 struct WorkerLinks {
     engine: SwitchingEngine,
     input: Consumer<f32>,
     output: Producer<f32>,
     tee: MonitorTee,
     levels: Arc<StreamLevels>,
-    block_stats: Arc<WorkerBlockStats>,
-    /// Set by the worker to whether its real-time promotion succeeded
-    /// (see [`promote_current_thread_to_realtime`]).
-    realtime: Arc<AtomicBool>,
+    shared: Shared,
+}
+
+impl WorkerLinks {
+    /// Worker setup shared by both loops, run on the worker thread:
+    /// meters and statistics start from zero, the thread is promoted to
+    /// real-time scheduling, and it joins the device's audio workgroup.
+    ///
+    /// The promotion must precede the join (see
+    /// [`promote_current_thread_to_realtime`]); its failure degrades, not
+    /// faults, and the stored value is the result at loop start (XNU may
+    /// later demote a persistently overrunning thread, which the flag
+    /// does not track). A failed join flags the fault.
+    fn enter(&self, workgroup: usize) -> WorkgroupGuard {
+        self.levels.reset();
+        self.shared.block_stats.reset();
+        self.shared
+            .worker_realtime
+            .store(promote_current_thread_to_realtime(), Ordering::Release);
+        let membership = WorkgroupGuard::join(workgroup);
+        if !membership.joined() {
+            self.shared.faulted.store(true, Ordering::Release);
+        }
+        membership
+    }
+
+    /// Worker teardown: leaves the workgroup, then zeroes the meters and
+    /// statistics so they read 0 whenever no worker is running.
+    fn exit(&self, membership: WorkgroupGuard) {
+        drop(membership);
+        self.levels.reset();
+        self.shared.block_stats.reset();
+    }
+
+    /// Runs the engine on one block and fans the result out to the
+    /// meters, the preview tee, and the output ring — the per-block step
+    /// shared by the aggregate and split worker loops — and records its
+    /// duration in the block statistics. An engine failure emits silence
+    /// and flags the fault; output-ring overrun drops samples rather
+    /// than blocking.
+    fn run_block(&mut self, input_block: &[f32], output_block: &mut [f32]) {
+        // Timing the block on the worker (not a callback): `Instant::now`
+        // is a non-blocking clock read, fine on the inference thread that
+        // runs whole models.
+        let started = std::time::Instant::now();
+        if self
+            .engine
+            .process_block(input_block, output_block)
+            .is_err()
+        {
+            output_block.fill(0.0);
+            self.shared.faulted.store(true, Ordering::Release);
+        }
+        self.levels.update(input_block, output_block);
+        // Preview branch: the tee only copies into its preallocated monitor
+        // ring (skipped entirely while disarmed) and disarms itself on
+        // sustained feedback; it never delays the main path below.
+        let _teed = self.tee.feed(output_block);
+        for sample in output_block.iter().copied() {
+            let _ignored = self.output.push(sample);
+        }
+        self.shared
+            .block_stats
+            .record(saturating_elapsed_ns(started));
+    }
 }
 
 /// The AUHAL instance(s) a running transport owns, with their callback
@@ -518,22 +645,7 @@ impl Transport {
 #[derive(Debug)]
 pub struct Runtime {
     transport: Transport,
-    shutdown: Arc<AtomicBool>,
-    faulted: Arc<AtomicBool>,
-    samples_ready: Arc<DispatchSemaphore>,
-    frames: Arc<AtomicU64>,
-    underruns: Arc<AtomicU64>,
-    /// The capture callback's drop counter (see
-    /// [`Runtime::input_overruns`]).
-    input_overruns: Arc<AtomicU64>,
-    block_stats: Arc<WorkerBlockStats>,
-    /// Whether the inference worker's real-time promotion succeeded at
-    /// loop start. False until the worker records it; afterwards it keeps
-    /// that start-time result — it is not live scheduling-band membership
-    /// (XNU may demote a thread that persistently overruns its declared
-    /// computation), and a stopped-but-not-dropped runtime retains the
-    /// last start's value.
-    worker_realtime: Arc<AtomicBool>,
+    shared: Shared,
     worker: Option<JoinHandle<()>>,
     running: bool,
     /// Control-plane half of the preview monitor (the worker half is the
@@ -583,27 +695,15 @@ impl Runtime {
         levels: Arc<StreamLevels>,
         monitor_state: Arc<AtomicI32>,
     ) -> Result<Self, CoreAudioError> {
-        let samples_ready = Arc::new(DispatchSemaphore::new()?);
+        let shared = Shared::new()?;
         let mut unit = AuhalUnit::create()?;
         let requested_routing = configure_auhal(unit.raw(), aggregate_device, virtual_output)?;
 
         let (input_producer, input_consumer) = RingBuffer::new(RING_CAPACITY);
         let (output_producer, output_consumer) = RingBuffer::new(RING_CAPACITY);
-        let faulted = Arc::new(AtomicBool::new(false));
-        let frames = Arc::new(AtomicU64::new(0));
-        let underruns = Arc::new(AtomicU64::new(0));
-        let input_overruns = Arc::new(AtomicU64::new(0));
-        let block_stats = Arc::new(WorkerBlockStats::new());
-        let worker_realtime = Arc::new(AtomicBool::new(false));
         let context = ContextGuard::new(CallbackContext {
-            capture: Capture::new(
-                unit.raw(),
-                CaptureFeed::new(input_producer, Arc::clone(&input_overruns)),
-                Arc::clone(&faulted),
-                Arc::clone(&samples_ready),
-                Arc::clone(&frames),
-            ),
-            output: OutputFeed::new(output_consumer, Arc::clone(&underruns)),
+            capture: Capture::new(unit.raw(), input_producer, &shared),
+            output: OutputFeed::new(output_consumer, Arc::clone(&shared.underruns)),
         });
         attach_render_callback(
             unit.raw(),
@@ -618,38 +718,20 @@ impl Runtime {
         );
 
         let workgroup = audio_workgroup(unit.raw())?;
-        let (monitor_control, tee) = monitor::monitor_pair(monitor_state);
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let worker_shutdown = Arc::clone(&shutdown);
-        let worker_fault = Arc::clone(&faulted);
-        let worker_semaphore = Arc::clone(&samples_ready);
+        let (monitor, tee) = monitor::monitor_pair(monitor_state);
         let links = WorkerLinks {
             engine,
             input: input_consumer,
             output: output_producer,
             tee,
             levels,
-            block_stats: Arc::clone(&block_stats),
-            realtime: Arc::clone(&worker_realtime),
+            shared: shared.clone(),
         };
-        let worker = thread::Builder::new()
-            .name("noican-inference".to_owned())
-            .spawn(move || {
-                processing_loop(
-                    links,
-                    &worker_shutdown,
-                    &worker_fault,
-                    &worker_semaphore,
-                    workgroup,
-                );
-            })
-            .map_err(|error| CoreAudioError::Worker(error.to_string()))?;
+        let worker = spawn_worker(move || processing_loop(links, workgroup))?;
 
         if let Err(error) = start_output_unit(unit.raw(), "AudioOutputUnitStart") {
-            shutdown.store(true, Ordering::Release);
-            samples_ready.signal();
-            let _ignored = worker.join();
             // `unit` and `context` guards clean up on drop.
+            stop_worker(&shared, worker);
             return Err(error);
         }
         Ok(Self {
@@ -657,17 +739,10 @@ impl Runtime {
                 unit: unit.into_raw() as usize,
                 context: context.into_raw() as usize,
             },
-            shutdown,
-            faulted,
-            samples_ready,
-            frames,
-            underruns,
-            input_overruns,
-            block_stats,
-            worker_realtime,
+            shared,
             worker: Some(worker),
             running: true,
-            monitor: monitor_control,
+            monitor,
             routing,
         })
     }
@@ -724,8 +799,7 @@ impl Runtime {
         }
         self.monitor.disable();
         self.transport.stop_units();
-        self.shutdown.store(true, Ordering::Release);
-        self.samples_ready.signal();
+        self.shared.request_shutdown();
         if let Some(worker) = self.worker.take() {
             let _ignored = worker.join();
         }
@@ -746,7 +820,7 @@ impl Runtime {
     /// Whether a callback or inference call has failed.
     #[must_use]
     pub fn is_faulted(&self) -> bool {
-        self.faulted.load(Ordering::Acquire)
+        self.shared.faulted.load(Ordering::Acquire)
     }
 
     /// Total input frames the render callback has delivered since start.
@@ -754,7 +828,7 @@ impl Runtime {
     /// calling back; the control plane uses it as a heartbeat.
     #[must_use]
     pub fn frames_processed(&self) -> u64 {
-        self.frames.load(Ordering::Relaxed)
+        self.shared.frames.load(Ordering::Relaxed)
     }
 
     /// Diagnostic: output callbacks that were fully starved — zero
@@ -767,7 +841,7 @@ impl Runtime {
     /// [`Runtime::reset_debug_stats`] for per-model attribution.
     #[must_use]
     pub fn output_underruns(&self) -> u64 {
-        self.underruns.load(Ordering::Relaxed)
+        self.shared.underruns.load(Ordering::Relaxed)
     }
 
     /// Diagnostic: input samples the capture ring dropped because it
@@ -777,14 +851,14 @@ impl Runtime {
     /// [`Runtime::reset_debug_stats`] for per-model attribution.
     #[must_use]
     pub fn input_overruns(&self) -> u64 {
-        self.input_overruns.load(Ordering::Relaxed)
+        self.shared.input_overruns.load(Ordering::Relaxed)
     }
 
     /// Diagnostic: engine blocks the inference worker has processed
     /// since start (or the last [`Runtime::reset_debug_stats`]).
     #[must_use]
     pub fn worker_blocks(&self) -> u64 {
-        self.block_stats.blocks()
+        self.shared.block_stats.blocks()
     }
 
     /// Diagnostic: worker blocks that exceeded the 10 ms budget
@@ -792,14 +866,14 @@ impl Runtime {
     /// [`Runtime::reset_debug_stats`]).
     #[must_use]
     pub fn worker_blocks_over_budget(&self) -> u64 {
-        self.block_stats.over_budget()
+        self.shared.block_stats.over_budget()
     }
 
     /// Diagnostic: the longest single worker block since start (or the
     /// last [`Runtime::reset_debug_stats`]), in nanoseconds.
     #[must_use]
     pub fn worker_block_max_ns(&self) -> u64 {
-        self.block_stats.max_ns()
+        self.shared.block_stats.max_ns()
     }
 
     /// Diagnostic: whether the inference worker's mach time-constraint
@@ -811,7 +885,7 @@ impl Runtime {
     /// overrunning thread without this flag changing.
     #[must_use]
     pub fn worker_realtime(&self) -> bool {
-        self.worker_realtime.load(Ordering::Acquire)
+        self.shared.worker_realtime.load(Ordering::Acquire)
     }
 
     /// Zeroes the diagnostic counters (underruns, input overruns and
@@ -819,9 +893,9 @@ impl Runtime {
     /// isolation. Plain relaxed stores — safe while the callbacks and
     /// the worker run.
     pub fn reset_debug_stats(&self) {
-        self.underruns.store(0, Ordering::Relaxed);
-        self.input_overruns.store(0, Ordering::Relaxed);
-        self.block_stats.reset();
+        self.shared.underruns.store(0, Ordering::Relaxed);
+        self.shared.input_overruns.store(0, Ordering::Relaxed);
+        self.shared.block_stats.reset();
     }
 
     /// Enables or disables the preview self-monitor: the worker tees its
@@ -1395,85 +1469,20 @@ impl Drop for WorkgroupGuard {
     }
 }
 
-/// Runs the engine on one block and fans the result out to the meters,
-/// the preview tee, and the output ring — the per-block step shared by
-/// the aggregate and split worker loops. An engine failure emits silence
-/// and flags the fault; output-ring overrun drops samples rather than
-/// blocking.
-fn run_block(
-    engine: &mut SwitchingEngine,
-    input_block: &[f32],
-    output_block: &mut [f32],
-    levels: &StreamLevels,
-    tee: &mut MonitorTee,
-    output: &mut Producer<f32>,
-    faulted: &AtomicBool,
-) {
-    if engine.process_block(input_block, output_block).is_err() {
-        output_block.fill(0.0);
-        faulted.store(true, Ordering::Release);
-    }
-    levels.update(input_block, output_block);
-    // Preview branch: the tee only copies into its preallocated monitor
-    // ring (skipped entirely while disarmed) and disarms itself on
-    // sustained feedback; it never delays the main path below.
-    let _teed = tee.feed(output_block);
-    for sample in output_block.iter().copied() {
-        let _ignored = output.push(sample);
-    }
-}
-
-fn processing_loop(
-    links: WorkerLinks,
-    shutdown: &Arc<AtomicBool>,
-    faulted: &Arc<AtomicBool>,
-    samples_ready: &DispatchSemaphore,
-    workgroup: usize,
-) {
-    let WorkerLinks {
-        mut engine,
-        mut input,
-        mut output,
-        mut tee,
-        levels,
-        block_stats,
-        realtime,
-    } = links;
-    levels.reset();
-    block_stats.reset();
-    // Real-time promotion must precede the workgroup join (see
-    // promote_current_thread_to_realtime); failure degrades, not faults.
-    // The stored value is the promotion result at loop start; XNU may
-    // later demote a persistently overrunning thread, which this flag
-    // does not track.
-    realtime.store(promote_current_thread_to_realtime(), Ordering::Release);
-    let membership = WorkgroupGuard::join(workgroup);
-    if !membership.joined() {
-        faulted.store(true, Ordering::Release);
-    }
+/// Inference worker of the aggregate transport: gathers the render
+/// callback's capture into 10 ms blocks and runs the engine on each.
+fn processing_loop(mut worker: WorkerLinks, workgroup: usize) {
+    let membership = worker.enter(workgroup);
     let mut input_block = [0.0_f32; WORKER_BLOCK_SAMPLES];
     let mut output_block = [0.0_f32; WORKER_BLOCK_SAMPLES];
     let mut position = 0;
-    while !shutdown.load(Ordering::Acquire) {
-        match input.pop() {
+    while !worker.shared.shutdown.load(Ordering::Acquire) {
+        match worker.input.pop() {
             Ok(sample) => {
                 input_block[position] = sample;
                 position += 1;
                 if position == WORKER_BLOCK_SAMPLES {
-                    // Timing the block on the worker (not the callback):
-                    // `Instant::now` is a non-blocking clock read, fine
-                    // on the inference thread that runs whole models.
-                    let started = std::time::Instant::now();
-                    run_block(
-                        &mut engine,
-                        &input_block,
-                        &mut output_block,
-                        &levels,
-                        &mut tee,
-                        &mut output,
-                        faulted,
-                    );
-                    block_stats.record(saturating_elapsed_ns(started));
+                    worker.run_block(&input_block, &mut output_block);
                     position = 0;
                 }
             }
@@ -1481,13 +1490,10 @@ fn processing_loop(
             // timeout elapses, so shutdown is always noticed). Busy-spinning
             // here would burn a core for the whole session and distort the
             // os_workgroup's power/deadline balancing.
-            Err(_empty) => samples_ready.wait_ns(WORKER_WAIT_NS),
+            Err(_empty) => worker.shared.samples_ready.wait_ns(WORKER_WAIT_NS),
         }
     }
-    drop(membership);
-    // Meters and stats read 0 whenever no worker is running.
-    levels.reset();
-    block_stats.reset();
+    worker.exit(membership);
 }
 
 /// Nanoseconds since `started`, saturated into a `u64` (585 years —
