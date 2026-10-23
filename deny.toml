@@ -7,6 +7,11 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+# cargo-deny reports `unsound` advisories for workspace crates only unless
+# told otherwise (the `unsound` scope defaults to "workspace" since 0.19).
+# Keep transitive unsound code visible too, so each one is triaged below
+# with a reason instead of silently dropping out of the gate.
+unsound = "all"
 ignore = [
     # tract-nnef's NNEF `.dat` tensor parser has an integer-overflow OOB
     # read on *attacker-controlled NNEF files*. We never parse NNEF: the
