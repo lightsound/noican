@@ -27,14 +27,14 @@ rtrb = "0.4"
 # `tls-native` (an `ort` default) pulls in `openssl-sys`, which needs a
 # system OpenSSL; rustls keeps the build self-contained on every runner.
 # The remaining features mirror the crate's defaults.
-ort = { version = "=2.0.0-rc.13", default-features = false, features = [
+ort = { version = "=2.0.0-rc.15", default-features = false, features = [
     "std",
     "ndarray",
     "tracing",
     "download-binaries",
     "tls-rustls",
     "copy-dylibs",
-    "api-27",
+    "api-31",
 ] }
 ureq = "3.5"
 sha2 = "0.11"

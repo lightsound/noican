@@ -1,8 +1,10 @@
 //! Shared ONNX Runtime helpers for streaming model stages.
 
 use std::path::Path;
+use std::sync::OnceLock;
 
 use noican_core::StageError;
+use ort::environment::Environment;
 use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::value::{DynValue, Tensor};
@@ -25,14 +27,34 @@ use ort::value::{DynValue, Tensor};
 ///
 /// Returns [`StageError::Inference`] when the file cannot be loaded.
 pub fn load_streaming_session(path: &Path) -> Result<Session, StageError> {
+    let environment = environment()?;
     let build = || -> ort::Result<Session> {
-        Session::builder()?
+        Session::builder(environment)?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .with_intra_threads(1)?
             .with_inter_threads(1)?
             .commit_from_file(path)
     };
     build().map_err(|e| StageError::Inference(format!("failed to load {}: {e}", path.display())))
+}
+
+/// The process-wide ONNX Runtime environment. `ort` allows exactly one per
+/// process and every session must be built against it.
+fn environment() -> Result<&'static Environment, StageError> {
+    static ENVIRONMENT: OnceLock<Result<Environment, String>> = OnceLock::new();
+    ENVIRONMENT
+        .get_or_init(|| {
+            ort::init()
+                .with_name("noican")
+                .build()
+                .map_err(|e| e.to_string())
+        })
+        .as_ref()
+        .map_err(|e| {
+            StageError::Inference(format!(
+                "failed to create the ONNX Runtime environment: {e}"
+            ))
+        })
 }
 
 /// Maps an [`ort::Error`] into a [`StageError`] with context.
