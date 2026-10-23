@@ -55,7 +55,26 @@ struct ControlState {
     epoch: u64,
 }
 
+impl ControlState {
+    /// Ends a control call in failure, recording `error` for
+    /// [`noican_engine_last_error`].
+    fn fail(&mut self, error: impl Into<String>) -> i32 {
+        self.last_error = error.into();
+        FAILURE
+    }
+
+    /// Ends a control call in success, clearing the previous error.
+    fn succeed(&mut self) -> i32 {
+        self.last_error.clear();
+        SUCCESS
+    }
+}
+
 struct EngineHandle {
+    /// Locked only for short transitions (see the crate docs). If a panic
+    /// poisons it, calls that need it fail or return their fallback value
+    /// without recording an error, since `last_error` lives behind the
+    /// same lock.
     state: Mutex<ControlState>,
     /// Peak meters shared with each runtime's inference worker. Kept
     /// outside the control mutex so level polling reads plain atomics and
@@ -175,7 +194,7 @@ pub unsafe extern "C" fn noican_engine_start(
     virtual_output_channel_count: u32,
     model_id: *const c_char,
 ) -> i32 {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+    let Some(handle) = (unsafe { engine_handle(handle) }) else {
         return FAILURE;
     };
     let model = match parse_model_id(model_id) {
@@ -235,7 +254,7 @@ pub unsafe extern "C" fn noican_engine_start_native(
     capture_sample_rate: f64,
     model_id: *const c_char,
 ) -> i32 {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+    let Some(handle) = (unsafe { engine_handle(handle) }) else {
         return FAILURE;
     };
     let model = match parse_model_id(model_id) {
@@ -275,9 +294,8 @@ fn start_with(
 ) -> i32 {
     // Short lock: tear down any running transport and claim an epoch.
     let (models_dir, epoch, old_runtime) = {
-        let mut control = match handle.state.lock() {
-            Ok(control) => control,
-            Err(error) => return set_error(handle, format!("control state is poisoned: {error}")),
+        let Ok(mut control) = handle.state.lock() else {
+            return FAILURE;
         };
         control.epoch += 1;
         let old_runtime = control.runtime.take();
@@ -307,12 +325,9 @@ fn start_with(
     };
 
     // Short lock: commit unless a newer stop/start superseded this epoch.
-    let mut control = match handle.state.lock() {
-        Ok(control) => control,
-        Err(error) => {
-            runtime.stop();
-            return set_error(handle, format!("control state is poisoned: {error}"));
-        }
+    let Ok(mut control) = handle.state.lock() else {
+        runtime.stop();
+        return FAILURE;
     };
     if control.epoch != epoch {
         drop(control);
@@ -325,8 +340,7 @@ fn start_with(
     control.runtime = Some(runtime);
     control.publisher = Some(publisher);
     control.active_model = Some(model);
-    control.last_error.clear();
-    SUCCESS
+    control.succeed()
 }
 
 /// Validates a native capture rate: finite, whole hertz (Core Audio
@@ -365,7 +379,7 @@ fn validate_capture_rate(rate: f64) -> Result<u32, String> {
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_stop(handle: *mut c_void) {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+    let Some(handle) = (unsafe { engine_handle(handle) }) else {
         return;
     };
     let old_runtime = {
@@ -397,7 +411,7 @@ pub unsafe extern "C" fn noican_engine_set_model(
     handle: *mut c_void,
     model_id: *const c_char,
 ) -> i32 {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+    let Some(handle) = (unsafe { engine_handle(handle) }) else {
         return FAILURE;
     };
     let model = match parse_model_id(model_id) {
@@ -407,13 +421,11 @@ pub unsafe extern "C" fn noican_engine_set_model(
 
     // Short lock: fail fast when stopped, claim the current epoch.
     let (models_dir, publisher, epoch) = {
-        let mut control = match handle.state.lock() {
-            Ok(control) => control,
-            Err(error) => return set_error(handle, format!("control state is poisoned: {error}")),
+        let Ok(mut control) = handle.state.lock() else {
+            return FAILURE;
         };
         let Some(publisher) = control.publisher.clone() else {
-            "engine is not running".clone_into(&mut control.last_error);
-            return FAILURE;
+            return control.fail("engine is not running");
         };
         (control.models_dir.clone(), publisher, control.epoch)
     };
@@ -425,18 +437,15 @@ pub unsafe extern "C" fn noican_engine_set_model(
     };
 
     // Short lock: publish unless the engine was stopped/restarted meanwhile.
-    let mut control = match handle.state.lock() {
-        Ok(control) => control,
-        Err(error) => return set_error(handle, format!("control state is poisoned: {error}")),
+    let Ok(mut control) = handle.state.lock() else {
+        return FAILURE;
     };
     if control.epoch != epoch {
-        "engine was stopped while the model was loading".clone_into(&mut control.last_error);
-        return FAILURE;
+        return control.fail("engine was stopped while the model was loading");
     }
     let _superseded = publisher.publish(stage);
     control.active_model = Some(model);
-    control.last_error.clear();
-    SUCCESS
+    control.succeed()
 }
 
 /// Returns 1 while AUHAL is running, otherwise 0.
@@ -446,12 +455,7 @@ pub unsafe extern "C" fn noican_engine_set_model(
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_is_running(handle: *const c_void) -> i32 {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
-        return 0;
-    };
-    handle.state.lock().map_or(0, |state| {
-        i32::from(state.runtime.as_ref().is_some_and(Runtime::is_running))
-    })
+    i32::from(unsafe { with_runtime(handle, Runtime::is_running) }.unwrap_or(false))
 }
 
 /// Returns 1 after an audio callback, workgroup, or inference fault.
@@ -461,7 +465,7 @@ pub unsafe extern "C" fn noican_engine_is_running(handle: *const c_void) -> i32 
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_is_faulted(handle: *const c_void) -> i32 {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+    let Some(handle) = (unsafe { engine_handle(handle) }) else {
         return 0;
     };
     handle.state.lock().map_or(1, |state| {
@@ -495,30 +499,21 @@ pub unsafe extern "C" fn noican_engine_is_faulted(handle: *const c_void) -> i32 
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_set_monitor(handle: *mut c_void, enabled: i32) -> i32 {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+    let Some(handle) = (unsafe { engine_handle(handle) }) else {
         return FAILURE;
     };
-    let mut control = match handle.state.lock() {
-        Ok(control) => control,
-        Err(error) => return set_error(handle, format!("control state is poisoned: {error}")),
+    let Ok(mut control) = handle.state.lock() else {
+        return FAILURE;
     };
     let Some(runtime) = control.runtime.as_mut() else {
         if enabled == 0 {
-            control.last_error.clear();
-            return SUCCESS;
+            return control.succeed();
         }
-        "engine is not running".clone_into(&mut control.last_error);
-        return FAILURE;
+        return control.fail("engine is not running");
     };
     match runtime.set_monitor(enabled != 0) {
-        Ok(()) => {
-            control.last_error.clear();
-            SUCCESS
-        }
-        Err(error) => {
-            control.last_error = error.to_string();
-            FAILURE
-        }
+        Ok(()) => control.succeed(),
+        Err(error) => control.fail(error.to_string()),
     }
 }
 
@@ -597,16 +592,9 @@ pub unsafe extern "C" fn noican_monitor_device_error(
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_monitor_device(handle: *const c_void) -> u32 {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
-        return 0;
-    };
-    handle.state.lock().map_or(0, |state| {
-        state
-            .runtime
-            .as_ref()
-            .and_then(Runtime::monitor_device)
-            .unwrap_or(0)
-    })
+    unsafe { with_runtime(handle, Runtime::monitor_device) }
+        .flatten()
+        .unwrap_or(0)
 }
 
 /// Diagnostic: how the running transport routes the engine output into
@@ -632,20 +620,17 @@ pub unsafe extern "C" fn noican_engine_routing_description(
     buffer: *mut c_char,
     capacity: usize,
 ) -> usize {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
-        return 0;
+    let copied = unsafe {
+        with_runtime(handle, |runtime| {
+            let description = runtime.routing_description();
+            if description.is_empty() {
+                0
+            } else {
+                copy_string(description, buffer, capacity)
+            }
+        })
     };
-    let Ok(state) = handle.state.lock() else {
-        return 0;
-    };
-    let Some(runtime) = state.runtime.as_ref() else {
-        return 0;
-    };
-    let description = runtime.routing_description();
-    if description.is_empty() {
-        return 0;
-    }
-    unsafe { copy_string(description, buffer, capacity) }
+    copied.unwrap_or(0)
 }
 
 /// The preview monitor's state as one value.
@@ -669,7 +654,7 @@ pub unsafe extern "C" fn noican_engine_routing_description(
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_monitor_state(handle: *const c_void) -> i32 {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+    let Some(handle) = (unsafe { engine_handle(handle) }) else {
         return MonitorState::Off.as_raw();
     };
     MonitorState::from_raw(handle.monitor_state.load(Ordering::Acquire)).as_raw()
@@ -687,27 +672,7 @@ pub unsafe extern "C" fn noican_engine_monitor_state(handle: *const c_void) -> i
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_frames_processed(handle: *const c_void) -> u64 {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
-        return 0;
-    };
-    handle.state.lock().map_or(0, |state| {
-        state.runtime.as_ref().map_or(0, Runtime::frames_processed)
-    })
-}
-
-/// Reads one diagnostic counter off the running runtime (0 while
-/// stopped or for a null handle) — the shared shape of the underrun and
-/// worker-block-stat getters below. Takes the control mutex like the
-/// frames heartbeat: these are 1 Hz diagnostics, not the 20 Hz meter
-/// path.
-unsafe fn read_runtime_counter(handle: *const c_void, read: impl Fn(&Runtime) -> u64) -> u64 {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
-        return 0;
-    };
-    handle
-        .state
-        .lock()
-        .map_or(0, |state| state.runtime.as_ref().map_or(0, read))
+    unsafe { with_runtime(handle, Runtime::frames_processed) }.unwrap_or(0)
 }
 
 /// Diagnostic: output callbacks that delivered no real audio at all —
@@ -731,7 +696,7 @@ unsafe fn read_runtime_counter(handle: *const c_void, read: impl Fn(&Runtime) ->
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_output_underruns(handle: *const c_void) -> u64 {
-    unsafe { read_runtime_counter(handle, Runtime::output_underruns) }
+    unsafe { with_runtime(handle, Runtime::output_underruns) }.unwrap_or(0)
 }
 
 /// Diagnostic: input samples the capture ring dropped because it was
@@ -748,7 +713,7 @@ pub unsafe extern "C" fn noican_engine_output_underruns(handle: *const c_void) -
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_input_overruns(handle: *const c_void) -> u64 {
-    unsafe { read_runtime_counter(handle, Runtime::input_overruns) }
+    unsafe { with_runtime(handle, Runtime::input_overruns) }.unwrap_or(0)
 }
 
 /// Diagnostic: engine blocks the inference worker has processed since
@@ -760,7 +725,7 @@ pub unsafe extern "C" fn noican_engine_input_overruns(handle: *const c_void) -> 
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_worker_blocks(handle: *const c_void) -> u64 {
-    unsafe { read_runtime_counter(handle, Runtime::worker_blocks) }
+    unsafe { with_runtime(handle, Runtime::worker_blocks) }.unwrap_or(0)
 }
 
 /// Diagnostic: worker blocks whose processing exceeded the 10 ms budget.
@@ -774,7 +739,7 @@ pub unsafe extern "C" fn noican_engine_worker_blocks(handle: *const c_void) -> u
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_worker_blocks_over_budget(handle: *const c_void) -> u64 {
-    unsafe { read_runtime_counter(handle, Runtime::worker_blocks_over_budget) }
+    unsafe { with_runtime(handle, Runtime::worker_blocks_over_budget) }.unwrap_or(0)
 }
 
 /// Diagnostic: the longest single worker block since start or the last
@@ -786,7 +751,7 @@ pub unsafe extern "C" fn noican_engine_worker_blocks_over_budget(handle: *const 
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_worker_block_max_ns(handle: *const c_void) -> u64 {
-    unsafe { read_runtime_counter(handle, Runtime::worker_block_max_ns) }
+    unsafe { with_runtime(handle, Runtime::worker_block_max_ns) }.unwrap_or(0)
 }
 
 /// Diagnostic: 1 when the inference worker's mach time-constraint
@@ -805,8 +770,7 @@ pub unsafe extern "C" fn noican_engine_worker_block_max_ns(handle: *const c_void
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_worker_realtime(handle: *const c_void) -> i32 {
-    let realtime = unsafe { read_runtime_counter(handle, |rt| u64::from(rt.worker_realtime())) };
-    i32::from(realtime != 0)
+    i32::from(unsafe { with_runtime(handle, Runtime::worker_realtime) }.unwrap_or(false))
 }
 
 /// Zeroes the diagnostic counters of the running engine.
@@ -821,14 +785,7 @@ pub unsafe extern "C" fn noican_engine_worker_realtime(handle: *const c_void) ->
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_reset_debug_stats(handle: *mut c_void) {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
-        return;
-    };
-    if let Ok(state) = handle.state.lock()
-        && let Some(runtime) = state.runtime.as_ref()
-    {
-        runtime.reset_debug_stats();
-    }
+    unsafe { with_runtime(handle, Runtime::reset_debug_stats) };
 }
 
 /// Decayed linear peak (0.0–1.0) of the model input (pre-processing),
@@ -842,7 +799,7 @@ pub unsafe extern "C" fn noican_engine_reset_debug_stats(handle: *mut c_void) {
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_input_level(handle: *const c_void) -> f32 {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+    let Some(handle) = (unsafe { engine_handle(handle) }) else {
         return 0.0;
     };
     handle.levels.input()
@@ -859,7 +816,7 @@ pub unsafe extern "C" fn noican_engine_input_level(handle: *const c_void) -> f32
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_output_level(handle: *const c_void) -> f32 {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+    let Some(handle) = (unsafe { engine_handle(handle) }) else {
         return 0.0;
     };
     handle.levels.output()
@@ -883,7 +840,7 @@ pub unsafe extern "C" fn noican_engine_output_level(handle: *const c_void) -> f3
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_set_intensity(handle: *mut c_void, intensity: f32) -> i32 {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+    let Some(handle) = (unsafe { engine_handle(handle) }) else {
         return FAILURE;
     };
     handle.intensity.set(intensity);
@@ -901,7 +858,7 @@ pub unsafe extern "C" fn noican_engine_set_intensity(handle: *mut c_void, intens
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn noican_engine_intensity(handle: *const c_void) -> f32 {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+    let Some(handle) = (unsafe { engine_handle(handle) }) else {
         return 1.0;
     };
     handle.intensity.get()
@@ -921,7 +878,7 @@ pub unsafe extern "C" fn noican_engine_last_error(
     buffer: *mut c_char,
     capacity: usize,
 ) -> usize {
-    let Some(handle) = (unsafe { handle.cast::<EngineHandle>().as_ref() }) else {
+    let Some(handle) = (unsafe { engine_handle(handle) }) else {
         return 1;
     };
     let Ok(state) = handle.state.lock() else {
@@ -1086,10 +1043,36 @@ fn parse_model_id(model_id: *const c_char) -> Result<String, String> {
 }
 
 fn set_error(handle: &EngineHandle, error: String) -> i32 {
-    if let Ok(mut state) = handle.state.lock() {
-        state.last_error = error;
-    }
-    FAILURE
+    handle
+        .state
+        .lock()
+        .map_or(FAILURE, |mut state| state.fail(error))
+}
+
+/// Borrows the engine behind a C handle, or `None` for a null one.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle that is not destroyed
+/// while the borrow lasts (no caller keeps it past its own call).
+const unsafe fn engine_handle<'a>(handle: *const c_void) -> Option<&'a EngineHandle> {
+    unsafe { handle.cast::<EngineHandle>().as_ref() }
+}
+
+/// Runs `read` on the running runtime under the control lock, or returns
+/// `None` when there is none to read: a null handle, a stopped engine, or
+/// a poisoned lock. The shared shape of the status and diagnostic
+/// getters, each of which maps `None` to its stopped value. Holds the
+/// control mutex, so it serves event-driven and 1 Hz callers, not the
+/// 20 Hz meter path.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle.
+unsafe fn with_runtime<T>(handle: *const c_void, read: impl FnOnce(&Runtime) -> T) -> Option<T> {
+    let handle = unsafe { engine_handle(handle) }?;
+    let state = handle.state.lock().ok()?;
+    state.runtime.as_ref().map(read)
 }
 
 unsafe fn copy_string(value: &str, buffer: *mut c_char, capacity: usize) -> usize {
