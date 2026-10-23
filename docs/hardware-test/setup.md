@@ -6,7 +6,7 @@ Part of the [macOS Build and Hardware Test Plan](../macos-hardware-test.md).
 
 - Apple Silicon Mac running macOS 14.2 or newer.
 - Xcode command-line tools.
-- Rust 1.98.0 with the `aarch64-apple-darwin` target.
+- Rust 1.99.1 with the `aarch64-apple-darwin` target.
 - Swift 6.1 or newer and SwiftLint.
 - A Developer ID Application identity for a distributable app build.
 - A loopback driver: the Noican driver built from the
@@ -42,7 +42,7 @@ not add its source or object files to the application target.
 ## Build
 
 ```bash
-rustup toolchain install 1.98.0 \
+rustup toolchain install 1.99.1 \
   --target aarch64-apple-darwin \
   --component clippy,rustfmt
 

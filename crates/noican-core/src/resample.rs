@@ -56,8 +56,8 @@ fn design_kaiser_lowpass(num_taps: usize, cutoff: f64, beta: f64) -> Vec<f32> {
             (2.0 * std::f64::consts::PI * cutoff * x).sin() / (std::f64::consts::PI * x)
         };
         let frac = x / mid;
-        let window = bessel_i0(beta * (1.0 - frac * frac).max(0.0).sqrt()) / i0_beta;
-        dc_gain += sinc * window;
+        let window = bessel_i0(beta * frac.mul_add(-frac, 1.0).max(0.0).sqrt()) / i0_beta;
+        dc_gain = sinc.mul_add(window, dc_gain);
         taps.push(sinc * window);
     }
     #[expect(
@@ -611,7 +611,7 @@ mod tests {
             let out = f64::from(high[n]);
             let reference = f64::from(input[n - delay]);
             err_energy = (out - reference).mul_add(out - reference, err_energy);
-            sig_energy += reference * reference;
+            sig_energy = reference.mul_add(reference, sig_energy);
         }
         let snr_db = 10.0 * (sig_energy / err_energy).log10();
         assert!(snr_db > 50.0, "SNR too low: {snr_db} dB");
@@ -665,7 +665,7 @@ mod tests {
             let reference =
                 (2.0 * std::f64::consts::PI * freq * position / f64::from(rate)).sin() * 0.5;
             err += (f64::from(*out) - reference).powi(2);
-            sig += reference * reference;
+            sig = reference.mul_add(reference, sig);
         }
         10.0 * (sig / err).log10()
     }
@@ -822,7 +822,7 @@ mod tests {
                     let reference =
                         (2.0 * std::f64::consts::PI * freq * position / 48_000.0).sin() * 0.5;
                     err += (f64::from(*out) - reference).powi(2);
-                    sig += reference * reference;
+                    sig = reference.mul_add(reference, sig);
                 }
                 let snr = 10.0 * (sig / err).log10();
                 assert!(snr > 60.0, "{freq} Hz at {ppm} ppm: SNR too low: {snr} dB");
