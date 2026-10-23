@@ -236,7 +236,7 @@ mod tests {
         let mut sig = 0.0_f64;
         for n in delay + 500..input.len() {
             let e = f64::from(out[n]) - f64::from(input[n - delay]);
-            err += e * e;
+            err = e.mul_add(e, err);
             sig += f64::from(input[n - delay]).powi(2);
         }
         let snr_db = 10.0 * (sig / err).log10();

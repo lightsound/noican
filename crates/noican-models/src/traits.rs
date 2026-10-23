@@ -192,6 +192,6 @@ mod tests {
     fn unknown_ids_fall_back_to_an_unrated_profile() {
         let traits = ModelTraits::for_id("no-such-model");
         assert_eq!(traits.noise_removal, 0);
-        assert!(traits.tagline.is_empty());
+        assert_eq!(traits.tagline, "");
     }
 }

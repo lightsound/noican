@@ -509,7 +509,7 @@ mod tests {
     #[test]
     fn trim_silence_of_silence_is_empty() {
         let x = vec![1e-6_f32; 4800];
-        assert!(trim_silence(&x).is_empty());
+        assert_eq!(trim_silence(&x), []);
     }
 
     #[test]
@@ -704,7 +704,7 @@ mod tests {
         sorted.sort_unstable();
         assert_eq!(sorted, (0..7).collect::<Vec<_>>());
         assert_ne!(blind_order(7, 2), a);
-        assert!(blind_order(0, 1).is_empty());
+        assert_eq!(blind_order(0, 1), Vec::<usize>::new());
         assert_eq!(blind_order(1, 1), vec![0]);
     }
 }
