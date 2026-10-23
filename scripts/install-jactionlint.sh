@@ -8,20 +8,20 @@ fi
 
 readonly platform="$1"
 readonly destination="$2"
-readonly release_base="https://github.com/jdx/jactionlint/releases/download/v2.2.0"
+readonly release_base="https://github.com/jdx/jactionlint/releases/download/v2.3.0"
 
 case "$platform" in
   linux-x64)
-    readonly archive_name="jactionlint_2.2.0_linux_amd64.tar.gz"
-    readonly archive_size="7399119"
-    readonly archive_sha256="8137d5bfe266dd5e48d2af2306827785ce07c6988e04b1c3d6ad4776e97d27d2"
-    readonly binary_sha256="61001c6104348bf3651a7c1c76587cb98531968c03f7162cb9fedbe2e2159327"
+    readonly archive_name="jactionlint_2.3.0_linux_amd64.tar.gz"
+    readonly archive_size="7325278"
+    readonly archive_sha256="907e6f6a59e181879f7e6936e19ee2eca1cbc51de134fb85460cfa8d65a71f28"
+    readonly binary_sha256="3566633b33780130c5bea5342ad8c5505092e40094c7d6e25ee74e382899a5c7"
     ;;
   darwin-arm64)
-    readonly archive_name="jactionlint_2.2.0_darwin_arm64.tar.gz"
-    readonly archive_size="6870439"
-    readonly archive_sha256="622b29b15a59618bc032163073209ffc434252e9a19eafd451e69207a50f266a"
-    readonly binary_sha256="d4ca2db16dff90dd631a3439465cbd11f96f9b6237d68493697a88ec70abfbb7"
+    readonly archive_name="jactionlint_2.3.0_darwin_arm64.tar.gz"
+    readonly archive_size="6798574"
+    readonly archive_sha256="f96afa36578b21290203ae8df4fa7ac3bf5aba08ed288df28cb0530af7ca6e55"
+    readonly binary_sha256="b6853a909613dc9381548b1d61d278e1c4b1ab8334212f67ea6efa46f1f5d34b"
     ;;
   *)
     echo "unsupported jactionlint platform: $platform" >&2
@@ -61,8 +61,8 @@ if [ "$actual_binary_sha256" != "$binary_sha256" ]; then
 fi
 
 chmod 755 "$destination/jactionlint"
-if [ "$("$destination/jactionlint" --version | head -n 1)" != "2.2.0" ]; then
+if [ "$("$destination/jactionlint" --version | head -n 1)" != "2.3.0" ]; then
   echo "jactionlint binary version mismatch" >&2
   exit 1
 fi
-echo "install-jactionlint: verified jactionlint 2.2.0 for $platform"
+echo "install-jactionlint: verified jactionlint 2.3.0 for $platform"
