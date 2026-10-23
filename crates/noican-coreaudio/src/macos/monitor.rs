@@ -7,7 +7,6 @@
 //! contains what needs Core Audio.
 
 use std::ffi::{c_char, c_void};
-use std::mem::size_of;
 use std::ptr;
 use std::sync::{
     Arc,
@@ -17,6 +16,7 @@ use std::sync::{
 use rtrb::{Consumer, RingBuffer};
 
 use crate::CoreAudioError;
+use crate::callback::fill_dual_mono;
 use crate::monitor::{
     MONITOR_PRIME_SAMPLES, MONITOR_RING_CAPACITY, MonitorState, MonitorTee,
     classify_monitor_target, fourcc,
@@ -27,8 +27,8 @@ use super::{
     AUDIO_UNIT_PROPERTY_STREAM_FORMAT, AUDIO_UNIT_SCOPE_GLOBAL, AUDIO_UNIT_SCOPE_INPUT,
     AUDIO_UNIT_SCOPE_OUTPUT, AudioBufferList, AudioDeviceId, AudioUnit, AudioUnitRenderActionFlags,
     AuhalUnit, INPUT_BUS, NO_ERR, OSStatus, OUTPUT_BUS, PARAM_ERR, attach_render_callback,
-    check_status, dispose_unit, pcm_format, set_property, size_u32, start_output_unit,
-    stop_output_unit,
+    check_status, dispose_unit, pcm_format, render_samples, set_property, size_u32,
+    start_output_unit, stop_output_unit,
 };
 
 const AUDIO_OBJECT_SYSTEM_OBJECT: u32 = 1;
@@ -473,42 +473,26 @@ unsafe extern "C" fn monitor_render_callback(
         return PARAM_ERR;
     }
     let context = unsafe { &mut *context.cast::<MonitorContext>() };
-    let buffer_list = unsafe { &mut *data };
-    if buffer_list.number_buffers == 0 {
+    let Some((samples, channels)) = (unsafe { render_samples(data, frame_count) }) else {
         return PARAM_ERR;
-    }
-    let buffer = &mut buffer_list.buffers[0];
-    if buffer.data.is_null() {
-        return PARAM_ERR;
-    }
-    let available = usize::try_from(buffer.data_byte_size)
-        .unwrap_or(0)
-        .saturating_div(size_of::<f32>());
-    let channels = usize::try_from(buffer.number_channels).unwrap_or(0).max(1);
-    let frames = usize::try_from(frame_count)
-        .unwrap_or(0)
-        .min(available.saturating_div(channels));
-    let samples =
-        unsafe { std::slice::from_raw_parts_mut(buffer.data.cast::<f32>(), frames * channels) };
+    };
     if !context.primed && context.output.slots() >= MONITOR_PRIME_SAMPLES {
         context.primed = true;
     }
-    for frame in samples.chunks_exact_mut(channels) {
-        let value = if context.primed {
-            match context.output.pop() {
-                Ok(sample) => sample,
-                Err(_underrun) => {
-                    context.primed = false;
-                    0.0
-                }
-            }
-        } else {
-            0.0
-        };
-        // The engine is mono; duplicate into every device channel.
-        for channel in frame {
-            *channel = value;
+    let MonitorContext { output, primed } = context;
+    // The engine is mono; every device channel gets the same sample. The
+    // monitor counts no underruns: re-priming is its whole response.
+    fill_dual_mono(samples, channels, || {
+        if !*primed {
+            return None;
         }
-    }
+        match output.pop() {
+            Ok(sample) => Some(sample),
+            Err(_underrun) => {
+                *primed = false;
+                None
+            }
+        }
+    });
     NO_ERR
 }

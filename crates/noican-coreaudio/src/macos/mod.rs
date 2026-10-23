@@ -23,7 +23,9 @@ use std::{
 use noican_core::SwitchingEngine;
 use rtrb::{Consumer, Producer, RingBuffer};
 
-use crate::callback::{MAX_CALLBACK_FRAMES, capture_byte_size, render_geometry};
+use crate::callback::{
+    CaptureFeed, MAX_CALLBACK_FRAMES, OutputFeed, capture_byte_size, render_geometry,
+};
 use crate::monitor::{MonitorTee, fourcc};
 use crate::observe::{StreamLevels, WorkerBlockStats};
 use crate::routing::{VirtualOutputChannels, render_channel_map};
@@ -325,16 +327,18 @@ impl<T> Drop for ContextGuard<T> {
     }
 }
 
-struct CallbackContext {
+/// The capture half of a device callback, shared by the aggregate render
+/// callback and the split transport's capture callback: renders this
+/// cycle's microphone frames into a preallocated mono landing buffer,
+/// queues them for the inference worker, and wakes it.
+struct Capture {
     unit: AudioUnit,
-    input: Producer<f32>,
     /// Preallocated landing buffer for `AudioUnitRender` (mono,
-    /// [`MAX_CALLBACK_FRAMES`]). The render buffer AUHAL hands over
-    /// carries one channel per virtual-output channel, so it can no
-    /// longer double as the mono capture target the way it did while the
-    /// render stream was mono too.
-    capture: Vec<f32>,
-    output: Consumer<f32>,
+    /// [`MAX_CALLBACK_FRAMES`]). On the aggregate transport the render
+    /// buffer AUHAL hands over carries one channel per virtual-output
+    /// channel, so it cannot double as the mono capture target.
+    buffer: Vec<f32>,
+    feed: CaptureFeed,
     faulted: Arc<AtomicBool>,
     samples_ready: Arc<DispatchSemaphore>,
     /// Heartbeat: input frames delivered since start (relaxed atomic add is
@@ -342,28 +346,85 @@ struct CallbackContext {
     /// means the device stopped calling back (unplugged microphone,
     /// coreaudiod restart, post-sleep stall).
     frames: Arc<AtomicU64>,
-    /// Diagnostic: input samples dropped because the capture ring was
-    /// full — the inference worker (or the capture side) fell behind by
-    /// more than the whole ring (relaxed atomic add, same pattern as
-    /// `frames`). A count that moves means real audio was silently
-    /// dropped; `frames` alone cannot show that.
-    input_overruns: Arc<AtomicU64>,
-    /// Diagnostic: render callbacks that delivered no real audio at all
-    /// because the output ring was completely dry (relaxed atomic add,
-    /// same pattern as `frames`). Underrun means the inference worker
-    /// fell behind the device clock — audible as dropouts in recordings
-    /// from the virtual microphone while the monitor path masks it
-    /// behind its re-priming cushion. Partial zero-fills are not
-    /// counted (see the render callback for why they are benign).
-    underruns: Arc<AtomicU64>,
-    /// Whether any output sample has ever been popped. The output ring
-    /// starts empty on this transport (the worker needs one full block
-    /// of input before it produces anything), so the ramp-up callbacks
-    /// that zero-fill before the first pop succeeds are start-up
-    /// latency, not underrun — counting them would flag every model,
-    /// including ones that never miss the budget. Callback-thread-only
-    /// state, hence no atomic.
-    output_primed: bool,
+}
+
+impl Capture {
+    fn new(
+        unit: AudioUnit,
+        feed: CaptureFeed,
+        faulted: Arc<AtomicBool>,
+        samples_ready: Arc<DispatchSemaphore>,
+        frames: Arc<AtomicU64>,
+    ) -> Self {
+        Self {
+            unit,
+            buffer: vec![0.0; MAX_CALLBACK_FRAMES],
+            feed,
+            faulted,
+            samples_ready,
+            frames,
+        }
+    }
+
+    /// Captures this cycle's `frame_count` frames and wakes the worker.
+    ///
+    /// On failure the fault flag is set and the error is the status the
+    /// callback returns: `paramErr` for a cycle larger than the landing
+    /// buffer (cannot happen while `kAudioUnitProperty_MaximumFramesPerSlice`
+    /// holds; the callback never allocates to compensate), `noErr` for a
+    /// failed `AudioUnitRender` (the fault flag is the report).
+    ///
+    /// # Safety
+    ///
+    /// `action_flags` and `timestamp` must be the arguments AUHAL passed
+    /// to the running callback.
+    unsafe fn capture(
+        &mut self,
+        action_flags: *mut AudioUnitRenderActionFlags,
+        timestamp: *const c_void,
+        frame_count: u32,
+    ) -> Result<(), OSStatus> {
+        let frames = usize::try_from(frame_count).unwrap_or(0);
+        let Some(byte_size) = capture_byte_size(frames, self.buffer.len()) else {
+            self.faulted.store(true, Ordering::Release);
+            return Err(PARAM_ERR);
+        };
+        let mut list = AudioBufferList {
+            number_buffers: 1,
+            buffers: [AudioBuffer {
+                number_channels: 1,
+                data_byte_size: byte_size,
+                data: self.buffer.as_mut_ptr().cast(),
+            }],
+        };
+        let status = unsafe {
+            AudioUnitRender(
+                self.unit,
+                action_flags,
+                timestamp,
+                INPUT_BUS,
+                frame_count,
+                &raw mut list,
+            )
+        };
+        if status != NO_ERR {
+            self.faulted.store(true, Ordering::Release);
+            return Err(NO_ERR);
+        }
+        self.feed.push(&self.buffer[..frames]);
+        self.frames
+            .fetch_add(u64::from(frame_count), Ordering::Relaxed);
+        // Wake the inference worker (never blocks; see DispatchSemaphore).
+        self.samples_ready.signal();
+        Ok(())
+    }
+}
+
+/// Render context of the aggregate AUHAL, whose one callback both
+/// captures the microphone and renders the virtual output.
+struct CallbackContext {
+    capture: Capture,
+    output: OutputFeed,
 }
 
 /// Everything the inference worker owns or shares. Bundled so the worker
@@ -401,7 +462,7 @@ enum Transport {
     Split {
         /// Input-only AUHAL on the microphone device.
         capture_unit: usize,
-        /// Its [`split::CaptureContext`].
+        /// Its [`Capture`].
         capture_context: usize,
         /// Output-only AUHAL on the virtual output device.
         output_unit: usize,
@@ -445,9 +506,7 @@ impl Transport {
                 output_context,
             } => unsafe {
                 dispose_unit(*capture_unit as AudioUnit);
-                drop(Box::from_raw(
-                    *capture_context as *mut split::CaptureContext,
-                ));
+                drop(Box::from_raw(*capture_context as *mut Capture));
                 dispose_unit(*output_unit as AudioUnit);
                 drop(Box::from_raw(*output_context as *mut split::OutputContext));
             },
@@ -537,16 +596,14 @@ impl Runtime {
         let block_stats = Arc::new(WorkerBlockStats::new());
         let worker_realtime = Arc::new(AtomicBool::new(false));
         let context = ContextGuard::new(CallbackContext {
-            unit: unit.raw(),
-            input: input_producer,
-            capture: vec![0.0; MAX_CALLBACK_FRAMES],
-            output: output_consumer,
-            faulted: Arc::clone(&faulted),
-            samples_ready: Arc::clone(&samples_ready),
-            frames: Arc::clone(&frames),
-            underruns: Arc::clone(&underruns),
-            input_overruns: Arc::clone(&input_overruns),
-            output_primed: false,
+            capture: Capture::new(
+                unit.raw(),
+                CaptureFeed::new(input_producer, Arc::clone(&input_overruns)),
+                Arc::clone(&faulted),
+                Arc::clone(&samples_ready),
+                Arc::clone(&frames),
+            ),
+            output: OutputFeed::new(output_consumer, Arc::clone(&underruns)),
         });
         attach_render_callback(
             unit.raw(),
@@ -1439,6 +1496,34 @@ fn saturating_elapsed_ns(started: std::time::Instant) -> u64 {
     u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
 }
 
+/// The interleaved `f32` samples a render callback may write — the first
+/// buffer of the list AUHAL handed over, bounded by [`render_geometry`] —
+/// with their channel count, or `None` for a malformed list (no buffers,
+/// or a null data pointer). Shared by the three render callbacks
+/// (aggregate, split output, preview monitor).
+///
+/// # Safety
+///
+/// `data` must be the non-null buffer list AUHAL passed to the running
+/// render callback; the slice must not outlive that callback.
+unsafe fn render_samples<'a>(
+    data: *mut AudioBufferList,
+    frame_count: u32,
+) -> Option<(&'a mut [f32], usize)> {
+    let buffer_list = unsafe { &mut *data };
+    if buffer_list.number_buffers == 0 {
+        return None;
+    }
+    let buffer = &mut buffer_list.buffers[0];
+    if buffer.data.is_null() {
+        return None;
+    }
+    let geometry = render_geometry(buffer.data_byte_size, buffer.number_channels, frame_count);
+    let samples =
+        unsafe { std::slice::from_raw_parts_mut(buffer.data.cast::<f32>(), geometry.samples()) };
+    Some((samples, geometry.channels))
+}
+
 /// Render callback of the aggregate AUHAL: captures the microphone frames
 /// of this cycle into the preallocated mono landing buffer, pushes them to
 /// the input ring, and fills the (one channel per virtual-output channel)
@@ -1460,93 +1545,21 @@ unsafe extern "C" fn render_callback(
         return PARAM_ERR;
     }
     let context = unsafe { &mut *context.cast::<CallbackContext>() };
-    let buffer_list = unsafe { &mut *data };
-    if buffer_list.number_buffers == 0 {
-        context.faulted.store(true, Ordering::Release);
+    let Some((samples, channels)) = (unsafe { render_samples(data, frame_count) }) else {
+        context.capture.faulted.store(true, Ordering::Release);
         return PARAM_ERR;
-    }
-    let buffer = &mut buffer_list.buffers[0];
-    if buffer.data.is_null() {
-        context.faulted.store(true, Ordering::Release);
-        return PARAM_ERR;
-    }
-    let geometry = render_geometry(buffer.data_byte_size, buffer.number_channels, frame_count);
-    let samples =
-        unsafe { std::slice::from_raw_parts_mut(buffer.data.cast::<f32>(), geometry.samples()) };
-    let frames = usize::try_from(frame_count).unwrap_or(0);
-    let Some(capture_bytes) = capture_byte_size(frames, context.capture.len()) else {
-        // Cannot happen while kAudioUnitProperty_MaximumFramesPerSlice
-        // holds; never allocate on the audio thread to compensate. The
-        // render buffer is silenced first so nothing stale can reach the
+    };
+    if let Err(status) = unsafe {
+        context
+            .capture
+            .capture(action_flags, timestamp, frame_count)
+    } {
+        // The render buffer is silenced so nothing stale can reach the
         // virtual output should AUHAL play it despite the error.
         samples.fill(0.0);
-        context.faulted.store(true, Ordering::Release);
-        return PARAM_ERR;
-    };
-    let mut capture_list = AudioBufferList {
-        number_buffers: 1,
-        buffers: [AudioBuffer {
-            number_channels: 1,
-            data_byte_size: capture_bytes,
-            data: context.capture.as_mut_ptr().cast(),
-        }],
-    };
-    let status = unsafe {
-        AudioUnitRender(
-            context.unit,
-            action_flags,
-            timestamp,
-            INPUT_BUS,
-            frame_count,
-            &raw mut capture_list,
-        )
-    };
-    if status != NO_ERR {
-        samples.fill(0.0);
-        context.faulted.store(true, Ordering::Release);
-        return NO_ERR;
+        return status;
     }
-    for sample in &context.capture[..frames] {
-        if context.input.push(*sample).is_err() {
-            // The input ring is full: the worker fell behind by more
-            // than the whole ring, so these samples are dropped on the
-            // floor. Relaxed add — real-time safe, same pattern as the
-            // frames heartbeat.
-            context.input_overruns.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-    context
-        .frames
-        .fetch_add(u64::from(frame_count), Ordering::Relaxed);
-    // Wake the inference worker (never blocks; see DispatchSemaphore).
-    context.samples_ready.signal();
-    let was_primed = context.output_primed;
-    let mut popped_any = false;
-    for frame in samples.chunks_exact_mut(geometry.channels) {
-        let value = match context.output.pop() {
-            Ok(value) => {
-                popped_any = true;
-                value
-            }
-            Err(_empty) => 0.0,
-        };
-        for channel in frame {
-            *channel = value;
-        }
-    }
-    if popped_any {
-        context.output_primed = true;
-    } else if was_primed {
-        // Underrun diagnostic: counted only when a callback delivered no
-        // real audio at all after the stream primed. Partial shortfalls
-        // are excluded on purpose — the worker writes 480-sample blocks
-        // into (typically) smaller I/O periods, so a few benign partial
-        // zero-fills occur on every model while the ring's phase cushion
-        // forms; a fully starved callback, by contrast, means the worker
-        // fell a whole I/O period behind. Relaxed add — real-time safe,
-        // same pattern as the frames heartbeat.
-        context.underruns.fetch_add(1, Ordering::Relaxed);
-    }
+    context.output.render(samples, channels);
     NO_ERR
 }
 

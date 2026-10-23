@@ -41,7 +41,6 @@
 //! preallocated at start.
 
 use std::ffi::c_void;
-use std::mem::size_of;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering},
@@ -51,7 +50,7 @@ use std::thread;
 use noican_core::{DriftServo, InputResampler, SwitchingEngine};
 use rtrb::{Consumer, Producer, RingBuffer};
 
-use crate::callback::MAX_CALLBACK_FRAMES;
+use crate::callback::{CaptureFeed, OutputFeed};
 use crate::monitor::MonitorTee;
 use crate::observe::{StreamLevels, WorkerBlockStats};
 use crate::routing::split_render_channels;
@@ -60,12 +59,12 @@ use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
 use super::{
     AUDIO_OUTPUT_UNIT_PROPERTY_CURRENT_DEVICE, AUDIO_OUTPUT_UNIT_PROPERTY_ENABLE_IO,
     AUDIO_OUTPUT_UNIT_PROPERTY_SET_INPUT_CALLBACK, AUDIO_UNIT_PROPERTY_STREAM_FORMAT,
-    AUDIO_UNIT_SCOPE_GLOBAL, AUDIO_UNIT_SCOPE_INPUT, AUDIO_UNIT_SCOPE_OUTPUT, AudioBuffer,
-    AudioBufferList, AudioDeviceId, AudioUnit, AudioUnitRender, AudioUnitRenderActionFlags,
-    AudioUnitRenderCallback, AudioUnitSetProperty, AuhalUnit, ContextGuard, DispatchSemaphore,
-    INPUT_BUS, NO_ERR, OSStatus, OUTPUT_BUS, PARAM_ERR, RING_CAPACITY, Runtime, Transport,
-    WORKER_WAIT_NS, WorkgroupGuard, attach_render_callback, audio_workgroup, check_status,
-    device_output_channels, monitor, pcm_format, pcm_format_at, promote_current_thread_to_realtime,
+    AUDIO_UNIT_SCOPE_GLOBAL, AUDIO_UNIT_SCOPE_INPUT, AUDIO_UNIT_SCOPE_OUTPUT, AudioBufferList,
+    AudioDeviceId, AudioUnit, AudioUnitRenderActionFlags, AudioUnitRenderCallback,
+    AudioUnitSetProperty, AuhalUnit, Capture, ContextGuard, DispatchSemaphore, INPUT_BUS, NO_ERR,
+    OSStatus, OUTPUT_BUS, PARAM_ERR, RING_CAPACITY, Runtime, Transport, WORKER_WAIT_NS,
+    WorkgroupGuard, attach_render_callback, audio_workgroup, check_status, device_output_channels,
+    monitor, pcm_format, pcm_format_at, promote_current_thread_to_realtime, render_samples,
     run_block, saturating_elapsed_ns, set_max_frames_per_slice, set_property, size_u32,
     start_output_unit, stop_output_unit, stream_format_channels,
 };
@@ -99,46 +98,20 @@ const OUTPUT_PRIME_SAMPLES: usize = 2_400;
 /// keeps pulsing regardless.
 const OUTPUT_STALL_BLOCKS: usize = 300;
 
-/// Render context of the input-only capture AUHAL.
-pub(super) struct CaptureContext {
-    unit: AudioUnit,
-    input: Producer<f32>,
-    /// Preallocated landing buffer for `AudioUnitRender` (mono,
-    /// [`MAX_CALLBACK_FRAMES`]).
-    buffer: Vec<f32>,
-    faulted: Arc<AtomicBool>,
-    samples_ready: Arc<DispatchSemaphore>,
-    /// Heartbeat: capture frames delivered since start (see
-    /// [`Runtime::frames_processed`]).
-    frames: Arc<AtomicU64>,
-    /// Diagnostic: native samples dropped because the capture ring was
-    /// full — the worker fell behind by more than the whole ring
-    /// (relaxed atomic add, same pattern as `frames`; see
-    /// [`Runtime::input_overruns`]).
-    input_overruns: Arc<AtomicU64>,
-}
-
 /// Render context of the output-only AUHAL on the virtual output.
 pub(super) struct OutputContext {
-    output: Consumer<f32>,
+    /// The output ring and its underrun counter, with the same
+    /// complete-starvation definition as the aggregate path. On this
+    /// transport the ring is primed with [`OUTPUT_PRIME_SAMPLES`] of
+    /// silence, so the feed counts from the first callback on, and a
+    /// fully drained ring means the worker (or the capture side) fell
+    /// behind by more than the whole cushion.
+    feed: OutputFeed,
     /// Heartbeat: render callbacks delivered since start (relaxed
     /// atomic add is real-time safe). The worker watches it to detect a
     /// virtual-output side that stopped calling back (see
     /// [`OUTPUT_STALL_BLOCKS`]).
     pulses: Arc<AtomicU64>,
-    /// Diagnostic: callbacks that were fully starved — zero real
-    /// samples popped from the output ring (same relaxed-add pattern
-    /// as `pulses`, same complete-starvation definition as the
-    /// aggregate path). On this transport the ring is primed with
-    /// [`OUTPUT_PRIME_SAMPLES`] of silence, so a fully drained ring
-    /// means the worker (or the capture side) fell behind by more
-    /// than the whole cushion.
-    underruns: Arc<AtomicU64>,
-    /// Whether any sample has ever been popped (it has, from the first
-    /// callback, thanks to the priming) — kept for symmetry with the
-    /// aggregate callback so both counters share one definition of
-    /// underrun. Callback-thread-only state, hence no atomic.
-    output_primed: bool,
 }
 
 /// Everything the split-transport inference worker owns or shares.
@@ -192,23 +165,24 @@ pub(super) fn start(
     // Capture half: input-only AUHAL at the microphone's native rate.
     let mut capture_unit = AuhalUnit::create()?;
     configure_capture_auhal(capture_unit.raw(), input_device, capture_rate)?;
-    let capture_context = ContextGuard::new(CaptureContext {
-        unit: capture_unit.raw(),
-        input: input_producer,
-        buffer: vec![0.0; MAX_CALLBACK_FRAMES],
-        faulted: Arc::clone(&faulted),
-        samples_ready: Arc::clone(&samples_ready),
-        frames: Arc::clone(&frames),
-        input_overruns: Arc::clone(&input_overruns),
-    });
+    let capture_context = ContextGuard::new(Capture::new(
+        capture_unit.raw(),
+        CaptureFeed::new(input_producer, Arc::clone(&input_overruns)),
+        Arc::clone(&faulted),
+        Arc::clone(&samples_ready),
+        Arc::clone(&frames),
+    ));
     attach_input_callback(capture_unit.raw(), capture_context.raw().cast())?;
     capture_unit.initialize()?;
     let workgroup = audio_workgroup(capture_unit.raw())?;
 
     // Output half: output-only AUHAL on the virtual output at 48 kHz.
     let output_pulses = Arc::new(AtomicU64::new(0));
-    let (output_unit, output_context, routing) =
-        build_output_half(output_device, output_consumer, &output_pulses, &underruns)?;
+    let (output_unit, output_context, routing) = build_output_half(
+        output_device,
+        OutputFeed::new(output_consumer, Arc::clone(&underruns)),
+        &output_pulses,
+    )?;
 
     let (monitor_control, tee) = monitor::monitor_pair(monitor_state);
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -289,17 +263,14 @@ pub(super) fn start(
 /// that format read back after `AudioUnitInitialize`.
 fn build_output_half(
     output_device: AudioDeviceId,
-    output_consumer: Consumer<f32>,
+    feed: OutputFeed,
     output_pulses: &Arc<AtomicU64>,
-    underruns: &Arc<AtomicU64>,
 ) -> Result<(AuhalUnit, ContextGuard<OutputContext>, String), CoreAudioError> {
     let mut output_unit = AuhalUnit::create()?;
     let channels = configure_output_auhal(output_unit.raw(), output_device)?;
     let output_context = ContextGuard::new(OutputContext {
-        output: output_consumer,
+        feed,
         pulses: Arc::clone(output_pulses),
-        underruns: Arc::clone(underruns),
-        output_primed: false,
     });
     attach_render_callback(
         output_unit.raw(),
@@ -588,7 +559,8 @@ fn split_processing_loop(
 }
 
 /// Input callback of the capture AUHAL: renders the microphone's frames
-/// into the preallocated buffer and pushes them to the capture ring.
+/// into the preallocated buffer and pushes them to the capture ring
+/// ([`Capture`], shared with the aggregate render callback).
 /// Real-time rules (docs/tech-research.md §9): no allocation, no locks;
 /// ring overrun drops samples; a render failure flags the fault and
 /// returns cleanly.
@@ -603,55 +575,14 @@ unsafe extern "C" fn capture_input_callback(
     if context.is_null() {
         return PARAM_ERR;
     }
-    let context = unsafe { &mut *context.cast::<CaptureContext>() };
-    let frames = usize::try_from(frame_count).unwrap_or(0);
-    if frames == 0 {
+    if frame_count == 0 {
         return NO_ERR;
     }
-    if frames > context.buffer.len() {
-        // Cannot happen while kAudioUnitProperty_MaximumFramesPerSlice
-        // holds; never allocate on the audio thread to compensate.
-        context.faulted.store(true, Ordering::Release);
-        return PARAM_ERR;
+    let capture = unsafe { &mut *context.cast::<Capture>() };
+    match unsafe { capture.capture(action_flags, timestamp, frame_count) } {
+        Ok(()) => NO_ERR,
+        Err(status) => status,
     }
-    let byte_size = u32::try_from(frames * size_of::<f32>()).unwrap_or(0);
-    let mut list = AudioBufferList {
-        number_buffers: 1,
-        buffers: [AudioBuffer {
-            number_channels: 1,
-            data_byte_size: byte_size,
-            data: context.buffer.as_mut_ptr().cast(),
-        }],
-    };
-    let status = unsafe {
-        AudioUnitRender(
-            context.unit,
-            action_flags,
-            timestamp,
-            INPUT_BUS,
-            frame_count,
-            &raw mut list,
-        )
-    };
-    if status != NO_ERR {
-        context.faulted.store(true, Ordering::Release);
-        return NO_ERR;
-    }
-    for sample in &context.buffer[..frames] {
-        if context.input.push(*sample).is_err() {
-            // The input ring is full: the worker fell behind by more
-            // than the whole ring, so these samples are dropped on the
-            // floor. Relaxed add — real-time safe, same pattern as the
-            // frames heartbeat.
-            context.input_overruns.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-    context
-        .frames
-        .fetch_add(u64::from(frame_count), Ordering::Relaxed);
-    // Wake the inference worker (never blocks; see DispatchSemaphore).
-    context.samples_ready.signal();
-    NO_ERR
 }
 
 /// Render callback of the output-only AUHAL on the virtual output: pops
@@ -674,46 +605,10 @@ unsafe extern "C" fn output_render_callback(
         return PARAM_ERR;
     }
     let context = unsafe { &mut *context.cast::<OutputContext>() };
-    let buffer_list = unsafe { &mut *data };
-    if buffer_list.number_buffers == 0 {
+    let Some((samples, channels)) = (unsafe { render_samples(data, frame_count) }) else {
         return PARAM_ERR;
-    }
-    let buffer = &mut buffer_list.buffers[0];
-    if buffer.data.is_null() {
-        return PARAM_ERR;
-    }
-    let available = usize::try_from(buffer.data_byte_size)
-        .unwrap_or(0)
-        .saturating_div(size_of::<f32>());
-    let channels = usize::try_from(buffer.number_channels).unwrap_or(0).max(1);
-    let frames = usize::try_from(frame_count)
-        .unwrap_or(0)
-        .min(available.saturating_div(channels));
-    let samples =
-        unsafe { std::slice::from_raw_parts_mut(buffer.data.cast::<f32>(), frames * channels) };
-    let was_primed = context.output_primed;
-    let mut popped_any = false;
-    for frame in samples.chunks_exact_mut(channels) {
-        let value = match context.output.pop() {
-            Ok(value) => {
-                popped_any = true;
-                value
-            }
-            Err(_empty) => 0.0,
-        };
-        for channel in frame {
-            *channel = value;
-        }
-    }
-    if popped_any {
-        context.output_primed = true;
-    } else if was_primed {
-        // Underrun diagnostic (see OutputContext::underruns): counted
-        // only when the callback delivered no real audio at all, the
-        // same complete-starvation definition as the aggregate path
-        // (relaxed add, real-time safe, like the pulse counter below).
-        context.underruns.fetch_add(1, Ordering::Relaxed);
-    }
+    };
+    context.feed.render(samples, channels);
     // Heartbeat for the worker's output-side stall watch (relaxed
     // atomic add: real-time safe, like the capture frame counter).
     context.pulses.fetch_add(1, Ordering::Relaxed);
