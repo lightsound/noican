@@ -18,7 +18,7 @@ repository consumes the driver and how the app recognizes it.
 
 `external/noican-driver` is a git submodule of `lightsound/noican-driver`;
 it carries BlackHole as a nested submodule (`external/blackhole` inside
-it, pinned to the upstream release tag `v0.7.1`). The gitlink pins the
+it, pinned to the upstream release tag `v0.7.2`). The gitlink pins the
 exact driver revision this repository builds and ships.
 
 ```bash

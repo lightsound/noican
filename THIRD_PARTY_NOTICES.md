@@ -44,7 +44,7 @@ models, adapted code, and vendored assets.
   as the `external/noican-driver` git submodule. It carries BlackHole
   (https://github.com/ExistentialAudio/BlackHole, GPL-3.0,
   (c) Existential Audio Inc.) as a nested submodule pinned to the
-  upstream release tag `v0.7.1`, built unmodified into the separate
+  upstream release tag `v0.7.2`, built unmodified into the separate
   `Noican.driver` bundle (build-time preprocessor customization only —
   the joycast.driver pattern; see docs/driver.md). The driver artifact is
   GPL-3.0; the driver repository's `LICENSE` carries the notice, the
