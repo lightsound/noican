@@ -4,6 +4,8 @@
 - **Status**: Research complete; implementation in progress (phase status in §12)
 - **Scope**: macOS only, fully on-device, paid public release (one-time purchase through Polar, Japan included; [licensing.md](licensing.md)); this repository goes private before release ([release.md](release.md)) while the GPL-3.0 driver stays public in [lightsound/noican-driver](https://github.com/lightsound/noican-driver); Apple Developer Program membership available (Developer ID signing is possible)
 
+> **How to read this document**: §1–§11 and §14 are the research record of 2026-08-24, including options that were later rejected or superseded; where they conflict with a dated decision record (§6.4, §7.4) or with §12, the later text wins. §13 lists open questions, several already answered in place. The current state of the implementation lives in §12 — read §12 first.
+
 This document consolidates the review of two earlier AI-generated design documents ("design1" and "design2") and three rounds of follow-up research. It records every candidate that was evaluated — including rejected ones and the reasons for rejection — so that later decisions can be revisited with full context and rejected options can serve as fallbacks.
 
 ---
@@ -607,10 +609,16 @@ impossible, with a written reason.**
 > coreaudio/FFI/Swift layers rewired onto the C engine crates so the live
 > path uses exactly the resampling/framing code the CLI verifies, plus A's
 > quality gates. The CLI additionally reads AIFF/AIFC/CAF/M4A (symphonia)
-> besides WAV. Remaining for Phase 0 sign-off: the on-hardware acceptance
-> run of this hybrid build (docs/macos-hardware-test.md) — audio output,
+> besides WAV. Acceptance recorded since then (docs/acceptance/,
+> 2026-08-27 – 2026-09-11) scored the driver, native-rate capture,
+> composite routing, level integrity, underrun, and 1-channel driver
+> checklists on hardware. Still outstanding for Phase 0 sign-off: one
+> run of the full functional-test checklist
+> (docs/hardware-test/functional-test.md) against this hybrid build,
+> and the measured long-session run (§13, question 4) — audio output,
 > TCC, aggregate-device behavior, and model switching cannot be verified
-> in CI and are **not claimed as working** until recorded there. Note for
+> in CI and are **not claimed as working** beyond what those records
+> show until recorded there. Note for
 > all macOS 26 documentation: `sudo launchctl kickstart -k
 > system/com.apple.audio.coreaudiod` is rejected by SIP; restart the audio
 > daemon with `sudo killall coreaudiod` instead.
@@ -670,6 +678,8 @@ was decided on 2026-08-31 — Hush, see the §6.4 decision record.
 ### Phase 2 — Menu bar app, full version
 
 Extend the Phase 0 UI: strength control, quality/low-latency mode switch, level + reduction meters (lock-free shared state from the engine), start at login via `SMAppService`. (SwiftLint strict and Swift warnings-as-errors have been in CI since Phase 0.)
+
+> **Status: done (2026-08-27).** Preview (self-monitor), level meters, and the Off / Preview / On mode control shipped in PR #8; strength control, settings persistence, and start at login shipped in PR #14. Hardware acceptance for the Phase 2 controls is recorded in docs/hardware-test/phase-2-controls.md (2026-08-27; latency follow-up in PR #15). Low-latency operation is a model choice (the model selector; `dfn3-ll` added in PR #48), not a separate mode switch.
 
 ### Phase 3 — Optional
 
