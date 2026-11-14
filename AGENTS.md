@@ -51,6 +51,6 @@ This repository has no `README.md` by owner decision: it is developed only by ag
 - Quality gates: `.github/workflows/ci.yml` is the source of truth; the policy behind it is `docs/tech-research.md` §12 "Cross-cutting: quality gates".
 - Crate responsibilities: the `//!` docs at the top of each crate's `lib.rs` or `main.rs`; workspace members are listed in `Cargo.toml`.
 - CLI (`noican models` / `fetch` / `process`) and supported models: `docs/models.md`; `noican eval`: `docs/hush-48k-eval.md`; accepted input formats: `crates/noican-cli/src/audio.rs`.
-- macOS app build, prerequisites, and hardware acceptance: `docs/hardware-test/setup.md` and `docs/macos-hardware-test.md`; each run is recorded under `docs/acceptance/`.
+- macOS app build, prerequisites, and hardware acceptance: `docs/hardware-test/setup.md` and `docs/macos-hardware-test.md`; each run is recorded under `docs/acceptance/`. Acceptance records are dated evidence about the build they name, not current facts — never cite one for the present state of the code.
 - Driver: `docs/driver.md`. License activation: `docs/licensing.md`. Release checklist: `docs/release.md`.
 - Testing on a Mac VM: `.agents/skills/testing-noican/SKILL.md`.
