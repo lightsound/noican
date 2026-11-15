@@ -32,7 +32,7 @@ jobs:
           # (id-token: write), so the checkout token does not need to persist.
           persist-credentials: false
       - name: Run agent
-        uses: pullfrog/pullfrog@v0
+        uses: pullfrog/pullfrog@44b58efe7fe431053c58aafa05e51e190f969685 # v0
         with:
           prompt: ${{ inputs.prompt }}
         env:
