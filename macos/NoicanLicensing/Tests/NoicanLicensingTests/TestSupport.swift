@@ -4,8 +4,6 @@ import FoundationNetworking
 #endif
 @testable import NoicanLicensing
 
-// MARK: - Fixtures
-
 let thisMac = DeviceDescriptor(id: "device-a", label: "Test MacBook", metadata: ["app_version": "1.0.0"])
 let otherMac = DeviceDescriptor(id: "device-b", label: "Old iMac")
 let launchTime = Date(timeIntervalSince1970: 1_800_000_000)
@@ -35,9 +33,6 @@ func storedLicense(
     return license
 }
 
-// MARK: - Test doubles
-
-/// A settable clock the controller reads through its `now` closure.
 @MainActor
 final class TestClock {
     var now = launchTime
@@ -81,8 +76,6 @@ struct StoreFailure: LocalizedError {
     var errorDescription: String? { "Keychain unavailable" }
 }
 
-/// Scripted backend: each operation pops its next result (or repeats
-/// the last one) and records the call.
 final class MockBackend: LicenseBackend, @unchecked Sendable {
     enum Call: Hashable {
         case activate(key: String, deviceID: String)
@@ -138,7 +131,6 @@ final class MockBackend: LicenseBackend, @unchecked Sendable {
     }
 }
 
-/// Scripted HTTP transport for the Polar backend.
 final class FakeTransport: HTTPTransport, @unchecked Sendable {
     enum Reply {
         case http(Int, String)
@@ -173,7 +165,6 @@ final class FakeTransport: HTTPTransport, @unchecked Sendable {
 }
 
 extension URLRequest {
-    /// The JSON body as a dictionary, for asserting on request fields.
     var jsonBody: [String: Any] {
         guard let httpBody, let object = try? JSONSerialization.jsonObject(with: httpBody) as? [String: Any] else {
             return [:]

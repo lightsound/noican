@@ -5,10 +5,7 @@ use realfft::num_complex::Complex32;
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 use std::sync::Arc;
 
-/// Vorbis window: `w[i] = sin(pi/2 * sin^2(pi/2 * (i + 0.5) / (N/2)))`.
-///
-/// Satisfies squared-COLA at 50% overlap, so analysis + synthesis
-/// windowing needs no extra normalization (DPDFNet, DeepFilterNet family).
+/// See docs/adr/0007-dsp-stages.md.
 #[must_use]
 pub fn vorbis_window(len: usize) -> Vec<f32> {
     let half = f64::from(u32::try_from(len).unwrap_or(u32::MAX)) / 2.0;
@@ -26,8 +23,7 @@ pub fn vorbis_window(len: usize) -> Vec<f32> {
         .collect()
 }
 
-/// Periodic Hann window (`torch.hann_window` semantics):
-/// `w[n] = 0.5 * (1 - cos(2*pi*n / N))` — divisor `N`, not `N - 1`.
+/// See docs/adr/0007-dsp-stages.md.
 #[must_use]
 pub fn periodic_hann_window(len: usize) -> Vec<f32> {
     let n = f64::from(u32::try_from(len).unwrap_or(u32::MAX));
@@ -44,15 +40,13 @@ pub fn periodic_hann_window(len: usize) -> Vec<f32> {
         .collect()
 }
 
-/// Square root of the periodic Hann window (`hann_sqrt` in DPDFNet
-/// metadata for some profiles).
+/// See docs/adr/0007-dsp-stages.md.
 #[must_use]
 pub fn sqrt_hann_window(len: usize) -> Vec<f32> {
     periodic_hann_window(len).iter().map(|w| w.sqrt()).collect()
 }
 
-/// A paired forward/inverse real FFT of a fixed size with numpy
-/// `rfft`/`irfft` scaling: forward is unnormalized, inverse divides by `n`.
+/// See docs/adr/0007-dsp-stages.md.
 pub struct FftPair {
     n: usize,
     forward: Arc<dyn RealToComplex<f32>>,
@@ -97,8 +91,7 @@ impl FftPair {
         self.n / 2 + 1
     }
 
-    /// Forward transform of `frame` (length `n`), writing interleaved
-    /// `[re0, im0, re1, im1, ...]` into `spec` (length `2 * bins`).
+    /// See docs/adr/0007-dsp-stages.md.
     ///
     /// # Errors
     ///
@@ -123,8 +116,7 @@ impl FftPair {
         Ok(())
     }
 
-    /// Inverse transform of interleaved `spec` (length `2 * bins`) into
-    /// `frame` (length `n`), scaled by `1 / n` (numpy `irfft` semantics).
+    /// See docs/adr/0007-dsp-stages.md.
     ///
     /// # Errors
     ///
@@ -138,7 +130,6 @@ impl FftPair {
             c.re = spec[2 * i];
             c.im = spec[2 * i + 1];
         }
-        // realfft requires the Nyquist/DC imaginary parts to be zero.
         self.freq_buf[0].im = 0.0;
         let last = self.freq_buf.len() - 1;
         self.freq_buf[last].im = 0.0;

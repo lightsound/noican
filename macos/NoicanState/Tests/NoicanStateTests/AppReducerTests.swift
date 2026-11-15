@@ -2,11 +2,6 @@ import Testing
 
 @testable import NoicanState
 
-// Fixtures and drivers are shared with the other reducer suites; see
-// ReducerTestSupport.swift.
-
-// MARK: - Start / stop
-
 @Suite("Start and stop transitions")
 struct StartStopTests {
     @Test("Off → On claims a start behind the busy machine")
@@ -19,7 +14,6 @@ struct StartStopTests {
         #expect(state.machine == .busy(.starting(attempt), rendering: .off))
         #expect(state.isBusy)
         #expect(effects == [.stopEngine, .startEngine(attempt)])
-        // Settled rendering: nothing the UI projects has moved yet.
         #expect(state.statusText == "Off")
         #expect(!state.showsMonitoring)
     }
@@ -62,25 +56,20 @@ struct StartStopTests {
 
     @Test("Pre-flight failures settle synchronously, without a busy round-trip")
     func preflightFailures() {
-        // Incapable microphone (a rate outside the capture resampler's
-        // range — telephony-rate and 44.1 kHz microphones are accepted).
         let incapable = step(readyModel(selectedInputUID: unsupportedMic.uid), tap(.on))
         #expect(!incapable.state.isBusy)
         #expect(incapable.state.engineErrorMessage?.contains("can't resample") == true)
         #expect(incapable.effects == [.stopEngine])
 
-        // Missing virtual output.
         var noOutput = readyModel()
         noOutput.isVirtualOutputPresent = false
         let refused = step(noOutput, tap(.on))
         #expect(refused.state.engineErrorMessage == "Install the Noican or BlackHole virtual device")
 
-        // No usable selection.
         let noDevices = step(readyModel(devices: [], selectedInputUID: ""), tap(.on))
         #expect(noDevices.state.engineErrorMessage == "Select an input device")
         #expect(noDevices.state.statusText == "Error")
 
-        // No engine at all.
         var noEngine = readyModel()
         noEngine.isEngineAvailable = false
         let ignored = step(noEngine, tap(.on))
@@ -102,8 +91,6 @@ struct StartStopTests {
     }
 }
 
-// MARK: - Retry semantics
-
 @Suite("Same-segment retap retries")
 struct RetryTests {
     @Test("Re-tapping the failed segment retries; the message stays during the retry")
@@ -114,8 +101,6 @@ struct RetryTests {
         #expect(effects.contains(.startEngine(
             StartAttempt(modelID: "dfn3", inputUID: builtInMic.uid, monitor: false)
         )))
-        // Settled-state rendering: the old failure stays visible while
-        // the retry is in flight and clears only on settled success.
         #expect(retry.engineErrorMessage == "mic exploded")
         let recovered = drive(retry, [.startCompleted(error: nil)])
         #expect(recovered.engineErrorMessage == nil)
@@ -132,9 +117,6 @@ struct RetryTests {
 
     @Test("A tap in the poll-lag window (machine says running, engine says stopped) rebuilds")
     func staleRunningRebuilds() {
-        // isEngineRunning is the live answer; the machine's belief lags
-        // by up to one health tick. Preview must rebuild, not arm a
-        // monitor on a dead transport.
         let running = drive(runningModel(), [.monitorTargetErrorChanged(nil)])
         let (state, effects) = step(running, tap(.preview, isEngineRunning: false))
         #expect(effects.first == .stopEngine)
@@ -144,8 +126,6 @@ struct RetryTests {
         #expect(state.isBusy)
     }
 }
-
-// MARK: - Preview and monitor
 
 @Suite("Preview monitor transitions")
 struct PreviewTests {
@@ -190,10 +170,8 @@ struct PreviewTests {
         #expect(effects.isEmpty)
         #expect(refused.messages.previewUnavailableReason == "built-in speakers would feed back")
 
-        // The message clears live once the output becomes safe…
         let cleared = drive(refused, [.monitorTargetErrorChanged(nil)])
         #expect(cleared.messages.previewUnavailableReason == nil)
-        // …and only maintains an already-shown message.
         let idle = drive(cleared, [.monitorTargetErrorChanged("some reason")])
         #expect(idle.messages.previewUnavailableReason == nil)
     }
@@ -211,7 +189,6 @@ struct PreviewTests {
         #expect(failed.isModeUnfulfilled, "the pill warns")
         #expect(failed.engineErrorMessage == nil, "not an engine failure")
 
-        // Retap retries and a settled success clears the message.
         let (retry, retryEffects) = step(failed, tap(.preview, isEngineRunning: true))
         #expect(retryEffects == [.setMonitor(enabled: true)])
         #expect(retry.messages.previewError == "output device refused", "kept while in flight")
@@ -231,8 +208,6 @@ struct PreviewTests {
     }
 }
 
-// MARK: - Feedback trip
-
 @Suite("Feedback killswitch")
 struct TripTests {
     @Test("A trip disarms the monitor, keeps the mode, and explains itself")
@@ -251,7 +226,6 @@ struct TripTests {
         )
         #expect(settled.isModeUnfulfilled)
 
-        // Retap Preview → re-arm; the settled enable success clears it.
         let rearmed = drive(settled, [
             tap(.preview, isEngineRunning: true),
             .monitorChangeCompleted(error: nil)
@@ -267,8 +241,6 @@ struct TripTests {
         #expect(effects.isEmpty)
     }
 }
-
-// MARK: - Monitor target safety loss
 
 @Suite("Monitor target losing its safety")
 struct MonitorSafetyTests {
@@ -287,7 +259,6 @@ struct MonitorSafetyTests {
         #expect(settled.isModeUnfulfilled, "the pill warns")
         #expect(settled.liveRunningSession?.isMonitorArmed == false)
 
-        // Re-tapping Preview retries on the (new) vetted output.
         let rearmed = drive(settled, [
             tap(.preview, isEngineRunning: true),
             .monitorChangeCompleted(error: nil)
@@ -298,21 +269,17 @@ struct MonitorSafetyTests {
 
     @Test("Safety loss is ignored while the monitor is not armed")
     func ignoredWhileDisarmed() {
-        // Running without a monitor (On mode).
         let running = runningModel()
         let (state, effects) = step(running, .monitorTargetBecameUnsafe(reason: "whatever"))
         #expect(state == running)
         #expect(effects.isEmpty)
 
-        // And while a transition is already in flight.
         let busy = drive(readyModel(), [tap(.preview)])
         let (busyState, busyEffects) = step(busy, .monitorTargetBecameUnsafe(reason: "whatever"))
         #expect(busyState == busy)
         #expect(busyEffects.isEmpty)
     }
 }
-
-// MARK: - Microphone switching and fallback
 
 @Suite("Microphone selection")
 struct MicrophoneTests {
@@ -335,7 +302,6 @@ struct MicrophoneTests {
     func failedSwitchFallsBack() {
         let switching = drive(runningModel(), [.microphoneSelected(usbMic.uid)])
         let (fallback, effects) = step(switching, .startCompleted(error: "usb start failed"))
-        // Explicit failure-event → restart-effect transition.
         let fallbackAttempt = StartAttempt(
             modelID: "dfn3", inputUID: builtInMic.uid, monitor: false
         )
@@ -343,12 +309,10 @@ struct MicrophoneTests {
         #expect(fallback.selectedInputUID == builtInMic.uid, "the checkmark returns")
         #expect(fallback.messages.microphoneError == "usb start failed")
 
-        // The fallback succeeding restores the session on the old device.
         let recovered = drive(fallback, [.startCompleted(error: nil)])
         #expect(recovered.liveRunningSession?.inputUID == builtInMic.uid)
         #expect(recovered.messages.microphoneError == "usb start failed", "reason stays under the list")
 
-        // …and a failing fallback (no further revert) settles as failed.
         let dead = drive(fallback, [.startCompleted(error: "builtin also failed")])
         #expect(dead.engineErrorMessage == "builtin also failed")
         #expect(dead.mode == .on, "intent is kept even after the fallback dies")
@@ -413,8 +377,6 @@ struct MicrophoneTests {
     }
 }
 
-// MARK: - Model switching
-
 @Suite("Model selection")
 struct ModelTests {
     @Test("A live pick switches behind the busy machine and settles into Running")
@@ -460,8 +422,6 @@ struct ModelTests {
         #expect(stopped.messages.modelError == nil)
     }
 }
-
-// MARK: - Device environment and runtime health
 
 @Suite("Device changes and health findings")
 struct EnvironmentTests {
@@ -516,7 +476,6 @@ struct EnvironmentTests {
         ))
         #expect(state.hasLiveTransport, "the health poll keeps watching it")
 
-        // Re-tapping the segment rebuilds from the fault.
         let (retry, retryEffects) = step(state, tap(.on, isEngineRunning: true))
         #expect(retryEffects.first == .stopEngine)
         #expect(retry.isBusy)

@@ -1,22 +1,4 @@
-//! Buffer geometry and ring hand-offs of the real-time callbacks.
-//!
-//! The arithmetic that sizes the preallocated capture landing buffer and
-//! bounds what a render callback may write, and the two hand-offs every
-//! callback performs: queueing captured samples for the inference worker
-//! ([`CaptureFeed`]) and rendering the worker's output as dual mono
-//! ([`OutputFeed`], [`fill_dual_mono`]). Pure and platform-independent so
-//! the workspace tests cover them; the AUHAL callbacks in the `macos`
-//! module only apply them.
-//!
-//! Real-time rules (docs/tech-research.md §9): a callback never
-//! allocates, so the capture buffer is sized once at start from
-//! [`MAX_CALLBACK_FRAMES`] — which is also set as
-//! `kAudioUnitProperty_MaximumFramesPerSlice` on the unit — and a callback
-//! asking for more frames than that is refused (fault flag, `paramErr`)
-//! rather than served from a fresh allocation. The hand-offs only move
-//! `f32` samples through preallocated lock-free rings and bump relaxed
-//! atomic counters: ring overrun drops samples, underrun renders silence,
-//! and neither ever blocks.
+//! See docs/adr/0001-realtime-audio-rules.md.
 
 use std::mem::size_of;
 use std::sync::Arc;
@@ -24,14 +6,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use rtrb::{Consumer, Producer};
 
-/// Largest callback an AUHAL unit may deliver, in frames. Set as
-/// `kAudioUnitProperty_MaximumFramesPerSlice` on every unit that
-/// captures, and the length of each preallocated capture landing buffer.
+/// See docs/adr/0003-coreaudio-transport.md.
 pub const MAX_CALLBACK_FRAMES: usize = 4_096;
 
-/// Byte size of a mono `f32` capture landing buffer holding `frames`,
-/// or `None` when `frames` exceeds `capacity` (the buffer's length) —
-/// the callback must then fault instead of rendering past the buffer.
+/// See docs/adr/0003-coreaudio-transport.md.
 #[must_use]
 pub fn capture_byte_size(frames: usize, capacity: usize) -> Option<u32> {
     if frames > capacity {
@@ -61,12 +39,7 @@ impl RenderGeometry {
     }
 }
 
-/// Bounds a render request to the buffer AUHAL handed over.
-///
-/// `frame_count` frames of `number_channels` interleaved `f32` channels,
-/// never more than `data_byte_size` bytes. A zero channel count is treated
-/// as mono so a malformed buffer still yields silence rather than a
-/// division by zero.
+/// See docs/adr/0003-coreaudio-transport.md.
 #[must_use]
 pub fn render_geometry(
     data_byte_size: u32,
@@ -83,14 +56,7 @@ pub fn render_geometry(
     RenderGeometry { channels, frames }
 }
 
-/// Writes one mono engine sample per frame into an interleaved render
-/// buffer, duplicated into all of the frame's `channels` (dual mono).
-///
-/// This is the shape all three render callbacks (aggregate, split
-/// output, preview monitor) produce. `next` supplies the samples, one
-/// call per frame; a frame it cannot serve (`None`) renders silence. A
-/// zero channel count is treated as mono, as in [`render_geometry`].
-/// Returns whether any frame received a real sample.
+/// See docs/adr/0004-aggregate-output-routing.md.
 pub fn fill_dual_mono(
     samples: &mut [f32],
     channels: usize,
@@ -107,14 +73,7 @@ pub fn fill_dual_mono(
     delivered
 }
 
-/// The capture side's hand-off to the inference worker: pushes captured
-/// samples into the capture ring, counting the ones a full ring drops.
-///
-/// A full ring means the worker (or the capture side) fell behind by more
-/// than the whole ring, so those samples are dropped on the floor rather
-/// than blocking the callback. A count that moves means real audio was
-/// silently lost — audible as clipped input reaching the models — which
-/// the frame heartbeat alone cannot show.
+/// See docs/adr/0003-coreaudio-transport.md.
 #[derive(Debug)]
 pub struct CaptureFeed {
     ring: Producer<f32>,
@@ -129,8 +88,7 @@ impl CaptureFeed {
         Self { ring, overruns }
     }
 
-    /// Queues `samples` for the worker. Never blocks; each dropped sample
-    /// is counted with a relaxed add (real-time safe).
+    /// See docs/adr/0003-coreaudio-transport.md.
     pub fn push(&mut self, samples: &[f32]) {
         for &sample in samples {
             if self.ring.push(sample).is_err() {
@@ -140,27 +98,11 @@ impl CaptureFeed {
     }
 }
 
-/// The output side of a render callback on either transport: pops the
-/// worker's output ring into the device buffer as dual mono
-/// ([`fill_dual_mono`]) and counts complete starvation as underrun.
-///
-/// A callback counts as an underrun only when it delivered no real sample
-/// at all *after* the ring first produced audio. The ramp-up before that
-/// is start-up latency, not underrun: the aggregate transport's ring
-/// starts empty (the worker needs one full block of input before it
-/// produces anything), so counting it would flag every model, including
-/// ones that never miss the budget. Partial shortfalls are excluded on
-/// purpose too: the worker writes 480-sample blocks into (typically)
-/// smaller I/O periods, so a few benign partial zero-fills occur on every
-/// model while the ring's phase cushion forms. A fully starved callback,
-/// by contrast, means the worker fell a whole I/O period behind — audible
-/// as dropouts in recordings from the virtual microphone.
+/// See docs/adr/0002-engine-diagnostics.md.
 #[derive(Debug)]
 pub struct OutputFeed {
     ring: Consumer<f32>,
     underruns: Arc<AtomicU64>,
-    /// Whether any sample has ever been popped. Callback-thread-only
-    /// state, hence no atomic.
     primed: bool,
 }
 
@@ -176,9 +118,7 @@ impl OutputFeed {
         }
     }
 
-    /// Renders one callback into `samples` (interleaved, `channels` per
-    /// frame); frames the ring cannot serve render silence. Never blocks;
-    /// an underrun is counted with a relaxed add (real-time safe).
+    /// See docs/adr/0002-engine-diagnostics.md.
     pub fn render(&mut self, samples: &mut [f32], channels: usize) {
         let ring = &mut self.ring;
         if fill_dual_mono(samples, channels, || ring.pop().ok()) {
@@ -226,7 +166,6 @@ mod tests {
 
     #[test]
     fn render_geometry_uses_the_buffer_channel_count() {
-        // 256 stereo frames: 256 * 2 * 4 bytes.
         let geometry = render_geometry(2_048, 2, 256);
         assert_eq!(
             geometry,
@@ -236,8 +175,6 @@ mod tests {
             }
         );
         assert_eq!(geometry.samples(), 512);
-        // Mono virtual output: same buffer holds twice the frames, but
-        // the request caps it.
         assert_eq!(
             render_geometry(2_048, 1, 256),
             RenderGeometry {
@@ -249,9 +186,7 @@ mod tests {
 
     #[test]
     fn render_geometry_never_exceeds_the_buffer() {
-        // Buffer for 100 stereo frames, 256 requested: only 100 written.
         assert_eq!(render_geometry(800, 2, 256).frames, 100);
-        // A trailing partial frame is dropped.
         assert_eq!(render_geometry(804, 2, 256).frames, 100);
         assert_eq!(render_geometry(0, 2, 256).frames, 0);
     }
@@ -311,25 +246,20 @@ mod tests {
         let mut feed = OutputFeed::new(consumer, Arc::clone(&underruns));
         let mut stereo = [9.0_f32; 4];
 
-        // Start-up ramp: the ring has never produced audio, so the
-        // silence is latency, not underrun.
         feed.render(&mut stereo, 2);
         assert_samples(&stereo, &[0.0; 4]);
         assert_eq!(underruns.load(Ordering::Relaxed), 0);
 
-        // The first audio primes the feed; a partial shortfall is benign.
         producer.push(0.5).expect("ring has room");
         feed.render(&mut stereo, 2);
         assert_samples(&stereo, &[0.5, 0.5, 0.0, 0.0]);
         assert_eq!(underruns.load(Ordering::Relaxed), 0);
 
-        // After priming, every fully starved callback counts once.
         feed.render(&mut stereo, 2);
         feed.render(&mut stereo, 2);
         assert_samples(&stereo, &[0.0; 4]);
         assert_eq!(underruns.load(Ordering::Relaxed), 2);
 
-        // Real audio again: rendered as dual mono, nothing counted.
         producer.push(0.25).expect("ring has room");
         producer.push(-0.25).expect("ring has room");
         feed.render(&mut stereo, 2);

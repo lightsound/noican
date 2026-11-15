@@ -2,11 +2,6 @@ import Testing
 
 @testable import NoicanState
 
-// Fixtures and drivers are shared with the other reducer suites; see
-// ReducerTestSupport.swift.
-
-// MARK: - Capture-capability classification
-
 @Suite("Capture-support classification")
 struct CaptureSupportTests {
     @Test("48 kHz-capable devices take the aggregate path regardless of idle rate")
@@ -18,8 +13,6 @@ struct CaptureSupportTests {
 
     @Test("Every rate the resampler converts is captured natively")
     func nativeRates() {
-        // Telephony profiles, the 44.1 kHz family, odd-but-real rates,
-        // high-rate interfaces, and the range ends.
         let rates = [8_000, 11_025, 12_000, 16_000, 22_050, 24_000, 32_000, 44_100, 88_200]
         for hertz in rates + [96_000, 192_000] {
             #expect(
@@ -28,9 +21,6 @@ struct CaptureSupportTests {
                 "\(hertz) Hz must be a native-capture rate"
             )
         }
-        // A device idling exactly at 48 kHz without advertising it in
-        // its rate list is convertible too (1/1 through the same
-        // resampler); the live probe still prefers the aggregate path.
         #expect(
             CaptureSupport.classify(supports48kHz: false, nominalRate: 48_000)
                 == .nativeRate(hertz: 48_000)
@@ -78,8 +68,6 @@ struct CaptureSupportTests {
         }
     }
 }
-
-// MARK: - Native-rate selection semantics
 
 @Suite("Native-rate microphone selection")
 struct NativeRateSelectionTests {
@@ -132,8 +120,6 @@ struct NativeRateSelectionTests {
         #expect(bluetooth.microphoneNotice?.contains("16 kHz") == true)
         #expect(bluetooth.microphoneNotice?.contains("playback") == true)
 
-        // A 44.1 kHz device is full-band: the notice explains the
-        // conversion and must not call the audio narrow-band.
         let fortyFour = readyModel(selectedInputUID: fortyFourMic.uid)
         #expect(fortyFour.microphoneNotice?.contains("44.1 kHz") == true)
         #expect(fortyFour.microphoneNotice?.contains("48 kHz") == true)
@@ -146,8 +132,6 @@ struct NativeRateSelectionTests {
         )
     }
 }
-
-// MARK: - Nominal-rate change while running
 
 @Suite("Input sample-rate changes")
 struct InputRateChangeTests {
@@ -182,9 +166,6 @@ struct InputRateChangeTests {
 
     @Test("The transport session survives busy monitor/model transitions")
     func transportSessionSurvivesBusyTransitions() {
-        // The input-rate listener keys on this: dropping it during a
-        // Preview toggle or model switch would blind the observer while
-        // the transport keeps running.
         let togglingMonitor = drive(runningModel(), [tap(.preview, isEngineRunning: true)])
         #expect(togglingMonitor.isBusy)
         #expect(togglingMonitor.liveSession == nil, "busy transitions own their session")
@@ -194,7 +175,6 @@ struct InputRateChangeTests {
         #expect(switchingModel.isBusy)
         #expect(switchingModel.transportSession?.inputUID == builtInMic.uid)
 
-        // A start claims a *fresh* transport: nothing to watch yet.
         let starting = drive(readyModel(), [tap(.on)])
         #expect(starting.transportSession == nil)
         #expect(readyModel().transportSession == nil)
@@ -202,20 +182,16 @@ struct InputRateChangeTests {
 
     @Test("Rate changes are ignored while off, busy, or without a live session")
     func rateChangeIgnoredOutsideLiveSessions() {
-        // Off: nothing to rebuild.
         let off = readyModel()
         let (offState, offEffects) = step(off, .inputSampleRateChanged)
         #expect(offState == off)
         #expect(offEffects.isEmpty)
 
-        // Busy: the in-flight transition owns the transport.
         let busy = drive(readyModel(), [tap(.on)])
         let (busyState, busyEffects) = step(busy, .inputSampleRateChanged)
         #expect(busyState == busy)
         #expect(busyEffects.isEmpty)
 
-        // Failed with the transport torn down: nothing to rebuild (the
-        // next user action does).
         let failed = drive(readyModel(), [tap(.on), .startCompleted(error: "mic exploded")])
         let (failedState, failedEffects) = step(failed, .inputSampleRateChanged)
         #expect(failedState == failed)

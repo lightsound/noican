@@ -1,15 +1,3 @@
-//! Audio file reading/writing at the engine rate.
-//!
-//! Input files of any rate/channel count are converted to mono 48 kHz f32
-//! (channel average + FFT resampling). WAV is read with `hound` (the
-//! long-verified path); AIFF/AIFC, CAF, FLAC, and M4A (AAC/ALAC) are read
-//! with `symphonia`. Output is always 16-bit WAV. This is the offline path;
-//! quality matters more than allocation behavior here.
-//!
-//! Some compressed AIFC variants (e.g. IMA4) are not decodable here;
-//! convert those with macOS's built-in
-//! `afconvert -f WAVE -d LEI16@48000 <in> out.wav` first.
-
 use std::fs::File;
 use std::path::Path;
 
@@ -23,12 +11,6 @@ use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 
-/// Reads an audio file (WAV, AIFF/AIFC, CAF, FLAC, or M4A) and converts
-/// it to mono 48 kHz f32.
-///
-/// # Errors
-///
-/// Fails on unreadable files, unsupported encodings, or resampler errors.
 pub(crate) fn read_mono_48k(path: &Path) -> anyhow::Result<Vec<f32>> {
     let extension = path
         .extension()
@@ -42,8 +24,6 @@ pub(crate) fn read_mono_48k(path: &Path) -> anyhow::Result<Vec<f32>> {
     to_engine_rate(mono, sample_rate)
 }
 
-/// Reads a WAV file via `hound`, returning interleaved-averaged mono
-/// samples at the file's native rate.
 fn read_wav(path: &Path) -> anyhow::Result<(Vec<f32>, u32)> {
     let mut reader = hound::WavReader::open(path)
         .with_context(|| format!("cannot open WAV {}", path.display()))?;
@@ -82,8 +62,6 @@ fn read_wav(path: &Path) -> anyhow::Result<(Vec<f32>, u32)> {
     Ok((mix_to_mono(&interleaved, channels), spec.sample_rate))
 }
 
-/// Reads AIFF/AIFC, CAF, FLAC, or M4A via `symphonia`, returning
-/// interleaved-averaged mono samples at the file's native rate.
 fn read_symphonia(path: &Path, extension: Option<&str>) -> anyhow::Result<(Vec<f32>, u32)> {
     let file = File::open(path).with_context(|| format!("cannot open audio {}", path.display()))?;
     let stream = MediaSourceStream::new(
@@ -155,7 +133,6 @@ fn read_symphonia(path: &Path, extension: Option<&str>) -> anyhow::Result<(Vec<f
     Ok((mono, sample_rate))
 }
 
-/// Averages interleaved frames down to mono.
 fn mix_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
     let channels = channels.max(1);
     #[expect(
@@ -169,14 +146,7 @@ fn mix_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
         .collect()
 }
 
-/// Offline-resamples mono samples from `sample_rate` to the engine rate.
 fn to_engine_rate(mono: Vec<f32>, sample_rate: u32) -> anyhow::Result<Vec<f32>> {
-    // The declared rate is unvalidated file data, and it sizes the
-    // resampler's output buffer by `ENGINE_SAMPLE_RATE / sample_rate ×
-    // input_len`: a header patched to a tiny rate (1 Hz would turn an
-    // 8 MB file into a ~768 GB allocation attempt) must be rejected
-    // before the resampler is built. The accepted range covers every
-    // real audio rate, from below telephony to DXD, with headroom.
     if !(4_000..=768_000).contains(&sample_rate) {
         anyhow::bail!("implausible sample rate {sample_rate} Hz");
     }
@@ -204,12 +174,6 @@ fn to_engine_rate(mono: Vec<f32>, sample_rate: u32) -> anyhow::Result<Vec<f32>> 
     Ok(data)
 }
 
-/// Writes mono 48 kHz f32 samples as a 16-bit PCM WAV (the most portable
-/// format for listening tests).
-///
-/// # Errors
-///
-/// Fails when the file cannot be written.
 pub(crate) fn write_mono_48k(path: &Path, samples: &[f32]) -> anyhow::Result<()> {
     let spec = hound::WavSpec {
         channels: 1,
@@ -243,7 +207,6 @@ mod tests {
             .join(name)
     }
 
-    /// All fixtures encode the same 0.25 s, 440 Hz, -6 dBFS sine at 48 kHz.
     const FIXTURE_LEN: usize = 12_000;
 
     fn assert_tone(samples: &[f32], len_tolerance: usize, format: &str) {
@@ -327,8 +290,6 @@ mod tests {
     fn m4a_aac_decodes_the_tone() {
         let reference = read_mono_48k(&fixture("tone.wav")).expect("wav reads");
         let samples = read_mono_48k(&fixture("tone.m4a")).expect("m4a reads");
-        // AAC is lossy (edge ringing changes the peak) and carries encoder
-        // delay; allow padding differences and search a small lag window.
         assert!(samples.len().abs_diff(FIXTURE_LEN) <= 4096);
         assert!(samples.iter().all(|s| s.is_finite()));
         let peak = samples.iter().fold(0.0_f32, |m, s| m.max(s.abs()));
@@ -346,10 +307,6 @@ mod tests {
 
     #[test]
     fn stereo_input_is_averaged_not_left_channel_only() {
-        // Regression guard against the candidate-B stereo bug (left channel
-        // only): the stereo fixture has the tone on the right channel and
-        // silence on the left, so channel averaging must yield half
-        // amplitude while "left only" would yield silence.
         let samples = read_mono_48k(&fixture("tone-stereo-right.wav")).expect("stereo reads");
         let peak = samples.iter().fold(0.0_f32, |m, s| m.max(s.abs()));
         assert!(
@@ -365,10 +322,6 @@ mod tests {
         assert!(message.contains("afconvert"), "unhelpful error: {message}");
     }
 
-    /// A crafted header must not be able to size the resampler's output
-    /// buffer: rates far outside real audio are rejected up front,
-    /// while the engine rate passes through untouched and a telephony
-    /// rate still resamples.
     #[test]
     fn implausible_sample_rates_are_rejected() {
         for rate in [0, 1, 100, 3_999, 768_001, u32::MAX] {
@@ -384,7 +337,6 @@ mod tests {
         assert_eq!(output, input);
         let output = to_engine_rate(vec![0.0; 8_000], 8_000).expect("telephony resamples");
         assert!(output.len() > 40_000, "unexpected length {}", output.len());
-        // The exact bounds of the accepted range are accepted.
         let output = to_engine_rate(vec![0.0; 4_000], 4_000).expect("lower bound resamples");
         assert!(output.len() > 40_000, "unexpected length {}", output.len());
         let output = to_engine_rate(vec![0.0; 768_000], 768_000).expect("upper bound resamples");

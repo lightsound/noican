@@ -2,11 +2,6 @@
 import Foundation
 import Security
 
-/// Keeps the activation as one generic-password item in the user's login
-/// Keychain. The item's access control list admits the app that created
-/// it, so a Developer ID build reads it back silently across updates
-/// (same designated requirement); an ad-hoc development build is a new
-/// code identity after every rebuild and gets a Keychain access prompt.
 public struct KeychainLicenseStore: LicenseStore {
     private let service: String
     private let account: String

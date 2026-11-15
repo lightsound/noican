@@ -1,41 +1,11 @@
-//! Picker-facing model characteristics: four 0–5 ratings, a one-line
-//! tagline, and a detail string for tooltips.
-//!
-//! Normal users cannot choose between model code names, so every catalog
-//! entry carries a comparable profile. The ratings follow one rule:
-//! **every axis points the same way — more filled is better** — so a bar
-//! never needs interpreting (latency becomes "responsiveness", CPU cost
-//! becomes "efficiency").
-//!
-//! Basis, so the numbers stay honest:
-//! - `responsiveness` is derived from the *measured* engine-reported
-//!   algorithmic latency (`Stage::latency_samples`, 2026-08-27: Hush
-//!   22.5 ms, UL-UNAS 34.5 ms, DFN3 40 ms, DPDFNet 60 ms; 2026-09-23:
-//!   DFN3-LL 20 ms): 5 ≤ 25 ms, 4 ≤ 35 ms, 3 ≤ 45 ms, 2 ≤ 65 ms.
-//! - `efficiency` is derived from parameter count (weight-file size):
-//!   5 ≤ 0.25 M, 4 ≤ 1.5 M, 3 ≤ 2.5 M, 2 above.
-//! - `voice_quality` is the output bandwidth: 48 kHz native scores 4
-//!   (processing always costs some naturalness; only the passthrough
-//!   reference scores 5), 16 kHz telephony-band models score 2. A
-//!   composite that restores the full band around a 16 kHz core
-//!   (`hush-48k`) scores as a 48 kHz model: what the listener hears is
-//!   the full band.
-//! - `noise_removal` is editorial, anchored by the 2026-08-27 hardware
-//!   run: DPDFNet8 / DeepFilterNet3 / Hush suppressed transient clicks
-//!   (trackpad, keyboard); the lighter models let them through.
-//!
-//! The raw numbers behind the ratings live in each entry's `details`
-//! string, surfaced as a tooltip.
+//! See docs/adr/0009-model-catalog-fetch.md.
 
-/// Picker-facing profile of one catalog entry. All ratings are 0–5 with
-/// "more is better"; 0 means the axis does not apply (the passthrough
-/// removes nothing).
+/// See docs/adr/0009-model-catalog-fetch.md.
 #[derive(Debug, Clone, Copy)]
 pub struct ModelTraits {
-    /// How much noise disappears, transient clicks included (editorial,
-    /// hardware-anchored).
+    /// See docs/adr/0009-model-catalog-fetch.md.
     pub noise_removal: u8,
-    /// How natural the voice stays (native rate: 48 kHz high, 16 kHz low).
+    /// See docs/adr/0009-model-catalog-fetch.md.
     pub voice_quality: u8,
     /// Inverse algorithmic latency (measured; higher = less delay).
     pub responsiveness: u8,
@@ -48,8 +18,6 @@ pub struct ModelTraits {
 }
 
 impl ModelTraits {
-    /// Compact profile constructor for the [`PROFILES`] table; ratings in
-    /// removal / quality / responsiveness / efficiency order.
     const fn rated(ratings: [u8; 4], tagline: &'static str, details: &'static str) -> Self {
         Self {
             noise_removal: ratings[0],
@@ -61,8 +29,7 @@ impl ModelTraits {
         }
     }
 
-    /// The profile for a catalog id. Unknown ids (which the catalog never
-    /// produces) fall back to an unrated profile rather than panicking.
+    /// See docs/adr/0009-model-catalog-fetch.md.
     #[must_use]
     pub fn for_id(id: &str) -> Self {
         PROFILES
@@ -72,7 +39,6 @@ impl ModelTraits {
     }
 }
 
-/// One profile per catalog entry (see the module docs for the basis).
 static PROFILES: &[(&str, ModelTraits)] = &[
     (
         "passthrough",
@@ -110,7 +76,6 @@ static PROFILES: &[(&str, ModelTraits)] = &[
     ),
     (
         "dfn3-ll",
-        // noise_removal is provisional: not yet compared by ear with dfn3.
         ModelTraits::rated(
             [4, 4, 5, 2],
             "strong cleanup, low delay",
@@ -169,8 +134,6 @@ mod tests {
             ] {
                 assert!(value <= 5, "{}: {axis} rating out of range", entry.id);
             }
-            // Every rated model has all axes; only the passthrough's
-            // noise_removal is legitimately zero.
             if entry.id != "passthrough" {
                 assert!(traits.noise_removal > 0, "{}: unrated", entry.id);
             }
@@ -184,7 +147,6 @@ mod tests {
             assert_eq!(ModelTraits::for_id(id).voice_quality, 2, "{id}");
         }
         assert_eq!(ModelTraits::for_id("dfn3").voice_quality, 4);
-        // Full-band output around the 16 kHz core scores as 48 kHz.
         assert_eq!(ModelTraits::for_id("hush-48k").voice_quality, 4);
     }
 

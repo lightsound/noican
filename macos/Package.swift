@@ -11,12 +11,7 @@ let package = Package(
         .executable(name: "NoicanMenuBar", targets: ["NoicanMenuBar"]),
     ],
     dependencies: [
-        // The pure state machine (reducer + projections). A standalone
-        // package so its tests run without the Rust staticlib this
-        // executable links; see macos/NoicanState/Package.swift.
         .package(path: "NoicanState"),
-        // License activation against Polar (or a replacement backend);
-        // standalone for the same reason as NoicanState.
         .package(path: "NoicanLicensing"),
     ],
     targets: [
@@ -34,10 +29,6 @@ let package = Package(
             ],
             path: "Sources/NoicanMenuBar",
             linkerSettings: [
-                // scripts/build-macos-app.sh reads this "-L" line back to
-                // decide where cargo must put libnoican_ffi.a, and fails
-                // the build if the path does not match its TARGET. Keep
-                // the flag and its path on one line in this shape.
                 .unsafeFlags([
                     "-L", "../target/aarch64-apple-darwin/release",
                 ]),

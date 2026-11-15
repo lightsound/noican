@@ -1,10 +1,4 @@
-//! Adapter turning a fixed-frame, fixed-rate [`FrameProcessor`] into a
-//! [`Stage`] operating at [`ENGINE_SAMPLE_RATE`] with arbitrary block sizes.
-//!
-//! This is where per-model sample-rate and frame-size differences are
-//! absorbed (docs/tech-research.md §12): the engine always exchanges 48 kHz
-//! blocks; the adapter resamples (integer factor), accumulates full model
-//! frames, and re-emits at the engine rate with a fixed, reported latency.
+//! See docs/adr/0007-dsp-stages.md.
 
 use std::collections::VecDeque;
 
@@ -16,7 +10,6 @@ use crate::stage::{ENGINE_SAMPLE_RATE, FrameProcessor, Stage};
 #[derive(Debug)]
 pub struct FramedStage<P> {
     processor: P,
-    /// Engine-rate samples consumed per processing round.
     round_len: usize,
     resampler: Option<(Decimator, Interpolator)>,
     in_fifo: VecDeque<f32>,
@@ -29,9 +22,7 @@ pub struct FramedStage<P> {
 }
 
 impl<P: FrameProcessor> FramedStage<P> {
-    /// Wraps `processor`. `max_block_len` is the largest block the engine
-    /// will pass to [`Stage::process_block`] (used only to pre-size buffers;
-    /// larger blocks still work at the cost of a reallocation).
+    /// See docs/adr/0007-dsp-stages.md.
     ///
     /// # Errors
     ///
@@ -53,13 +44,9 @@ impl<P: FrameProcessor> FramedStage<P> {
                 Interpolator::new(factor, frame_len),
             )
         });
-        // Latency: one full round of buffering, plus both filters' group
-        // delays when resampling. Priming the output FIFO with `round_len`
-        // zeros guarantees process_block can always pop a full block.
         let filter_delay = resampler.as_ref().map_or(0, |(d, i)| {
             d.delay_input_samples() + i.delay_output_samples()
         });
-        // Include the model's own algorithmic delay, scaled to engine rate.
         let latency = round_len + filter_delay + processor.output_delay() * factor;
         let mut out_fifo = VecDeque::with_capacity(round_len * 2 + max_block_len);
         out_fifo.extend(std::iter::repeat_n(0.0, round_len));
@@ -91,7 +78,6 @@ impl<P: FrameProcessor> FramedStage<P> {
         while self.in_fifo.len() >= self.round_len {
             self.round_in.clear();
             for _ in 0..self.round_len {
-                // Guarded by the length check above.
                 if let Some(s) = self.in_fifo.pop_front() {
                     self.round_in.push(s);
                 }
@@ -157,7 +143,6 @@ impl<P: FrameProcessor> Stage for FramedStage<P> {
 mod tests {
     use super::*;
 
-    /// Identity frame processor at an arbitrary rate/frame size.
     #[derive(Debug)]
     struct Identity {
         rate: u32,
@@ -196,8 +181,6 @@ mod tests {
         out
     }
 
-    /// A native-rate identity model must reproduce the input exactly,
-    /// delayed by one frame.
     #[test]
     fn native_rate_identity_is_pure_delay() {
         let mut stage = FramedStage::new(
@@ -217,8 +200,6 @@ mod tests {
         assert!(out[..480].iter().all(|s| *s == 0.0));
     }
 
-    /// A 16 kHz identity model must reproduce a mid-band sine (within
-    /// resampling fidelity) delayed by the reported latency.
     #[test]
     fn resampled_identity_matches_reported_latency() {
         let mut stage = FramedStage::new(
@@ -243,7 +224,6 @@ mod tests {
         assert!(snr_db > 50.0, "SNR too low: {snr_db} dB");
     }
 
-    /// Odd block sizes (not divisible by frame or factor) must still work.
     #[test]
     fn irregular_block_sizes_work() {
         let mut stage = FramedStage::new(

@@ -3,12 +3,6 @@ import Testing
 
 @testable import NoicanLicensing
 
-// Request and response shapes follow Polar's customer-portal license-key
-// reference (API version 2026-10): POST /v1/customer-portal/license-keys/
-// {activate,validate,deactivate}. The response bodies below are the
-// documented examples, trimmed to the fields the backend reads plus a
-// few it must ignore.
-
 private let organizationID = "fda84e25-7b55-4d67-916d-60ead04ff61f"
 private let benefitID = "32a8eda4-56cf-4a94-8228-792d324a519e"
 
@@ -254,10 +248,6 @@ struct PolarResponseTests {
 
     @Test("A response missing the fields the grant depends on is refused and its activation released")
     func minimalResponse() async {
-        // The response is unsigned, so a body carrying only IDs — the
-        // shape anything interposing on the connection could serve —
-        // must not mint a grant, however forward-compatible that would
-        // be. The fresh activation is given back before refusing.
         let transport = FakeTransport(.http(200, #"{"id": "act-9", "license_key": {"id": "lk-1"}}"#), .http(204, ""))
         await #expect(throws: LicenseBackendError.rejected(.wrongProduct)) {
             try await backend(transport).activate(key: "1C285B2D-6CE6-4BC7-B8BE-ADB6A7E304DA", device: thisMac)
@@ -277,9 +267,6 @@ struct PolarResponseTests {
 
     @Test("A present-and-wrong field still rejects when another field is absent")
     func validationWrongFieldWithAbsentField() async {
-        // Absence downgrades only the absent field to unavailable; it
-        // must not shield a field that is present and definitively
-        // wrong. (licenseKeyJSON's default activation is null.)
         let revoked = licenseKeyJSON(status: "revoked")
         await #expect(throws: LicenseBackendError.rejected(.activationRevoked)) {
             try await backend(FakeTransport(.http(200, revoked))).validate(key: "KEY-1", activationID: "act-1")

@@ -1,33 +1,10 @@
-//! Lock-free peak level meters for the stream flowing through the
-//! inference worker.
-//!
-//! [`StreamLevels`] publishes per-block peaks of the model input
-//! (pre-processing) and model output (post-processing) without ever
-//! touching the meeting-facing path. It is updated on the inference
-//! worker between device callbacks and obeys the same real-time rules as
-//! the callbacks themselves (docs/tech-research.md §9): no allocation, no
-//! locks — the meters are plain atomics.
-//!
-//! The preview monitor's worker-side machinery (tee + feedback guard)
-//! lives in [`crate::monitor`].
+//! See docs/adr/0001-realtime-audio-rules.md.
 
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-/// Per-block decay applied to the stored peak (simple exponential
-/// ballistics on the engine side, so every reader sees the same motion).
-/// At the 10 ms worker block size this is ≈ −0.9 dB per block, so a
-/// full-scale peak falls below 1% (−40 dB) in about 440 ms — fast enough
-/// to track speech pauses, slow enough that a 20 Hz UI poll never misses
-/// a transient entirely.
 const LEVEL_DECAY_PER_BLOCK: f32 = 0.9;
 
-/// Linear peak levels of the model input (pre-processing) and model
-/// output (post-processing), shared lock-free between the inference
-/// worker and the control plane.
-///
-/// Values are `f32` bit patterns in [`AtomicU32`]s; `Relaxed` ordering is
-/// sufficient because each value is independently meaningful and a
-/// slightly stale read is harmless for a meter.
+/// See docs/adr/0001-realtime-audio-rules.md.
 #[derive(Debug, Default)]
 pub struct StreamLevels {
     input_bits: AtomicU32,
@@ -71,27 +48,10 @@ impl StreamLevels {
     }
 }
 
-/// The inference worker's per-block time budget in nanoseconds.
-///
-/// One engine block is 10 ms of audio ([`crate::WORKER_BLOCK_SAMPLES`] at
-/// 48 kHz), so a block that takes longer than 10 ms to process makes the
-/// worker fall behind the device clock and eventually underruns the
-/// output ring (the render callback then fills silence — audible as
-/// dropouts in recordings from the virtual microphone).
+/// See docs/adr/0001-realtime-audio-rules.md.
 pub const BLOCK_BUDGET_NS: u64 = 10_000_000;
 
-/// Lock-free per-block processing-time statistics of the inference
-/// worker, shared with the control plane for diagnostics.
-///
-/// Updated once per 10 ms engine block on the worker thread (three
-/// relaxed atomic RMWs — the worker is not the audio callback, but it
-/// still must never lock or allocate on this path so a slow stats write
-/// can never *cause* the underruns it measures). Readers poll at UI
-/// rates; slightly stale values are harmless for diagnostics.
-///
-/// Counters are cumulative since the last [`WorkerBlockStats::reset`]
-/// (worker start/exit, or an explicit reset from the control plane when
-/// the model changes and per-model attribution is wanted).
+/// See docs/adr/0001-realtime-audio-rules.md.
 #[derive(Debug, Default)]
 pub struct WorkerBlockStats {
     blocks: AtomicU64,
@@ -148,8 +108,6 @@ impl WorkerBlockStats {
 }
 
 fn fold_peak(bits: &AtomicU32, block: &[f32]) {
-    // NaN-proof: `f32::max` keeps the accumulator when the operand is NaN,
-    // so a corrupt sample cannot poison the meter.
     let peak = block
         .iter()
         .fold(0.0_f32, |acc, sample| acc.max(sample.abs()))
@@ -223,11 +181,11 @@ mod tests {
         assert_eq!(stats.over_budget(), 0);
         assert_eq!(stats.max_ns(), 0);
 
-        stats.record(1_000_000); // 1 ms: within budget
-        stats.record(BLOCK_BUDGET_NS); // exactly the budget: not a violation
-        stats.record(BLOCK_BUDGET_NS + 1); // over budget
-        stats.record(21_500_000); // over budget, new maximum
-        stats.record(2_000_000); // within budget, does not lower the max
+        stats.record(1_000_000);
+        stats.record(BLOCK_BUDGET_NS);
+        stats.record(BLOCK_BUDGET_NS + 1);
+        stats.record(21_500_000);
+        stats.record(2_000_000);
 
         assert_eq!(stats.blocks(), 5);
         assert_eq!(stats.over_budget(), 2);

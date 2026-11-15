@@ -1,44 +1,4 @@
-//! Split transport for non-48 kHz microphones (issue #7): two AUHAL
-//! instances bridged by a drift-compensating worker.
-//!
-//! An Aggregate Device drives all its subdevices at one nominal rate, and
-//! the Noican virtual output only supports 44.1/48 kHz, so a microphone
-//! that cannot run at 48 kHz — a telephony-profile Bluetooth headset
-//! (HFP at 8/16/24 kHz), a 44.1 kHz-family device (44.1/22.05/
-//! 11.025 kHz), or a high-rate-only interface (88.2/96 kHz) — cannot
-//! share an aggregate with the 48 kHz virtual output. This module
-//! instead opens:
-//!
-//! - an **input-only AUHAL** on the microphone device with a client
-//!   format at its native rate (AUHAL performs no sample-rate conversion
-//!   on the input side, so the client rate must equal the device rate);
-//! - an **output-only AUHAL** on the virtual output device at the 48 kHz
-//!   engine rate, with one client channel per virtual-output channel
-//!   (the count is read from the device once the unit is bound to it —
-//!   [`crate::routing::split_render_channels`]) and the mono engine
-//!   sample duplicated into every one of them (dual mono, like the
-//!   aggregate path and the preview monitor).
-//!
-//! The two units run on separate device clocks. The inference worker
-//! bridges them: it drains the native-rate capture ring, converts to
-//! 48 kHz through [`InputResampler`] (one arbitrary-ratio polyphase FIR
-//! whose fractional phase step carries the drift correction — exact
-//! 160/147 for 44.1 kHz, 3/1 for 16 kHz), feeds the unchanged engine in
-//! 10 ms blocks, and pushes the result into the output ring. A
-//! [`DriftServo`] observes the total samples buffered between the two
-//! clock domains once per block — native-ring occupancy converted to
-//! engine samples through the same ratio — and steers the resampler a
-//! few hundred ppm to cancel clock drift (docs/tech-research.md §4.2).
-//! The output ring is primed with [`OUTPUT_PRIME_SAMPLES`] of silence,
-//! which is both the initial jitter cushion and the servo's occupancy
-//! target; neither the servo nor the cushion depends on the ratio.
-//!
-//! Real-time rules (docs/tech-research.md §9) hold as on the aggregate
-//! path: the capture callback only calls `AudioUnitRender` into a
-//! preallocated buffer, pushes into a lock-free ring, and signals the
-//! worker's semaphore; the output callback only pops the output ring
-//! (silence on underrun); all resampling runs on the worker with state
-//! preallocated at start.
+//! See docs/adr/0003-coreaudio-transport.md.
 
 use std::ffi::c_void;
 use std::sync::{
@@ -65,63 +25,24 @@ use super::{
     stop_output_unit, stop_worker, stream_format_channels,
 };
 
-/// Native-rate samples drained from the capture ring per worker pass
-/// (also the resampler's preallocation unit): 480 native samples cover
-/// 20–60 ms of telephony-profile audio, comfortably above Bluetooth
-/// burst sizes, and ≈11 ms at 44.1 kHz (about one engine block per
-/// pass). The resampler's per-call output bound
-/// ([`InputResampler::max_output_len`]) sizes the worker's conversion
-/// buffers, so a 96 kHz device (half an engine block per pass) needs no
-/// separate tuning.
 const NATIVE_CHUNK_SAMPLES: usize = 480;
 
-/// Silence pushed into the output ring before the units start: the
-/// initial cushion absorbing Bluetooth burst jitter, and the drift
-/// servo's occupancy target (50 ms at 48 kHz). This is added latency of
-/// the split path only; the aggregate path is untouched.
 const OUTPUT_PRIME_SAMPLES: usize = 2_400;
 
-/// Consecutive engine blocks the output callback may stay silent before
-/// the worker flags a fault (3 s of processed capture at 10 ms blocks,
-/// matching the control plane's stall horizon). On the aggregate path a
-/// dead output device kills the single shared callback and trips the
-/// frame heartbeat; on the split path the capture callback keeps that
-/// heartbeat advancing, so the output side carries its own pulse
-/// counter and the worker faults when it stops moving while capture is
-/// alive. Watching the callback pulse — not ring occupancy — keeps a
-/// transient ring-filling hiccup from latching a false fault: a full
-/// ring drains only at the servo's ppm trickle, but a live callback
-/// keeps pulsing regardless.
 const OUTPUT_STALL_BLOCKS: usize = 300;
 
-/// Render context of the output-only AUHAL on the virtual output.
 pub(super) struct OutputContext {
-    /// The output ring and its underrun counter, with the same
-    /// complete-starvation definition as the aggregate path. On this
-    /// transport the ring is primed with [`OUTPUT_PRIME_SAMPLES`] of
-    /// silence, so the feed counts from the first callback on, and a
-    /// fully drained ring means the worker (or the capture side) fell
-    /// behind by more than the whole cushion.
     feed: OutputFeed,
-    /// Heartbeat: render callbacks delivered since start (relaxed
-    /// atomic add is real-time safe). The worker watches it to detect a
-    /// virtual-output side that stopped calling back (see
-    /// [`OUTPUT_STALL_BLOCKS`]).
     pulses: Arc<AtomicU64>,
 }
 
-/// Everything the split-transport inference worker owns or shares: the
-/// links every worker has, plus the clock-domain bridge.
 struct SplitWorkerLinks {
     worker: WorkerLinks,
     resampler: InputResampler,
     servo: DriftServo,
-    /// The output callback's pulse counter (see [`OutputContext`]).
     output_pulses: Arc<AtomicU64>,
 }
 
-/// Builds and starts the split transport (see the module docs and
-/// [`Runtime::start_native`]).
 pub(super) fn start(
     input_device: AudioDeviceId,
     output_device: AudioDeviceId,
@@ -130,21 +51,16 @@ pub(super) fn start(
     levels: Arc<StreamLevels>,
     monitor_state: Arc<AtomicI32>,
 ) -> Result<Runtime, CoreAudioError> {
-    // Validate the rate (and preallocate the conversion state) before
-    // touching any audio object.
     let resampler = InputResampler::new(capture_rate, NATIVE_CHUNK_SAMPLES)
         .map_err(|error| CoreAudioError::Worker(error.to_string()))?;
     let shared = Shared::new()?;
 
     let (input_producer, input_consumer) = RingBuffer::new(RING_CAPACITY);
     let (mut output_producer, output_consumer) = RingBuffer::new(RING_CAPACITY);
-    // Prime the output ring at the servo's occupancy target so playback
-    // starts with the jitter cushion in place.
     for _ in 0..OUTPUT_PRIME_SAMPLES {
         let _ignored = output_producer.push(0.0);
     }
 
-    // Capture half: input-only AUHAL at the microphone's native rate.
     let mut capture_unit = AuhalUnit::create()?;
     configure_capture_auhal(capture_unit.raw(), input_device, capture_rate)?;
     let capture_context =
@@ -153,7 +69,6 @@ pub(super) fn start(
     capture_unit.initialize()?;
     let workgroup = audio_workgroup(capture_unit.raw())?;
 
-    // Output half: output-only AUHAL on the virtual output at 48 kHz.
     let output_pulses = Arc::new(AtomicU64::new(0));
     let (output_unit, output_context, routing) = build_output_half(
         output_device,
@@ -177,8 +92,6 @@ pub(super) fn start(
     };
     let worker = spawn_worker(move || split_processing_loop(links, workgroup))?;
 
-    // Start the units, unwinding everything on failure (the RAII guards
-    // release the units and contexts; the worker is stopped explicitly).
     if let Err(error) = start_output_unit(capture_unit.raw(), "AudioOutputUnitStart(capture)") {
         stop_worker(&shared, worker);
         return Err(error);
@@ -204,12 +117,6 @@ pub(super) fn start(
     })
 }
 
-/// Builds the output half of the split transport: an output-only AUHAL
-/// on the virtual output with the render callback attached and the unit
-/// initialized, ready to be started. Also returns the routing
-/// description for [`Runtime::routing_description`]: the virtual
-/// output's reported channel count, the render format set from it, and
-/// that format read back after `AudioUnitInitialize`.
 fn build_output_half(
     output_device: AudioDeviceId,
     feed: OutputFeed,
@@ -235,11 +142,6 @@ fn build_output_half(
     Ok((output_unit, output_context, routing))
 }
 
-/// Reads the client render format back for the start-time diagnostics,
-/// after `AudioUnitInitialize` — the point where AUHAL reconciles the
-/// client format with the device (the aggregate path reads its channel
-/// map back at the same point, for the same reason). Never fails the
-/// start: an unreadable format is reported as such.
 fn describe_applied_render_format(unit: AudioUnit) -> String {
     match stream_format_channels(
         unit,
@@ -251,9 +153,6 @@ fn describe_applied_render_format(unit: AudioUnit) -> String {
     }
 }
 
-/// Input-only AUHAL on the microphone: output disabled, capture client
-/// format at the device's native rate (AUHAL performs no sample-rate
-/// conversion on the input side, so the client rate must match).
 fn configure_capture_auhal(
     unit: AudioUnit,
     device: AudioDeviceId,
@@ -273,39 +172,9 @@ fn configure_capture_auhal(
         &pcm_format_at(f64::from(capture_rate), 1),
         "set capture client format",
     )?;
-    // Bound the callback size so the preallocated render buffer always
-    // suffices (the callback never allocates).
     set_max_frames_per_slice(unit, "set capture frame bound")
 }
 
-/// Output-only AUHAL on the virtual output: input disabled, mono 48 kHz
-/// engine samples rendered as interleaved packed float with **one
-/// client channel per virtual-output channel**. Returns that channel
-/// count. The control plane switches the virtual output device itself
-/// to 48 kHz before starting this transport (it feeds consumers and
-/// must stay at the engine rate), so no device-side rate conversion is
-/// involved.
-///
-/// The channel count is read from the device-side format of the output
-/// element once the current device is set — the same read the aggregate
-/// path performs for its channel map ([`device_output_channels`]), here
-/// on an output-only unit — and validated by
-/// [`split_render_channels`] (a device reporting no output channels
-/// refuses the start; there is no fallback width). The decision record
-/// for reading it here rather than receiving it from the control plane
-/// is in [`crate::routing`] ("The split transport's render format").
-/// Whether the read behaves on an output-only unit exactly as on the
-/// aggregate unit is what the hardware `Split output routing` log line
-/// pins (docs/macos-hardware-test.md).
-///
-/// No channel map is needed here, unlike the aggregate path
-/// ([`crate::routing`]): this unit sits on the virtual output device
-/// alone, so AUHAL's identity map already lands client channel `i` on
-/// the virtual output's channel `i` for every channel the device has —
-/// a microphone's own output channels never appear in front of them on
-/// this transport. The render callback sizes its per-frame duplication
-/// from the buffer AUHAL hands it, so the callback code is the same for
-/// any width.
 fn configure_output_auhal(unit: AudioUnit, device: AudioDeviceId) -> Result<u32, CoreAudioError> {
     set_io_enabled(
         unit,
@@ -331,9 +200,6 @@ fn configure_output_auhal(unit: AudioUnit, device: AudioDeviceId) -> Result<u32,
     Ok(channels)
 }
 
-/// Registers `context` as the capture unit's input callback (the
-/// input-only AUHAL notification slot, distinct from the render-callback
-/// slot used by output units).
 fn attach_input_callback(unit: AudioUnit, context: *mut c_void) -> Result<(), CoreAudioError> {
     let property = AudioUnitRenderCallback {
         callback: Some(capture_input_callback),
@@ -354,10 +220,6 @@ fn attach_input_callback(unit: AudioUnit, context: *mut c_void) -> Result<(), Co
     )
 }
 
-/// Inference worker of the split transport: drains native-rate capture
-/// samples, converts them to 48 kHz with the drift-compensated
-/// resampler, and runs the unchanged engine in 10 ms blocks. All state
-/// is preallocated; the loop never locks (docs/tech-research.md §9).
 fn split_processing_loop(links: SplitWorkerLinks, workgroup: usize) {
     let SplitWorkerLinks {
         mut worker,
@@ -368,11 +230,8 @@ fn split_processing_loop(links: SplitWorkerLinks, workgroup: usize) {
     let membership = worker.enter(workgroup);
     let output_capacity = worker.output.buffer().capacity();
     let mut native_chunk = [0.0_f32; NATIVE_CHUNK_SAMPLES];
-    // Converted samples per pass, bounded by the resampler at the
-    // largest drift correction so the buffer never grows afterwards.
     let max_converted = resampler.max_output_len(NATIVE_CHUNK_SAMPLES);
     let mut converted: Vec<f32> = Vec::with_capacity(max_converted);
-    // Engine-rate FIFO between conversion output and 10 ms blocks.
     let mut pending: std::collections::VecDeque<f32> =
         std::collections::VecDeque::with_capacity(max_converted + WORKER_BLOCK_SAMPLES);
     let mut input_block = [0.0_f32; WORKER_BLOCK_SAMPLES];
@@ -391,8 +250,6 @@ fn split_processing_loop(links: SplitWorkerLinks, workgroup: usize) {
             }
         }
         if popped == 0 {
-            // Block until the capture callback signals more input (or
-            // the timeout elapses, so shutdown is always noticed).
             worker.shared.samples_ready.wait_ns(WORKER_WAIT_NS);
             continue;
         }
@@ -404,18 +261,10 @@ fn split_processing_loop(links: SplitWorkerLinks, workgroup: usize) {
                 *slot = pending.pop_front().unwrap_or(0.0);
             }
             worker.run_block(&input_block, &mut output_block);
-            // Drift servo: total samples buffered between the capture
-            // clock (producer) and the output clock (consumer), in
-            // engine-rate samples (the native ring's occupancy converted
-            // through the nominal ratio). A trend here *is* clock drift.
             let buffered = (output_capacity - worker.output.slots())
                 + pending.len()
                 + resampler.to_engine_samples(worker.input.slots());
             resampler.set_drift_ppm(servo.update(buffered));
-            // Output-side heartbeat (see OUTPUT_STALL_BLOCKS): blocks
-            // only run while capture delivers, so a pulse counter that
-            // stops moving here means the output callback went silent
-            // while the microphone is still alive.
             let pulses = output_pulses.load(Ordering::Relaxed);
             if pulses == last_output_pulses {
                 output_idle_blocks = output_idle_blocks.saturating_add(1);
@@ -431,12 +280,6 @@ fn split_processing_loop(links: SplitWorkerLinks, workgroup: usize) {
     worker.exit(membership);
 }
 
-/// Input callback of the capture AUHAL: renders the microphone's frames
-/// into the preallocated buffer and pushes them to the capture ring
-/// ([`Capture`], shared with the aggregate render callback).
-/// Real-time rules (docs/tech-research.md §9): no allocation, no locks;
-/// ring overrun drops samples; a render failure flags the fault and
-/// returns cleanly.
 unsafe extern "C" fn capture_input_callback(
     context: *mut c_void,
     action_flags: *mut AudioUnitRenderActionFlags,
@@ -458,14 +301,6 @@ unsafe extern "C" fn capture_input_callback(
     }
 }
 
-/// Render callback of the output-only AUHAL on the virtual output: pops
-/// engine-rate samples from the output ring into the device buffer,
-/// duplicating the mono engine signal into every client channel of each
-/// frame (as many as the render format set in [`configure_output_auhal`]
-/// — the width is taken from the buffer AUHAL hands over, so a 1- or
-/// 2-channel virtual output runs the same code). Underrun renders
-/// silence — it never blocks (docs/tech-research.md §9); systematic
-/// underrun is prevented by the drift servo, not here.
 unsafe extern "C" fn output_render_callback(
     context: *mut c_void,
     _action_flags: *mut AudioUnitRenderActionFlags,
@@ -482,8 +317,6 @@ unsafe extern "C" fn output_render_callback(
         return PARAM_ERR;
     };
     context.feed.render(samples, channels);
-    // Heartbeat for the worker's output-side stall watch (relaxed
-    // atomic add: real-time safe, like the capture frame counter).
     context.pulses.fetch_add(1, Ordering::Relaxed);
     NO_ERR
 }

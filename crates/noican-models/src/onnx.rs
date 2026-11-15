@@ -9,19 +9,7 @@ use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::value::{DynValue, Tensor};
 
-/// Loads an ONNX session tuned for low-latency streaming inference on CPU:
-/// single-threaded (frames are small; thread wakeups cost more than they
-/// save) with full graph optimization.
-///
-/// Single-threading is a measured decision, not a guess. A/B on
-/// 2026-09-02 (x86-64, 4 cores, `examples/block_bench.rs`, 6000 blocks
-/// of the heaviest ONNX stage then registered;
-/// docs/acceptance/2026-09-02-underrun-baseline.md):
-/// p50 4.16 ms / p95 6.23 ms with 1 intra-op thread, 6.30 / 9.53 ms with
-/// 2 threads, and 5.77 / 8.72 ms with 4 — synchronization overhead
-/// dominates these small per-frame ops, so extra threads make every
-/// percentile worse. Inter-op stays at 1 as well: the graphs are
-/// sequential, so inter-op parallelism only adds scheduling overhead.
+/// See docs/adr/0008-model-runtime.md.
 ///
 /// # Errors
 ///
@@ -38,8 +26,6 @@ pub fn load_streaming_session(path: &Path) -> Result<Session, StageError> {
     build().map_err(|e| StageError::Inference(format!("failed to load {}: {e}", path.display())))
 }
 
-/// The process-wide ONNX Runtime environment. `ort` allows exactly one per
-/// process and every session must be built against it.
 fn environment() -> Result<&'static Environment, StageError> {
     static ENVIRONMENT: OnceLock<Result<Environment, String>> = OnceLock::new();
     ENVIRONMENT
@@ -112,7 +98,6 @@ pub struct StateSlot {
     pub shape: Vec<usize>,
     /// Current value (updated after every run).
     pub data: Vec<f32>,
-    /// Value to restore on [`StateBank::reset`].
     init: Vec<f32>,
 }
 
@@ -209,19 +194,8 @@ impl StateBank {
     }
 }
 
-/// Largest element count accepted for one recurrent state tensor. The
-/// shipped models' state tensors are orders of magnitude smaller; the
-/// cap exists because the shape is model-declared data — multiplying
-/// its dims unchecked would let a crafted model (e.g. dims
-/// `[1, 65536, 65536]`) force a multi-GB zeroing allocation, and an
-/// allocation failure aborts the process rather than unwinding, so the
-/// FFI layer's `catch_unwind` could not contain it. Stage constructors
-/// that size allocations from other model-declared counts (DPDFNet's
-/// `state_size` metadata) bound them by the same constant.
 pub(crate) const MAX_STATE_ELEMENTS: usize = 1 << 24;
 
-/// Element count of a state tensor with `shape`, or `None` when the
-/// count overflows or exceeds [`MAX_STATE_ELEMENTS`].
 fn state_len(shape: &[usize]) -> Option<usize> {
     let len = shape
         .iter()
@@ -242,10 +216,8 @@ mod tests {
 
     #[test]
     fn state_len_rejects_implausible_shapes() {
-        // Over the cap, though the product itself fits in a usize.
         assert_eq!(state_len(&[1, 65_536, 65_536]), None);
         assert_eq!(state_len(&[MAX_STATE_ELEMENTS + 1]), None);
-        // The product overflows outright.
         assert_eq!(state_len(&[usize::MAX, 2]), None);
     }
 }

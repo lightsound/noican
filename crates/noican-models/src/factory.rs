@@ -14,14 +14,10 @@ use crate::stages::ulunas::UlunasStage;
 /// Identifier of the built-in bypass stage (always available, no weights).
 pub const PASSTHROUGH_ID: &str = "passthrough";
 
-/// One user-selectable entry of the model catalog.
-///
-/// Covers the built-in bypass and every registry stage. This is the single
-/// source UIs project their model list from (via the C ABI); nothing about
-/// the catalog is defined elsewhere.
+/// See docs/adr/0009-model-catalog-fetch.md.
 #[derive(Debug, Clone, Copy)]
 pub struct CatalogEntry {
-    /// Stable identifier, valid as [`create_stage`] input.
+    /// See docs/adr/0009-model-catalog-fetch.md.
     pub id: &'static str,
     /// Human-readable name for UIs.
     pub display_name: &'static str,
@@ -43,17 +39,13 @@ pub fn catalog() -> impl Iterator<Item = CatalogEntry> {
     }))
 }
 
-/// Largest engine block the returned stages are pre-sized for (larger
-/// blocks still work at the cost of a reallocation).
+/// See docs/adr/0001-realtime-audio-rules.md.
 pub const MAX_BLOCK_LEN: usize = 2048;
 
 fn file_path(models_dir: &Path, spec: &ModelSpec, index: usize) -> std::path::PathBuf {
     model_dir(models_dir, spec).join(spec.files[index].name)
 }
 
-/// Path of file `index` of the registry entry `spec` depends on
-/// ([`ModelSpec::depends_on`], one level), for composite stages that
-/// run another entry's weights.
 fn dependency_file_path(
     models_dir: &Path,
     spec: &ModelSpec,
@@ -72,13 +64,7 @@ fn dependency_file_path(
     Ok(file_path(models_dir, dep, index))
 }
 
-/// Instantiates the stage for `id`, loading weights from `models_dir`
-/// (fetch them first with [`crate::fetch::fetch_model`]).
-///
-/// Before anything is loaded, every weight file that carries a pinned
-/// digest is verified against it ([`crate::fetch::verify_model`]), so
-/// bytes placed in `models_dir` by hand — or corrupted after download —
-/// are rejected here instead of reaching a parser unverified.
+/// See docs/adr/0009-model-catalog-fetch.md.
 ///
 /// # Errors
 ///
@@ -130,11 +116,6 @@ pub fn create_stage(id: &str, models_dir: &Path) -> Result<Box<dyn Stage>, Stage
 mod tests {
     use super::*;
 
-    /// Every registry entry reaches the picker and the CLI defaults
-    /// unfiltered, so each must dispatch to a stage: without weights the
-    /// only acceptable failure is the missing file, never the
-    /// no-implementation fallthrough. Embedded models (no files, no
-    /// dependencies) are skipped because they would build for real.
     #[test]
     fn every_registry_entry_has_a_stage_implementation() {
         let empty_dir = std::env::temp_dir().join("noican-factory-test-no-weights");

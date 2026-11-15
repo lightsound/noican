@@ -1,51 +1,18 @@
-//! Dry/wet intensity blending with a latency-compensated dry path.
-//!
-//! The intensity ("strength") control blends the processed signal (wet)
-//! with the raw input (dry): 100% is fully processed, 0% is the raw
-//! microphone. The blend runs on the inference thread inside
-//! [`crate::SwitchingEngine::process_block`] — upstream of the output
-//! ring and the preview monitor tee, so every consumer hears the same
-//! mix — and obeys the real-time rules (docs/tech-research.md §9):
-//!
-//! - The intensity value crosses threads through **one atomic**
-//!   ([`IntensityControl`], an `f32` bit pattern in an `AtomicU32`).
-//!   Changing it never rebuilds or locks anything.
-//! - The blend itself performs no allocation and no locking: the dry
-//!   history lives in a ring buffer preallocated at construction time
-//!   (control plane), and per-block work is a fixed multiply-add pass.
-//!
-//! Naively summing dry and wet would comb-filter (double voice): the wet
-//! signal carries the stage's algorithmic and resampling latency
-//! (10–30 ms class). The mixer therefore delays the dry signal by the
-//! active stage's [`crate::Stage::latency_samples`] before blending, so
-//! both paths line up. Intensity changes are additionally smoothed with
-//! a per-block linear ramp, so a slider drag never steps ("zipper"
-//! noise).
+//! See docs/adr/0007-dsp-stages.md.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-/// Capacity of the dry-compensation ring in samples at the engine rate.
-/// A power of two (mask indexing, no division on the audio path) covering
-/// ~1.37 s at 48 kHz — an order of magnitude above any streaming stage's
-/// reported latency. Larger reported latencies are clamped to this bound
-/// (partial compensation instead of an out-of-range read).
 const DRY_RING_CAPACITY: usize = 1 << 16;
 
-/// Control-plane handle to the dry/wet intensity: one shared atomic.
-///
-/// `1.0` (the default) is fully processed output; `0.0` is the raw
-/// microphone. Cloning shares the same underlying value, so the control
-/// plane keeps one handle while the inference thread's mixer reads the
-/// other — no lock, no rebuild, safe to update at UI slider rates.
+/// See docs/adr/0007-dsp-stages.md.
 #[derive(Clone, Debug)]
 pub struct IntensityControl {
     bits: Arc<AtomicU32>,
 }
 
 impl IntensityControl {
-    /// Creates a control initialized to `initial` (clamped to `0.0..=1.0`;
-    /// a non-finite value falls back to fully processed).
+    /// See docs/adr/0007-dsp-stages.md.
     #[must_use]
     pub fn new(initial: f32) -> Self {
         let control = Self {
@@ -55,10 +22,7 @@ impl IntensityControl {
         control
     }
 
-    /// Publishes a new intensity, clamped to `0.0..=1.0`. Non-finite
-    /// values are ignored (the previous intensity stays), so a corrupt
-    /// caller value can never poison the audio path. One atomic store —
-    /// never blocks, safe from any thread.
+    /// See docs/adr/0007-dsp-stages.md.
     pub fn set(&self, intensity: f32) {
         if !intensity.is_finite() {
             return;
@@ -76,32 +40,20 @@ impl IntensityControl {
 }
 
 impl Default for IntensityControl {
-    /// Fully processed (100%): the engine behaves exactly as it did
-    /// before the intensity control existed until someone moves it.
     fn default() -> Self {
         Self::new(1.0)
     }
 }
 
-/// Inference-thread side of the intensity control: blends the delayed dry
-/// signal into the wet block in place.
-///
-/// Owned by [`crate::SwitchingEngine`]; not constructed on the audio
-/// path (the ring allocation happens on the control plane).
 #[derive(Debug)]
 pub(crate) struct DryWetMixer {
     control: IntensityControl,
-    /// Intensity the previous block ended on; each block ramps linearly
-    /// from here to the freshly read target, so changes never step.
     smoothed: f32,
-    /// Dry history ring; length is [`DRY_RING_CAPACITY`] (power of two).
     ring: Box<[f32]>,
-    /// Monotonic write index (wrapped by masking on access).
     write: usize,
 }
 
 impl DryWetMixer {
-    /// Creates a mixer reading `control`, with a silent dry history.
     pub(crate) fn new(control: IntensityControl) -> Self {
         let smoothed = control.get();
         Self {
@@ -112,33 +64,17 @@ impl DryWetMixer {
         }
     }
 
-    /// Blends `dry` (the raw engine-rate input) into `wet` in place:
-    /// `wet[i] = w * wet[i] + (1 - w) * dry[i - dry_delay]`, with `w`
-    /// ramping linearly across the block toward the control's value.
-    ///
-    /// `dry_delay` is the active stage's reported latency in samples;
-    /// it aligns the dry path with the wet path so a partial mix does
-    /// not comb-filter. The dry history is fed continuously (even at
-    /// 100% wet), so lowering the intensity mid-stream blends against
-    /// real history, not silence. Real-time safe: no allocation, no
-    /// locks, one atomic read per block.
     pub(crate) fn blend(&mut self, dry: &[f32], wet: &mut [f32], dry_delay: usize) {
         debug_assert_eq!(dry.len(), wet.len());
         if dry.is_empty() {
             return;
         }
         let target = self.control.get();
-        // Lossless `u16 → f32` ramp arithmetic, mirroring `switch::ratio`
-        // (blocks are 10 ms; anything above 65535 samples still ramps,
-        // just marginally faster than one block).
         let len = u16::try_from(dry.len()).unwrap_or(u16::MAX);
         let step = (target - self.smoothed) / f32::from(len);
         let delay = dry_delay.min(DRY_RING_CAPACITY - 1);
         let mask = DRY_RING_CAPACITY - 1;
         let mut intensity = self.smoothed;
-        // For blocks over u16::MAX samples the saturated `len` makes the
-        // per-sample step too large, so clamp to the ramp segment — the
-        // block lands exactly on `target` instead of overshooting.
         let ramp_lo = self.smoothed.min(target);
         let ramp_hi = self.smoothed.max(target);
         for (sample, out) in dry.iter().zip(wet.iter_mut()) {
@@ -146,12 +82,8 @@ impl DryWetMixer {
             let delayed = self.ring[self.write.wrapping_sub(delay) & mask];
             self.write = self.write.wrapping_add(1);
             intensity = (intensity + step).clamp(ramp_lo, ramp_hi);
-            // At intensity 1.0 this is exactly `wet` (adding a true zero),
-            // so full strength is bit-identical to the pre-mixer engine.
             *out = intensity.mul_add(*out, (1.0 - intensity) * delayed);
         }
-        // Land exactly on the target: the per-sample accumulation may
-        // carry rounding, and the next block must start from the truth.
         self.smoothed = target;
     }
 }
@@ -218,8 +150,6 @@ mod tests {
 
     #[test]
     fn half_intensity_blends_aligned_paths() {
-        // Wet is the dry signal negated and delayed like a real stage;
-        // with compensation the two cancel exactly at 50%.
         let delay = 64;
         let mut mixer = DryWetMixer::new(IntensityControl::new(0.5));
         let dry = ramp(960);
@@ -237,7 +167,6 @@ mod tests {
     fn intensity_changes_ramp_without_steps() {
         let control = IntensityControl::new(1.0);
         let mut mixer = DryWetMixer::new(control.clone());
-        // DC dry vs. silent wet: the output *is* the (1 − w) curve.
         let dry = [1.0_f32; 480];
         let mut previous_tail = 0.0;
         let mut outputs = Vec::new();
@@ -251,8 +180,6 @@ mod tests {
         for (entry, wet) in &outputs {
             let mut last = *entry;
             for sample in wet {
-                // Bound: one nominal ramp step plus per-sample float
-                // accumulation slack.
                 assert!(
                     (sample - last).abs() <= 1.0 / 480.0 + 1e-4,
                     "zipper step {last} -> {sample}"
@@ -282,8 +209,6 @@ mod tests {
         let dry = vec![0.75_f32; 480];
         let mut wet = vec![0.0_f32; 480];
         mixer.blend(&dry, &mut wet, 0);
-        // Drop to raw: the very next block must read real history, not
-        // the silence the ring was born with.
         control.set(0.0);
         let mut wet = vec![0.0_f32; 480];
         mixer.blend(&dry, &mut wet, 240);

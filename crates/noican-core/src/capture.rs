@@ -1,71 +1,17 @@
-//! Native-rate capture support for non-48 kHz microphones (issue #7).
-//!
-//! Microphones that cannot run at the 48 kHz engine rate — Bluetooth
-//! telephony profiles (HFP/SCO at 8/16/24 kHz), 44.1 kHz-family devices
-//! (44.1/22.05/11.025 kHz), high-rate-only interfaces (88.2/96 kHz) —
-//! are captured at their native rate and converted to 48 kHz on the
-//! inference worker. Two problems are solved here, both
-//! platform-independently so they stay unit-tested on every CI target:
-//!
-//! 1. **Rate conversion** ([`InputResampler`]): any native rate within
-//!    [`MIN_NATIVE_RATE`] to [`MAX_NATIVE_RATE`] (inclusive) is converted by the
-//!    exact reduced ratio through one [`PolyphaseResampler`] — 160/147
-//!    for 44.1 kHz, 3/1 for 16 kHz, 1/2 for 96 kHz. (Earlier revisions
-//!    accepted integer divisors of 48 kHz only; the rational polyphase
-//!    design removed that limit without adding a stage or a dependency —
-//!    see the type's docs for the alternatives weighed.)
-//! 2. **Clock drift** ([`DriftServo`] + the fractional phase step of the
-//!    same resampler): with the microphone and the virtual output on
-//!    separate AUHAL instances there is no Aggregate Device to absorb
-//!    the clock split, so drift is compensated by adapting the effective
-//!    conversion ratio a few hundred ppm around the nominal ratio,
-//!    steered by the buffered-sample occupancy between the two clock
-//!    domains (docs/tech-research.md §4.2, the DIY fallback). The servo
-//!    works in engine-rate samples and is ratio-agnostic; the transport
-//!    converts its native-ring occupancy through
-//!    [`InputResampler::to_engine_samples`].
-//!
-//! Everything is preallocated at construction time; `process` and
-//! `update` perform no locking and no allocation in steady state (the
-//! inference worker calls them, never the audio I/O callback —
-//! docs/tech-research.md §9).
-//!
-//! Alignment note for the strength control: the dry/wet mixer taps its
-//! dry signal from the *engine input*, i.e. after this conversion, so
-//! the input resampler's delay shifts both paths equally and the
-//! dry-compensation alignment (`crate::mix`) is unaffected by
-//! construction. The `strength_alignment_survives_the_input_resampler`
-//! test below proves it end to end.
+//! See docs/adr/0006-resampling.md.
 
 use crate::error::StageError;
 pub use crate::resample::MAX_DRIFT_PPM;
 use crate::resample::PolyphaseResampler;
 use crate::stage::ENGINE_SAMPLE_RATE;
 
-/// Lowest native capture rate the split transport accepts, in Hz: the
-/// narrowest telephony profile (Bluetooth HFP narrow-band). Nothing
-/// below it exists as a microphone format.
+/// See docs/adr/0015-device-session.md.
 pub const MIN_NATIVE_RATE: u32 = 8_000;
 
-/// Highest native capture rate the split transport accepts, in Hz.
-///
-/// The resampler handles any ratio; this bounds its filter memory and
-/// the transport's per-pass work (a 192 kHz device delivers four native
-/// samples per engine sample). Devices above 48 kHz normally also
-/// advertise 48 kHz and take the aggregate path; the bound is for the
-/// odd interface that does not.
+/// See docs/adr/0015-device-session.md.
 pub const MAX_NATIVE_RATE: u32 = 192_000;
 
-/// Largest numerator or denominator of the reduced native/engine ratio
-/// the split transport accepts.
-///
-/// The polyphase bank grows with the reduced ratio (`up` phases × ~40
-/// taps × `max(1, down / up)`): the real rate families stay small —
-/// 640/147 for 11.025 kHz is the largest, 1/4 for 192 kHz the deepest —
-/// but a nominal rate coprime with 48 000 (e.g. 16 001 Hz) would reduce
-/// to 48 000/16 001 and design a ~1.9 M-tap, 10 MB bank synchronously on
-/// the start path. Such rates do not occur on real hardware, so they
-/// are refused with a precise message instead of bounded by memory.
+/// See docs/adr/0015-device-session.md.
 pub const MAX_RATIO_TERM: usize = 1_024;
 
 /// Streaming converter from a microphone's native rate to the 48 kHz
@@ -81,9 +27,7 @@ pub struct InputResampler {
 }
 
 impl InputResampler {
-    /// Creates a converter from `native_rate` Hz to the engine rate,
-    /// preallocating for input chunks of up to `max_input_len` native
-    /// samples per [`InputResampler::process`] call.
+    /// See docs/adr/0015-device-session.md.
     ///
     /// # Errors
     ///
@@ -119,17 +63,13 @@ impl InputResampler {
         self.native_rate
     }
 
-    /// Reduced conversion ratio `(up, down)`: `up` engine samples per
-    /// `down` native samples at zero drift (160/147 for 44.1 kHz, 3/1 for
-    /// 16 kHz).
+    /// See docs/adr/0006-resampling.md.
     #[must_use]
     pub const fn ratio(&self) -> (usize, usize) {
         self.resampler.ratio()
     }
 
-    /// Converts a count of native-rate samples to the engine-rate samples
-    /// they will become (rounded to nearest), so a transport can express
-    /// its native-ring occupancy in the servo's units.
+    /// See docs/adr/0006-resampling.md.
     #[must_use]
     pub const fn to_engine_samples(&self, native_samples: usize) -> usize {
         let (up, down) = self.resampler.ratio();
@@ -143,65 +83,33 @@ impl InputResampler {
         self.resampler.delay_output_samples()
     }
 
-    /// Upper bound on the samples one [`InputResampler::process`] call
-    /// appends for `input_len` native samples (at the largest drift
-    /// correction); reserve output buffers to it.
+    /// See docs/adr/0006-resampling.md.
     #[must_use]
     pub fn max_output_len(&self, input_len: usize) -> usize {
         self.resampler.max_output_len(input_len)
     }
 
-    /// Applies a drift correction in parts per million (clamped to
-    /// ±[`MAX_DRIFT_PPM`]; non-finite values read as zero). Positive
-    /// values stretch the stream — more output samples per input sample —
-    /// which raises the buffered occupancy downstream.
+    /// See docs/adr/0006-resampling.md.
     pub fn set_drift_ppm(&mut self, ppm: f64) {
         self.resampler.set_drift_ppm(ppm);
     }
 
-    /// Converts one chunk of native-rate samples, appending 48 kHz
-    /// samples to `output` (`input.len() × up / down` on average,
-    /// modulated by the drift correction). Allocation-free while `input`
-    /// stays within the preallocated `max_input_len` and `output` has
-    /// room for [`InputResampler::max_output_len`].
+    /// See docs/adr/0001-realtime-audio-rules.md.
     pub fn process(&mut self, input: &[f32], output: &mut Vec<f32>) {
         self.resampler.process(input, output);
     }
 
-    /// Clears filter history (the drift correction persists).
+    /// See docs/adr/0006-resampling.md.
     pub fn reset(&mut self) {
         self.resampler.reset();
     }
 }
 
-/// First-order correction horizon in samples at the engine rate: an
-/// occupancy error is corrected with a time constant of
-/// `HORIZON / 48000` ≈ 10 s — far slower than Bluetooth burst jitter,
-/// fast enough to absorb worst-case drift long before the rings fill.
 const SERVO_HORIZON_SAMPLES: f64 = 480_000.0;
 
-/// EMA coefficient applied per [`DriftServo::update`] call (one call per
-/// 10 ms engine block → ≈0.5 s smoothing window), filtering Bluetooth
-/// burst-delivery noise out of the occupancy signal.
 const SERVO_SMOOTHING: f64 = 0.02;
 
-/// Ring-occupancy servo steering the drift correction: the control half
-/// of the DIY clock-drift compensation (docs/tech-research.md §4.2).
-///
-/// The capture side produces samples on the microphone's clock; the
-/// output side consumes them on the virtual output's clock. Any rate
-/// mismatch shows up as a trend in the number of samples buffered
-/// between the two, so the servo smooths that occupancy and requests a
-/// correction proportional to its distance from the target:
-///
-/// - occupancy above target → the microphone clock runs fast → squeeze
-///   (negative ppm, fewer output samples per input sample);
-/// - occupancy below target → stretch (positive ppm).
-///
-/// Proportional control leaves a small steady-state offset (the residual
-/// occupancy error that sustains the correction) — bounded by
-/// `drift × horizon`, e.g. 48 samples (1 ms) at 100 ppm — which is
-/// harmless and keeps the loop trivially stable.
+/// See docs/adr/0006-resampling.md.
 #[derive(Debug)]
 pub struct DriftServo {
     target: f64,
@@ -225,10 +133,7 @@ impl DriftServo {
         }
     }
 
-    /// Feeds one occupancy observation (total samples buffered between
-    /// the capture and output clock domains, in engine-rate samples;
-    /// expected once per engine block) and returns the drift correction
-    /// in ppm to apply via [`InputResampler::set_drift_ppm`].
+    /// See docs/adr/0006-resampling.md.
     pub fn update(&mut self, occupancy_samples: usize) -> f64 {
         #[expect(
             clippy::cast_precision_loss,
@@ -262,12 +167,6 @@ mod tests {
             .collect()
     }
 
-    /// Deterministic speech-like test signal: a gliding fundamental with
-    /// harmonics and a syllabic amplitude envelope — broadband and
-    /// aperiodic enough for an unambiguous cross-correlation peak,
-    /// band-limited like telephony speech (content stays below ~1.3 kHz,
-    /// under every telephony profile's Nyquist). Defined in continuous
-    /// time, so two rates sample the same underlying waveform.
     fn pseudo_speech(rate: u32, len: usize) -> Vec<f32> {
         #[expect(clippy::cast_precision_loss, reason = "test signal indices are small")]
         (0..len)
@@ -288,9 +187,6 @@ mod tests {
             .collect()
     }
 
-    /// Lag (in samples) of the peak normalized cross-correlation of `b`
-    /// against `a` — `b` is `a` delayed by the returned lag — searched
-    /// over `0..=max_lag`, with the peak's correlation value.
     fn best_lag(reference: &[f32], delayed: &[f32], max_lag: usize) -> (usize, f64) {
         let mut best = (0, f64::MIN);
         for lag in 0..=max_lag {
@@ -314,12 +210,6 @@ mod tests {
         best
     }
 
-    /// Every capture rate — the telephony profiles (24 kHz → 2/1,
-    /// 16 kHz → 3/1, 12 kHz → 4/1, 8 kHz → 6/1), the 44.1 kHz family
-    /// (160/147, 320/147, 640/147), and the high rates (88.2 kHz →
-    /// 80/147, 96 kHz → 1/2) — must reproduce speech-like audio delayed
-    /// by exactly the reported group delay: the cross-correlation peak
-    /// sits at `delay_output_samples()` with near-unity correlation.
     #[test]
     fn input_resampler_reports_its_exact_delay_for_every_rate() {
         let cases = [
@@ -362,9 +252,6 @@ mod tests {
                 "unhelpful message for {rate} Hz: {error}"
             );
         }
-        // In range but coprime (or nearly) with 48 000: the reduced ratio
-        // would need tens of thousands of phases, so it is refused
-        // before any filter is designed.
         for rate in [16_001_u32, 44_099, 22_222] {
             let error = InputResampler::new(rate, 480).expect_err("must be rejected");
             let message = error.to_string();
@@ -381,8 +268,6 @@ mod tests {
         }
     }
 
-    /// The servo's occupancy conversion rounds to the nearest engine
-    /// sample for every ratio shape.
     #[test]
     fn input_resampler_converts_native_counts_to_engine_samples() {
         let at_44k = InputResampler::new(44_100, 480).expect("supported rate");
@@ -413,9 +298,6 @@ mod tests {
         }
     }
 
-    /// Closed loop: a producer whose clock drifts against the consumer
-    /// must settle near the target occupancy with the correction
-    /// canceling the drift — no ring runaway over a simulated half hour.
     #[test]
     fn servo_cancels_clock_drift_in_a_simulated_session() {
         for drift_ppm in [-150.0_f64, 0.0, 150.0] {
@@ -424,12 +306,8 @@ mod tests {
             let mut occupancy = target;
             let mut correction = 0.0_f64;
             let mut worst_after_settling = 0.0_f64;
-            // 30 minutes of 10 ms blocks.
             let blocks = 30 * 60 * 100;
             for block in 0..blocks {
-                // The capture clock delivers (1 + drift) × nominal; the
-                // conversion applies (1 + correction); the output clock
-                // consumes exactly 480 samples per block.
                 occupancy = 480.0_f64.mul_add(
                     drift_ppm
                         .mul_add(1e-6, 1.0)
@@ -451,8 +329,6 @@ mod tests {
                     worst_after_settling = worst_after_settling.max((occupancy - target).abs());
                 }
             }
-            // Settled: the correction cancels the drift and the occupancy
-            // sits at the proportional controller's small residual.
             assert!(
                 (correction + drift_ppm).abs() < 10.0,
                 "{drift_ppm} ppm: correction settled at {correction}"
@@ -464,22 +340,10 @@ mod tests {
         }
     }
 
-    /// The same closed loop through the *real* resampler at the rational
-    /// 44.1 kHz ratio, mirroring the split worker: a producer clock
-    /// delivering 441 × (1 + drift) native samples per 10 ms block — in
-    /// Bluetooth-like bursts every third block, so the native ring
-    /// carries a real residue — the worker draining that ring in
-    /// 480-sample passes into the resampler and an engine-rate FIFO, a
-    /// consumer taking exactly 480 per block, and the servo fed the
-    /// occupancy the worker computes (output ring + FIFO + native ring
-    /// through `to_engine_samples`, nonzero on the burst blocks). The
-    /// occupancy must stay bounded and settle near the target with the
-    /// correction canceling the drift — the integer-factor assumption is
-    /// gone from every term.
     #[test]
     fn servo_holds_occupancy_through_the_rational_resampler() {
         let target = 2400_usize;
-        let blocks = 2 * 60 * 100; // two minutes of 10 ms blocks (12 servo time constants)
+        let blocks = 2 * 60 * 100;
         let burst_blocks = 3;
         for drift_ppm in [-200.0_f64, 150.0] {
             let mut resampler = InputResampler::new(44_100, 480).expect("supported rate");
@@ -497,16 +361,12 @@ mod tests {
             let mut worst_after_settling = 0_usize;
             let mut residue_seen = false;
             for block in 0..blocks {
-                // Consumer: the output clock takes one engine block.
                 if output_ring < 480 {
                     underruns += 1;
                     output_ring = 0;
                 } else {
                     output_ring -= 480;
                 }
-                // Producer: the microphone clock accrues its 10 ms and
-                // delivers the accrued samples in one burst every third
-                // block (the capture callback pushing into the ring).
                 native_due = 441.0_f64.mul_add(drift_ppm.mul_add(1e-6, 1.0), native_due);
                 if block % burst_blocks == 0 {
                     #[expect(
@@ -524,9 +384,6 @@ mod tests {
                         (2.0 * std::f32::consts::PI * phase).sin() * 0.5
                     }));
                 }
-                // Worker: one pass drains at most 480 native samples (the
-                // NATIVE_CHUNK_SAMPLES pop loop), converts, blocks up,
-                // pushes to the output ring, then the servo observes.
                 let take = native_ring.len().min(480);
                 native_chunk.clear();
                 native_chunk.extend(native_ring.drain(..take));
@@ -559,8 +416,6 @@ mod tests {
                 (correction + drift_ppm).abs() < 15.0,
                 "{drift_ppm} ppm: correction settled at {correction}"
             );
-            // Proportional residual (drift × horizon ≈ 96 samples at
-            // 200 ppm) plus one block of FIFO granularity.
             assert!(
                 worst_after_settling < 700,
                 "{drift_ppm} ppm: occupancy wandered {worst_after_settling} samples off target"
@@ -571,7 +426,6 @@ mod tests {
     #[test]
     fn servo_clamps_extreme_corrections() {
         let mut servo = DriftServo::new(2400);
-        // A wildly overfull chain must still request a bounded squeeze.
         let mut correction = 0.0;
         for _ in 0..10_000 {
             correction = servo.update(40_000);
@@ -579,9 +433,6 @@ mod tests {
         assert!((correction + MAX_DRIFT_PPM).abs() < f64::EPSILON);
     }
 
-    /// Silent stage with a reported latency, standing in for a model:
-    /// at 50% intensity the engine output is exactly the half-gain,
-    /// delay-compensated dry path.
     #[derive(Debug)]
     struct Silent {
         latency: usize,
@@ -606,14 +457,6 @@ mod tests {
         fn reset(&mut self) {}
     }
 
-    /// End-to-end strength alignment (the PR #15 C5 measurement, applied
-    /// to the native-capture path): speech-like audio captured at 16 kHz
-    /// and at 44.1 kHz (an integer and a rational ratio), converted by
-    /// the input resampler, and processed at 50% intensity
-    /// through a silent stage with reported latency must come out as
-    /// exactly half the delayed dry signal — cross-correlation measures
-    /// zero residual offset, proving the input resampler's delay cannot
-    /// disturb the dry-compensation alignment (both taps sit after it).
     #[test]
     fn strength_alignment_survives_the_input_resampler() {
         for native_rate in [16_000_u32, 44_100] {
@@ -636,7 +479,6 @@ mod tests {
         )
         .expect("engine builds");
 
-        // Native chunks → 48 kHz engine blocks, mirroring the worker.
         let mut engine_input = Vec::new();
         for chunk in captured.chunks(160) {
             resampler.process(chunk, &mut engine_input);
@@ -648,8 +490,6 @@ mod tests {
                 .expect("engine block");
         }
 
-        // The output must be the dry engine input, delayed by the
-        // stage's reported latency and halved — sample-exact...
         for n in stage_latency + 500..engine_output.len() {
             let expected = engine_input[n - stage_latency] * 0.5;
             assert!(
@@ -658,9 +498,6 @@ mod tests {
                 engine_output[n]
             );
         }
-        // ...and the cross-correlation measurement (the PR #15 method)
-        // must find the peak at exactly the reported latency: zero
-        // residual offset through the resampler.
         let (lag, corr) = best_lag(&engine_input, &engine_output, 4800);
         assert_eq!(
             lag, stage_latency,

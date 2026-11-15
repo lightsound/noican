@@ -1,8 +1,4 @@
-//! Audited AUHAL FFI and real-time callbacks for the main transport.
-//!
-//! The preview monitor's AUHAL lifecycle lives in the [`monitor`]
-//! submodule; shared plumbing (unit creation, property setting, render
-//! callback attachment, disposal) is defined here and reused there.
+//! See docs/adr/0003-coreaudio-transport.md.
 
 #![expect(
     unsafe_code,
@@ -93,7 +89,6 @@ struct AudioStreamBasicDescription {
 }
 
 impl AudioStreamBasicDescription {
-    /// All-zero description, the landing value for property reads.
     const EMPTY: Self = Self {
         sample_rate: 0.0,
         format_id: 0,
@@ -205,16 +200,9 @@ unsafe extern "C" {
     fn dispatch_release(object: *mut c_void);
 }
 
-/// Owned libdispatch semaphore. Wakes the inference worker when the render
-/// callback has produced samples, so the worker blocks between device
-/// callbacks instead of busy-spinning (`dispatch_semaphore_signal` is the
-/// mechanism Apple's audio-workgroup example uses from real-time threads:
-/// it never blocks or allocates).
 #[derive(Debug)]
 struct DispatchSemaphore(*mut c_void);
 
-// The semaphore handle is shared with the render callback and the worker
-// thread; libdispatch semaphores are internally thread-safe.
 unsafe impl Send for DispatchSemaphore {}
 unsafe impl Sync for DispatchSemaphore {}
 
@@ -251,9 +239,6 @@ impl Drop for DispatchSemaphore {
     }
 }
 
-/// Owns the AUHAL instance during setup: uninitializes (when reached) and
-/// disposes it on any early error return. [`AuhalUnit::into_raw`] defuses
-/// the guard once the runtime takes over ownership.
 struct AuhalUnit {
     unit: AudioUnit,
     initialized: bool,
@@ -298,9 +283,6 @@ impl Drop for AuhalUnit {
     }
 }
 
-/// Owns a heap-allocated callback context during setup, reclaiming it
-/// on any early error return (safe because the audio unit is never started
-/// on those paths, so no callback can observe the pointer).
 struct ContextGuard<T>(*mut T);
 
 impl<T> ContextGuard<T> {
@@ -327,30 +309,16 @@ impl<T> Drop for ContextGuard<T> {
     }
 }
 
-/// The capture half of a device callback, shared by the aggregate render
-/// callback and the split transport's capture callback: renders this
-/// cycle's microphone frames into a preallocated mono landing buffer,
-/// queues them for the inference worker, and wakes it.
 struct Capture {
     unit: AudioUnit,
-    /// Preallocated landing buffer for `AudioUnitRender` (mono,
-    /// [`MAX_CALLBACK_FRAMES`]). On the aggregate transport the render
-    /// buffer AUHAL hands over carries one channel per virtual-output
-    /// channel, so it cannot double as the mono capture target.
     buffer: Vec<f32>,
     feed: CaptureFeed,
     faulted: Arc<AtomicBool>,
     samples_ready: Arc<DispatchSemaphore>,
-    /// Heartbeat: input frames delivered since start (relaxed atomic add is
-    /// real-time safe). A counter that stops advancing while "running"
-    /// means the device stopped calling back (unplugged microphone,
-    /// coreaudiod restart, post-sleep stall).
     frames: Arc<AtomicU64>,
 }
 
 impl Capture {
-    /// The capture half for `unit`, queueing into `input` and reporting
-    /// through the transport's `shared` flags and counters.
     fn new(unit: AudioUnit, input: Producer<f32>, shared: &Shared) -> Self {
         Self {
             unit,
@@ -362,18 +330,6 @@ impl Capture {
         }
     }
 
-    /// Captures this cycle's `frame_count` frames and wakes the worker.
-    ///
-    /// On failure the fault flag is set and the error is the status the
-    /// callback returns: `paramErr` for a cycle larger than the landing
-    /// buffer (cannot happen while `kAudioUnitProperty_MaximumFramesPerSlice`
-    /// holds; the callback never allocates to compensate), `noErr` for a
-    /// failed `AudioUnitRender` (the fault flag is the report).
-    ///
-    /// # Safety
-    ///
-    /// `action_flags` and `timestamp` must be the arguments AUHAL passed
-    /// to the running callback.
     unsafe fn capture(
         &mut self,
         action_flags: *mut AudioUnitRenderActionFlags,
@@ -410,48 +366,25 @@ impl Capture {
         self.feed.push(&self.buffer[..frames]);
         self.frames
             .fetch_add(u64::from(frame_count), Ordering::Relaxed);
-        // Wake the inference worker (never blocks; see DispatchSemaphore).
         self.samples_ready.signal();
         Ok(())
     }
 }
 
-/// Render context of the aggregate AUHAL, whose one callback both
-/// captures the microphone and renders the virtual output.
 struct CallbackContext {
     capture: Capture,
     output: OutputFeed,
 }
 
-/// The flags, counters and wake-up semaphore a running transport shares
-/// between the control thread ([`Runtime`]), the device callbacks, and
-/// the inference worker. Both transports create the same set, once per
-/// start; each party holds the handles it needs.
 #[derive(Debug, Clone)]
 struct Shared {
-    /// Raised by the control thread to end the worker loop.
     shutdown: Arc<AtomicBool>,
-    /// Raised by a callback or the worker on any failure (see
-    /// [`Runtime::is_faulted`]).
     faulted: Arc<AtomicBool>,
-    /// Signaled by the capture side once samples are queued; the worker
-    /// blocks on it between device callbacks.
     samples_ready: Arc<DispatchSemaphore>,
-    /// Heartbeat: input frames delivered since start (see [`Capture`]).
     frames: Arc<AtomicU64>,
-    /// Diagnostic: fully starved output callbacks (see [`OutputFeed`]).
     underruns: Arc<AtomicU64>,
-    /// Diagnostic: capture samples a full ring dropped (see
-    /// [`CaptureFeed`]).
     input_overruns: Arc<AtomicU64>,
-    /// Per-block processing-time statistics, recorded by the worker.
     block_stats: Arc<WorkerBlockStats>,
-    /// Whether the inference worker's real-time promotion succeeded at
-    /// loop start. False until the worker records it; afterwards it keeps
-    /// that start-time result — it is not live scheduling-band membership
-    /// (XNU may demote a thread that persistently overruns its declared
-    /// computation), and a stopped-but-not-dropped runtime retains the
-    /// last start's value.
     worker_realtime: Arc<AtomicBool>,
 }
 
@@ -469,15 +402,12 @@ impl Shared {
         })
     }
 
-    /// Raises the shutdown flag and wakes the worker so it notices at
-    /// once instead of at its next wait timeout.
     fn request_shutdown(&self) {
         self.shutdown.store(true, Ordering::Release);
         self.samples_ready.signal();
     }
 }
 
-/// Spawns the inference worker thread running `body`.
 fn spawn_worker(body: impl FnOnce() + Send + 'static) -> Result<JoinHandle<()>, CoreAudioError> {
     thread::Builder::new()
         .name("noican-inference".to_owned())
@@ -485,16 +415,11 @@ fn spawn_worker(body: impl FnOnce() + Send + 'static) -> Result<JoinHandle<()>, 
         .map_err(|error| CoreAudioError::Worker(error.to_string()))
 }
 
-/// Stops a worker whose transport failed to start and waits for it (the
-/// RAII guards release the units and contexts).
 fn stop_worker(shared: &Shared, worker: JoinHandle<()>) {
     shared.request_shutdown();
     let _ignored = worker.join();
 }
 
-/// Everything the inference worker owns or shares, on either transport.
-/// Bundled so the worker spawn passes one value instead of a long
-/// argument list.
 struct WorkerLinks {
     engine: SwitchingEngine,
     input: Consumer<f32>,
@@ -505,15 +430,6 @@ struct WorkerLinks {
 }
 
 impl WorkerLinks {
-    /// Worker setup shared by both loops, run on the worker thread:
-    /// meters and statistics start from zero, the thread is promoted to
-    /// real-time scheduling, and it joins the device's audio workgroup.
-    ///
-    /// The promotion must precede the join (see
-    /// [`promote_current_thread_to_realtime`]); its failure degrades, not
-    /// faults, and the stored value is the result at loop start (XNU may
-    /// later demote a persistently overrunning thread, which the flag
-    /// does not track). A failed join flags the fault.
     fn enter(&self, workgroup: usize) -> WorkgroupGuard {
         self.levels.reset();
         self.shared.block_stats.reset();
@@ -527,24 +443,13 @@ impl WorkerLinks {
         membership
     }
 
-    /// Worker teardown: leaves the workgroup, then zeroes the meters and
-    /// statistics so they read 0 whenever no worker is running.
     fn exit(&self, membership: WorkgroupGuard) {
         drop(membership);
         self.levels.reset();
         self.shared.block_stats.reset();
     }
 
-    /// Runs the engine on one block and fans the result out to the
-    /// meters, the preview tee, and the output ring — the per-block step
-    /// shared by the aggregate and split worker loops — and records its
-    /// duration in the block statistics. An engine failure emits silence
-    /// and flags the fault; output-ring overrun drops samples rather
-    /// than blocking.
     fn run_block(&mut self, input_block: &[f32], output_block: &mut [f32]) {
-        // Timing the block on the worker (not a callback): `Instant::now`
-        // is a non-blocking clock read, fine on the inference thread that
-        // runs whole models.
         let started = std::time::Instant::now();
         if self
             .engine
@@ -555,9 +460,6 @@ impl WorkerLinks {
             self.shared.faulted.store(true, Ordering::Release);
         }
         self.levels.update(input_block, output_block);
-        // Preview branch: the tee only copies into its preallocated monitor
-        // ring (skipped entirely while disarmed) and disarms itself on
-        // sustained feedback; it never delays the main path below.
         let _teed = self.tee.feed(output_block);
         for sample in output_block.iter().copied() {
             let _ignored = self.output.push(sample);
@@ -568,38 +470,21 @@ impl WorkerLinks {
     }
 }
 
-/// The AUHAL instance(s) a running transport owns, with their callback
-/// contexts. Raw pointers are stored as integers so the runtime stays
-/// `Send`; they are only dereferenced on the control thread that owns
-/// the runtime, after callbacks have been stopped.
 #[derive(Debug)]
 enum Transport {
-    /// One AUHAL on the private Aggregate Device (48 kHz microphones —
-    /// the original, unchanged path).
     Aggregate {
-        /// The AUHAL instance.
         unit: usize,
-        /// Its [`CallbackContext`].
         context: usize,
     },
-    /// Two AUHALs for non-48 kHz microphones (issue #7): an input-only
-    /// unit capturing the microphone at its native rate and an
-    /// output-only unit feeding the virtual output at 48 kHz, bridged by
-    /// the drift-compensating worker (see [`split`]).
     Split {
-        /// Input-only AUHAL on the microphone device.
         capture_unit: usize,
-        /// Its [`Capture`].
         capture_context: usize,
-        /// Output-only AUHAL on the virtual output device.
         output_unit: usize,
-        /// Its [`split::OutputContext`].
         output_context: usize,
     },
 }
 
 impl Transport {
-    /// Stops every audio unit (callbacks cease before the worker joins).
     fn stop_units(&self) {
         match self {
             Self::Aggregate { unit, .. } => stop_output_unit(*unit as AudioUnit),
@@ -614,12 +499,6 @@ impl Transport {
         }
     }
 
-    /// Disposes the audio unit(s) and reclaims the callback context(s).
-    ///
-    /// # Safety
-    ///
-    /// Callbacks must no longer be running (units stopped, worker
-    /// joined), and this must be called at most once.
     unsafe fn dispose(&self) {
         match self {
             Self::Aggregate { unit, context } => unsafe {
@@ -648,38 +527,12 @@ pub struct Runtime {
     shared: Shared,
     worker: Option<JoinHandle<()>>,
     running: bool,
-    /// Control-plane half of the preview monitor (the worker half is the
-    /// [`MonitorTee`] owned by the inference worker).
     monitor: MonitorControl,
-    /// Diagnostic: how the render stream was routed into the device — on
-    /// the aggregate transport the aggregate's reported output channel
-    /// count, the channel map requested, and the map read back after
-    /// `AudioUnitInitialize`; on the split transport the virtual output's
-    /// reported channel count and the render format set from it (plus its
-    /// read-back). See [`Runtime::routing_description`].
     routing: String,
 }
 
 impl Runtime {
-    /// Opens an initialized AUHAL on a private Aggregate Device.
-    ///
-    /// `aggregate_device` must contain the selected physical input and the
-    /// `BlackHole` output subdevice with drift compensation configured by the
-    /// Swift control plane. `virtual_output` says where that subdevice's
-    /// channels sit in the aggregate's output channel list (after any
-    /// output channels of the microphone itself); the engine output is
-    /// rendered as one client channel per virtual-output channel (dual
-    /// mono) and routed there with an explicit one-to-one AUHAL channel
-    /// map, see [`crate::routing`].
-    ///
-    /// `levels` receives per-block input/output peak meters from the
-    /// inference worker for the lifetime of this runtime; the worker
-    /// resets it to silence on start and on exit. `monitor_state` is the
-    /// shared [`crate::monitor::MonitorState`] cell: monitor toggles move
-    /// it between off and playing here, the worker's feedback guard moves
-    /// it to tripped, and keeping it caller-owned lets the control plane
-    /// poll it without any lock. It reads off whenever this runtime is
-    /// down (reset on start and by the stop path's disable).
+    /// See docs/adr/0004-aggregate-output-routing.md.
     ///
     /// # Errors
     ///
@@ -730,7 +583,6 @@ impl Runtime {
         let worker = spawn_worker(move || processing_loop(links, workgroup))?;
 
         if let Err(error) = start_output_unit(unit.raw(), "AudioOutputUnitStart") {
-            // `unit` and `context` guards clean up on drop.
             stop_worker(&shared, worker);
             return Err(error);
         }
@@ -747,22 +599,7 @@ impl Runtime {
         })
     }
 
-    /// Opens the split transport for a microphone that cannot run at the
-    /// 48 kHz engine rate (issue #7): an input-only AUHAL captures
-    /// `input_device` at `capture_rate` Hz (its native rate — any rate
-    /// from 8 to 192 kHz, see [`noican_core::capture`]), and an output-only
-    /// AUHAL feeds `output_device` (the `BlackHole`/Noican virtual
-    /// output) at 48 kHz. The inference worker bridges the two clock
-    /// domains, converting to the engine rate with a drift-compensating
-    /// resampler steered by ring occupancy
-    /// ([`noican_core::capture`]).
-    ///
-    /// No Aggregate Device is involved: an aggregate drives all
-    /// subdevices at one rate, so it cannot hold a 16 kHz microphone and
-    /// the 48 kHz virtual output at the same time.
-    ///
-    /// `levels` and `monitor_state` behave exactly as in
-    /// [`Runtime::start`].
+    /// See docs/adr/0003-coreaudio-transport.md.
     ///
     /// # Errors
     ///
@@ -803,8 +640,6 @@ impl Runtime {
         if let Some(worker) = self.worker.take() {
             let _ignored = worker.join();
         }
-        // Units are stopped and the worker joined, and `running` guards
-        // against a second call.
         unsafe {
             self.transport.dispose();
         }
@@ -823,32 +658,19 @@ impl Runtime {
         self.shared.faulted.load(Ordering::Acquire)
     }
 
-    /// Total input frames the render callback has delivered since start.
-    /// A value that stops advancing while running means the device stopped
-    /// calling back; the control plane uses it as a heartbeat.
+    /// See docs/adr/0003-coreaudio-transport.md.
     #[must_use]
     pub fn frames_processed(&self) -> u64 {
         self.shared.frames.load(Ordering::Relaxed)
     }
 
-    /// Diagnostic: output callbacks that were fully starved — zero
-    /// real samples popped — after the ring first produced audio (the
-    /// unprimed ramp-up on the aggregate path is start-up latency, not
-    /// underrun, and partial shortfalls are benign block-quantization
-    /// jitter). A count that keeps growing means the inference worker
-    /// misses its 10 ms block budget — audible as dropouts in
-    /// recordings from the virtual microphone. Resettable via
-    /// [`Runtime::reset_debug_stats`] for per-model attribution.
+    /// See docs/adr/0002-engine-diagnostics.md.
     #[must_use]
     pub fn output_underruns(&self) -> u64 {
         self.shared.underruns.load(Ordering::Relaxed)
     }
 
-    /// Diagnostic: input samples the capture ring dropped because it
-    /// was full — the inference worker (or the capture side) fell
-    /// behind by more than the ring's capacity. Audible as clipped
-    /// input reaching the models; resettable via
-    /// [`Runtime::reset_debug_stats`] for per-model attribution.
+    /// See docs/adr/0002-engine-diagnostics.md.
     #[must_use]
     pub fn input_overruns(&self) -> u64 {
         self.shared.input_overruns.load(Ordering::Relaxed)
@@ -876,42 +698,20 @@ impl Runtime {
         self.shared.block_stats.max_ns()
     }
 
-    /// Diagnostic: whether the inference worker's mach time-constraint
-    /// (real-time) promotion succeeded at loop start (see
-    /// `promote_current_thread_to_realtime`). False means the worker
-    /// runs at default priority, so budget misses on hardware may be
-    /// scheduling, not model cost. This reports the start-time result,
-    /// not live membership: XNU may later demote a persistently
-    /// overrunning thread without this flag changing.
+    /// See docs/adr/0001-realtime-audio-rules.md.
     #[must_use]
     pub fn worker_realtime(&self) -> bool {
         self.shared.worker_realtime.load(Ordering::Acquire)
     }
 
-    /// Zeroes the diagnostic counters (underruns, input overruns and
-    /// worker block statistics) so a model switch can be measured in
-    /// isolation. Plain relaxed stores — safe while the callbacks and
-    /// the worker run.
+    /// See docs/adr/0002-engine-diagnostics.md.
     pub fn reset_debug_stats(&self) {
         self.shared.underruns.store(0, Ordering::Relaxed);
         self.shared.input_overruns.store(0, Ordering::Relaxed);
         self.shared.block_stats.reset();
     }
 
-    /// Enables or disables the preview self-monitor: the worker tees its
-    /// processed output into the monitor ring and a second, output-only
-    /// AUHAL plays it on the system default output device.
-    ///
-    /// The monitor target is resolved at enable time; it does not follow a
-    /// later default-output change (re-enable preview to pick it up).
-    /// Monitor failures never affect the meeting-facing path, and both
-    /// directions are idempotent. Enabling clears a pending feedback trip
-    /// and re-arms a still-running monitor.
-    ///
-    /// Enabling can take a while (`AudioOutputUnitStart` on a sleeping
-    /// output device); callers that also poll lock-guarded status getters
-    /// should gate concurrent control calls (the menu app uses its busy
-    /// flag for this).
+    /// See docs/adr/0005-preview-monitor.md.
     ///
     /// # Errors
     ///
@@ -932,31 +732,13 @@ impl Runtime {
         }
     }
 
-    /// Device the running preview monitor plays on (resolved and vetted
-    /// at enable time), or `None` while the monitor is down. The control
-    /// plane re-vets this device with [`check_monitor_device`] while the
-    /// preview plays: the safety decision made at enable time can be
-    /// invalidated later (headphone jack unplugged → the same built-in
-    /// device flips to the internal speakers) without the monitor
-    /// noticing.
+    /// See docs/adr/0005-preview-monitor.md.
     #[must_use]
     pub fn monitor_device(&self) -> Option<u32> {
         self.monitor.active_device()
     }
 
-    /// Diagnostic: how the render stream is routed into the device. On
-    /// the aggregate transport: the output channel count AUHAL reports for
-    /// the aggregate, the channel map requested, and the map read back
-    /// after `AudioUnitInitialize` (the point where AUHAL reconciles its
-    /// configuration with the device; whether it may alter a map there is
-    /// not documented, which is why the read-back is recorded rather
-    /// than assumed). On the split transport: the output channel count
-    /// AUHAL reports for the virtual output device, the render format
-    /// set from it, and that format read back after initialize (see the
-    /// `split` module). Meant for the one-time start log on hardware, where
-    /// neither the map's effect nor the format negotiation can otherwise
-    /// be observed. The two transports' descriptions start differently
-    /// (`aggregate output channels …` / `virtual output channels …`).
+    /// See docs/adr/0003-coreaudio-transport.md.
     #[must_use]
     pub fn routing_description(&self) -> &str {
         &self.routing
@@ -989,13 +771,6 @@ fn create_auhal() -> Result<AudioUnit, CoreAudioError> {
     Ok(unit)
 }
 
-/// Configures the aggregate AUHAL: both directions enabled, a mono 48 kHz
-/// capture client format, a 48 kHz render client format with one channel
-/// per virtual-output channel (the callback duplicates the engine sample
-/// into each), the frame bound that sizes the callback's capture landing
-/// buffer, and the one-to-one output channel map that places the render
-/// stream on `virtual_output`'s channels. Returns the routing
-/// description for [`Runtime::routing_description`].
 fn configure_auhal(
     unit: AudioUnit,
     device: AudioDeviceId,
@@ -1010,9 +785,6 @@ fn configure_auhal(
         &pcm_format(1),
         "set AUHAL capture format",
     )?;
-    // Dual mono: as many client channels as the virtual output has, so a
-    // one-to-one channel map can feed every one of them (crate::routing).
-    // A 1-channel virtual output yields the mono format of old.
     set_client_format(
         unit,
         Direction::Render,
@@ -1023,9 +795,6 @@ fn configure_auhal(
     set_render_channel_map(unit, virtual_output)
 }
 
-/// Bounds the unit's callback size to [`MAX_CALLBACK_FRAMES`] so the
-/// preallocated capture landing buffer always suffices (the callback
-/// never allocates; see [`crate::callback`]).
 fn set_max_frames_per_slice(
     unit: AudioUnit,
     operation: &'static str,
@@ -1042,24 +811,13 @@ fn set_max_frames_per_slice(
     )
 }
 
-/// One of AUHAL's two I/O directions. Each has its own element (bus),
-/// split into a device-facing and an app-facing scope: capture enters
-/// the input element from the device on its input scope and reaches the
-/// app on its output scope; render enters the output element from the
-/// app on its input scope and reaches the device on its output scope
-/// (Apple TN2091). The setup helpers below take a direction, so each
-/// unit's configuration names what it switches or formats instead of
-/// spelling out that scope and element.
 #[derive(Debug, Clone, Copy)]
 enum Direction {
-    /// Device input to the app, through the input element.
     Capture,
-    /// The app to device output, through the output element.
     Render,
 }
 
 impl Direction {
-    /// The element that carries this direction.
     const fn element(self) -> u32 {
         match self {
             Self::Capture => INPUT_BUS,
@@ -1067,8 +825,6 @@ impl Direction {
         }
     }
 
-    /// The element's device-facing scope, where `EnableIO` switches the
-    /// direction on or off.
     const fn device_scope(self) -> u32 {
         match self {
             Self::Capture => AUDIO_UNIT_SCOPE_INPUT,
@@ -1076,8 +832,6 @@ impl Direction {
         }
     }
 
-    /// The element's app-facing scope, where the client stream format
-    /// lives.
     const fn client_scope(self) -> u32 {
         match self {
             Self::Capture => AUDIO_UNIT_SCOPE_OUTPUT,
@@ -1086,7 +840,6 @@ impl Direction {
     }
 }
 
-/// Switches `direction` on or off (`EnableIO`).
 fn set_io_enabled(
     unit: AudioUnit,
     direction: Direction,
@@ -1103,7 +856,6 @@ fn set_io_enabled(
     )
 }
 
-/// Points the unit at `device` (`CurrentDevice`, a global property).
 fn set_current_device(
     unit: AudioUnit,
     device: AudioDeviceId,
@@ -1119,8 +871,6 @@ fn set_current_device(
     )
 }
 
-/// Sets the client format: the stream format the app exchanges with the
-/// unit in `direction`.
 fn set_client_format(
     unit: AudioUnit,
     direction: Direction,
@@ -1137,31 +887,6 @@ fn set_client_format(
     )
 }
 
-/// Places the render stream (one client channel per virtual-output
-/// channel) on the virtual output's channels inside the aggregate device
-/// (see [`crate::routing`] for the bug and the decision).
-///
-/// The recipe follows Apple's AUHAL notes ("Channel Maps", reproduced
-/// verbatim in `PortAudio`'s `src/hostapi/coreaudio/notes.txt`): for
-/// output, the map is an `SInt32` array sized by the device's channel
-/// count — "Get the Format of the AUHAL's output Element == 0" — with
-/// every entry `-1` except `map[deviceOutputChannel] = clientChannel`,
-/// each client channel named once.
-/// That device-side format is read from `kAudioUnitScope_Output`,
-/// element 0 (the only place it lives; TN2091 notes it is never
-/// writable, so the client format set on the input scope cannot leak
-/// into the read). The map is set on that same scope and element:
-/// the property is documented for the input and output scopes, and
-/// `PortAudio`'s Core Audio host API (`pa_mac_core.c`) — the shipping
-/// implementation this was checked against — sets the output-element
-/// map on the output scope, after the stream formats and before
-/// `AudioUnitInitialize`, which is the order used here. AUHAL's default
-/// map (identity: client `i` → device `i`) is what sent the engine
-/// output into a headphone-equipped microphone's own outputs.
-///
-/// The capture direction keeps AUHAL's default map (client channel 0 ←
-/// device input channel 0 = the microphone, which is the first
-/// subdevice); it is deliberately not touched here.
 fn set_render_channel_map(
     unit: AudioUnit,
     virtual_output: VirtualOutputChannels,
@@ -1190,13 +915,6 @@ fn set_render_channel_map(
     ))
 }
 
-/// Reads the output channel map back for the start-time diagnostics.
-/// Called after `AudioUnitInitialize`, the point where AUHAL reconciles
-/// its configuration with the device: before it, a read would only echo
-/// the array the setter just accepted. On hardware the map's effect is
-/// otherwise invisible, so this — together with the requested map — is
-/// the first thing to look at when the virtual microphone stays silent.
-/// Never fails the start: an unreadable map is reported as such.
 fn describe_applied_channel_map(unit: AudioUnit) -> String {
     let Ok(device_channels) = device_output_channels(unit, "read aggregate device output format")
     else {
@@ -1234,7 +952,6 @@ fn describe_applied_channel_map(unit: AudioUnit) -> String {
     )
 }
 
-/// Byte size of a channel map with `entries` `i32` slots.
 fn channel_map_bytes(entries: usize) -> Result<u32, CoreAudioError> {
     entries
         .checked_mul(size_of::<i32>())
@@ -1242,19 +959,10 @@ fn channel_map_bytes(entries: usize) -> Result<u32, CoreAudioError> {
         .ok_or_else(|| CoreAudioError::OutputRouting("channel map size overflow".to_owned()))
 }
 
-/// Output channel count of the device behind the AUHAL, from the
-/// hardware-side stream format of the output element (readable once the
-/// current device is set, before initialization). `operation` names the
-/// caller's device in the error (the aggregate, or the split transport's
-/// virtual output), since both transports read it.
 fn device_output_channels(unit: AudioUnit, operation: &'static str) -> Result<u32, CoreAudioError> {
     stream_format_channels(unit, AUDIO_UNIT_SCOPE_OUTPUT, operation)
 }
 
-/// Channel count of the output element's stream format on `scope`:
-/// [`AUDIO_UNIT_SCOPE_OUTPUT`] is the device side (what the hardware
-/// carries), [`AUDIO_UNIT_SCOPE_INPUT`] the client side (the render
-/// format this transport set, as AUHAL holds it).
 fn stream_format_channels(
     unit: AudioUnit,
     scope: u32,
@@ -1278,14 +986,10 @@ fn stream_format_channels(
     Ok(format.channels_per_frame)
 }
 
-/// Packed-float PCM at the 48 kHz engine rate with `channels` interleaved
-/// channels (shared by the main capture/render and monitor formats).
 const fn pcm_format(channels: u32) -> AudioStreamBasicDescription {
     pcm_format_at(48_000.0, channels)
 }
 
-/// Packed-float PCM at an arbitrary rate (the split transport captures
-/// at the microphone's native rate).
 const fn pcm_format_at(sample_rate: f64, channels: u32) -> AudioStreamBasicDescription {
     AudioStreamBasicDescription {
         sample_rate,
@@ -1300,8 +1004,6 @@ const fn pcm_format_at(sample_rate: f64, channels: u32) -> AudioStreamBasicDescr
     }
 }
 
-/// Registers `callback`/`context` as the render provider on an output
-/// unit's input scope (the AUHAL output-element callback slot).
 fn attach_render_callback(
     unit: AudioUnit,
     callback: RenderCallback,
@@ -1337,9 +1039,6 @@ fn stop_output_unit(unit: AudioUnit) {
     }
 }
 
-/// Uninitializes and disposes a stopped audio unit. Callbacks must no
-/// longer be running (the unit was stopped, and for the main transport
-/// the worker joined).
 fn dispose_unit(unit: AudioUnit) {
     unsafe {
         let _ignored = AudioUnitUninitialize(unit);
@@ -1394,9 +1093,6 @@ fn audio_workgroup(unit: AudioUnit) -> Result<usize, CoreAudioError> {
     Ok(workgroup as usize)
 }
 
-/// Longest the worker sleeps waiting for the render callback's semaphore
-/// signal before re-checking the shutdown flag (a fraction of the ~5.3 ms
-/// device period at 256 frames / 48 kHz).
 const WORKER_WAIT_NS: i64 = 2_000_000;
 
 #[repr(C)]
@@ -1405,8 +1101,6 @@ struct MachTimebaseInfo {
     denom: u32,
 }
 
-/// `thread_time_constraint_policy` (`mach/thread_policy.h`): all times
-/// in mach absolute-time ticks; `preemptible` is a `boolean_t`.
 #[repr(C)]
 struct ThreadTimeConstraintPolicy {
     period: u32,
@@ -1416,7 +1110,6 @@ struct ThreadTimeConstraintPolicy {
 }
 
 const THREAD_TIME_CONSTRAINT_POLICY: u32 = 2;
-/// `THREAD_TIME_CONSTRAINT_POLICY_COUNT`: four 32-bit fields.
 const THREAD_TIME_CONSTRAINT_POLICY_COUNT: u32 = 4;
 const KERN_SUCCESS: i32 = 0;
 
@@ -1433,43 +1126,10 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-/// The worker's declared real-time cadence: one engine block every 10 ms.
 const WORKER_PERIOD_NS: u64 = 10_000_000;
-/// Guaranteed computation per period, sized on the heaviest model's
-/// typical block: p50 ≈ 4.2 ms on a modest 4-core x86-64 host
-/// (`noican-models/examples/block_bench.rs`, 2026-09-02). This is the
-/// CPU slice the scheduler reserves, not a ceiling — with `preemptible`
-/// set the thread may keep running past it up to `constraint` — so p50
-/// (plus margin) rather than that host's p95 of 6.2 ms is the basis:
-/// tail blocks still complete within the period, Apple Silicon
-/// performance cores are faster than the measuring host, and a larger
-/// reservation would only raise the admission cost of the RT band.
-/// Persistent overruns of the declared computation risk demotion by
-/// XNU; what the 2026-09-04 on-device run supports is the absence of
-/// steady-state underruns (block-time figures only reach the log
-/// alongside underrun growth, so the device logged none for clean
-/// models) — the sub-5 ms steady-state figure itself is the
-/// `block_bench` measurement above.
 const WORKER_COMPUTATION_NS: u64 = 5_000_000;
-/// Deadline within each period: the whole period, matching the audio
-/// cadence the output ring absorbs.
 const WORKER_CONSTRAINT_NS: u64 = 10_000_000;
 
-/// Promotes the calling thread to mach time-constraint ("real-time")
-/// scheduling, the setup Apple's audio-workgroup guidance requires for
-/// self-created inference threads *before* they join the device's
-/// workgroup: joining alone conveys the deadline but does not lift the
-/// thread out of its default priority, so the scheduler may still park it on
-/// efficiency cores or preempt it for tens of milliseconds — observed on
-/// hardware (2026-09-02) as chronic 10 ms-budget misses for the heaviest
-/// model then registered (max 80.5 ms) and one-shot 40 ms stalls even on
-/// light models, on a machine where the same models measure well inside the
-/// budget when scheduled.
-///
-/// Returns whether the promotion succeeded; a failure is survivable
-/// (audio still flows at default priority) and is surfaced through
-/// [`Runtime::worker_realtime`] so hardware runs can interpret their
-/// underrun numbers.
 fn promote_current_thread_to_realtime() -> bool {
     let mut timebase = MachTimebaseInfo { numer: 0, denom: 0 };
     if unsafe { mach_timebase_info(&raw mut timebase) } != KERN_SUCCESS
@@ -1500,9 +1160,6 @@ fn promote_current_thread_to_realtime() -> bool {
     status == KERN_SUCCESS
 }
 
-/// Membership of the device's audio `os_workgroup` for the lifetime of a
-/// worker loop; leaves the workgroup on drop. A failed join is reported
-/// through [`WorkgroupGuard::joined`] so the loop can flag the fault.
 struct WorkgroupGuard {
     workgroup: *mut c_void,
     token: WorkgroupJoinToken,
@@ -1536,8 +1193,6 @@ impl Drop for WorkgroupGuard {
     }
 }
 
-/// Inference worker of the aggregate transport: gathers the render
-/// callback's capture into 10 ms blocks and runs the engine on each.
 fn processing_loop(mut worker: WorkerLinks, workgroup: usize) {
     let membership = worker.enter(workgroup);
     let mut input_block = [0.0_f32; WORKER_BLOCK_SAMPLES];
@@ -1553,32 +1208,16 @@ fn processing_loop(mut worker: WorkerLinks, workgroup: usize) {
                     position = 0;
                 }
             }
-            // Block until the render callback signals more input (or the
-            // timeout elapses, so shutdown is always noticed). Busy-spinning
-            // here would burn a core for the whole session and distort the
-            // os_workgroup's power/deadline balancing.
             Err(_empty) => worker.shared.samples_ready.wait_ns(WORKER_WAIT_NS),
         }
     }
     worker.exit(membership);
 }
 
-/// Nanoseconds since `started`, saturated into a `u64` (585 years —
-/// unreachable in practice, but the stats must never panic).
 fn saturating_elapsed_ns(started: std::time::Instant) -> u64 {
     u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
 }
 
-/// The interleaved `f32` samples a render callback may write — the first
-/// buffer of the list AUHAL handed over, bounded by [`render_geometry`] —
-/// with their channel count, or `None` for a malformed list (no buffers,
-/// or a null data pointer). Shared by the three render callbacks
-/// (aggregate, split output, preview monitor).
-///
-/// # Safety
-///
-/// `data` must be the non-null buffer list AUHAL passed to the running
-/// render callback; the slice must not outlive that callback.
 unsafe fn render_samples<'a>(
     data: *mut AudioBufferList,
     frame_count: u32,
@@ -1597,15 +1236,6 @@ unsafe fn render_samples<'a>(
     Some((samples, geometry.channels))
 }
 
-/// Render callback of the aggregate AUHAL: captures the microphone frames
-/// of this cycle into the preallocated mono landing buffer, pushes them to
-/// the input ring, and fills the (one channel per virtual-output channel)
-/// render buffer from the output ring, duplicating each engine sample
-/// into every channel of its frame — the same dual-mono shape the split
-/// transport's output callback and the preview monitor produce.
-/// Real-time rules (docs/tech-research.md §9): no allocation, no locks;
-/// a callback larger than the frame bound faults instead of allocating;
-/// ring overrun drops samples; underrun renders silence.
 unsafe extern "C" fn render_callback(
     context: *mut c_void,
     action_flags: *mut AudioUnitRenderActionFlags,
@@ -1627,8 +1257,6 @@ unsafe extern "C" fn render_callback(
             .capture
             .capture(action_flags, timestamp, frame_count)
     } {
-        // The render buffer is silenced so nothing stale can reach the
-        // virtual output should AUHAL play it despite the error.
         samples.fill(0.0);
         return status;
     }

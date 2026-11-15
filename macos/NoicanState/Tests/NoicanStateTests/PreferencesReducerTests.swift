@@ -2,13 +2,6 @@ import Testing
 
 @testable import NoicanState
 
-// Reducer coverage for the Phase 2 preference features: restoration at
-// launch, the strength (dry/wet intensity) slider, and the login-item
-// toggle. Fixtures and drivers are shared with the other reducer suites;
-// see ReducerTestSupport.swift.
-
-// MARK: - Preference restoration
-
 @Suite("Preference restoration at launch")
 struct PreferenceRestorationTests {
     @Test("A restore applies model, microphone, and intensity while Off")
@@ -59,8 +52,6 @@ struct PreferenceRestorationTests {
     }
 }
 
-// MARK: - Intensity (strength slider)
-
 @Suite("Intensity control")
 struct IntensityTests {
     @Test("A slider move updates the state and emits the atomic write")
@@ -100,8 +91,6 @@ struct IntensityTests {
     }
 }
 
-// MARK: - Launch at login
-
 @Suite("Login item registration")
 struct LaunchAtLoginTests {
     @Test("The status read at launch seeds the toggle")
@@ -126,20 +115,14 @@ struct LaunchAtLoginTests {
 
     @Test("Rapid re-toggles are serialized: one attempt in flight at a time")
     func rapidTogglesAreSerialized() {
-        // Flip on, then flip off before the registration settles: the
-        // second flip must be ignored (two concurrent register/unregister
-        // calls would race and the toggle would settle on whichever
-        // completion arrived last).
         let requested = drive(readyModel(), [.launchAtLoginToggled(true)])
         let (whileBusy, busyEffects) = step(requested, .launchAtLoginToggled(false))
         #expect(whileBusy == requested, "a flip while busy changes nothing")
         #expect(busyEffects.isEmpty, "no second registration attempt is spawned")
 
-        // A status read racing the attempt is stale and ignored too.
         let read = drive(requested, [.launchAtLoginStatusRead(isEnabled: false)])
         #expect(read.isLaunchAtLoginEnabled, "the in-flight attempt owns the toggle")
 
-        // After the completion, toggling works again.
         let settled = drive(requested, [.launchAtLoginChangeCompleted(isEnabled: true, error: nil)])
         let (next, nextEffects) = step(settled, .launchAtLoginToggled(false))
         #expect(next.isLaunchAtLoginBusy)
@@ -167,7 +150,6 @@ struct LaunchAtLoginTests {
         #expect(state.messages.launchAtLoginError == "Operation not permitted")
         #expect(effects.isEmpty)
 
-        // The next attempt clears the stale reason while in flight.
         let retried = drive(state, [.launchAtLoginToggled(true)])
         #expect(retried.messages.launchAtLoginError == nil)
     }

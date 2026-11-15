@@ -1,20 +1,4 @@
-//! C ABI used by the `SwiftUI` menu bar control plane.
-//!
-//! Everything here runs on the control plane (Swift side): model download,
-//! stage construction, and engine lifecycle. Prepared stages reach the
-//! inference thread through [`noican_core::StagePublisher`]'s lock-free
-//! queue, so no call in this module ever blocks the audio path.
-//!
-//! Locking discipline: the control mutex is held only for short state
-//! transitions, never across weight downloads or model construction, so
-//! status queries (`is_running`, `is_faulted`, `last_error`) always return
-//! promptly — regardless of what the UI does. Slow work runs unlocked and
-//! commits its result only when the operation epoch is unchanged (a
-//! concurrent `stop`/`start` supersedes it).
-//!
-//! The model catalog is projected from `noican-models`'
-//! [`noican_models::catalog`] at call time — neither this crate nor the UI
-//! hardcodes model identifiers or names.
+//! See docs/adr/0011-ffi-boundary.md.
 
 #![expect(
     unsafe_code,
@@ -41,7 +25,6 @@ use noican_models::{CatalogEntry, ModelSpec};
 
 const SUCCESS: i32 = 0;
 const FAILURE: i32 = -1;
-/// Fade half-length for model switches: 5 ms at the 48 kHz engine rate.
 const SWITCH_FADE_SAMPLES: usize = 240;
 
 struct ControlState {
@@ -50,20 +33,15 @@ struct ControlState {
     publisher: Option<StagePublisher>,
     active_model: Option<String>,
     last_error: String,
-    /// Bumped by every `start`/`stop`; slow operations only commit when the
-    /// epoch they claimed is still current.
     epoch: u64,
 }
 
 impl ControlState {
-    /// Ends a control call in failure, recording `error` for
-    /// [`noican_engine_last_error`].
     fn fail(&mut self, error: impl Into<String>) -> i32 {
         self.last_error = error.into();
         FAILURE
     }
 
-    /// Ends a control call in success, clearing the previous error.
     fn succeed(&mut self) -> i32 {
         self.last_error.clear();
         SUCCESS
@@ -71,30 +49,9 @@ impl ControlState {
 }
 
 struct EngineHandle {
-    /// Locked only for short transitions (see the crate docs). If a panic
-    /// poisons it, calls that need it fail or return their fallback value
-    /// without recording an error, since `last_error` lives behind the
-    /// same lock.
     state: Mutex<ControlState>,
-    /// Peak meters shared with each runtime's inference worker. Kept
-    /// outside the control mutex so level polling reads plain atomics and
-    /// never waits on slow control work (weight downloads, model loads).
-    /// The worker resets it to silence on start and exit, so readers see
-    /// 0 whenever the engine is stopped.
     levels: Arc<StreamLevels>,
-    /// The [`MonitorState`] cell shared with each runtime's monitor
-    /// control and inference worker. Kept outside the control mutex for
-    /// the same reason as `levels`: the UI polls it at 20 Hz and must
-    /// never wait on a slow monitor start. Monitor toggles move it
-    /// between off and playing, the worker's feedback guard moves it to
-    /// tripped, and it reads off whenever no runtime is up.
     monitor_state: Arc<AtomicI32>,
-    /// The dry/wet ("strength") control shared with each runtime's
-    /// [`SwitchingEngine`]. One atomic, kept outside the control mutex:
-    /// slider moves apply instantly without waiting on slow control work
-    /// and never rebuild the engine. Owned by the handle (not the
-    /// runtime) so the value set while stopped carries into the next
-    /// start.
     intensity: IntensityControl,
 }
 
@@ -109,10 +66,7 @@ fn default_models_dir() -> PathBuf {
     PathBuf::from("models")
 }
 
-/// Creates an engine control handle.
-///
-/// A null `models_directory` selects `NOICAN_MODELS_DIR` or the platform
-/// default (`~/Library/Application Support/noican/models` on macOS).
+/// See docs/adr/0011-ffi-boundary.md.
 ///
 /// # Safety
 ///
@@ -144,7 +98,7 @@ pub unsafe extern "C" fn noican_engine_create(models_directory: *const c_char) -
     Box::into_raw(handle).cast()
 }
 
-/// Stops and destroys an engine handle.
+/// See docs/adr/0011-ffi-boundary.md.
 ///
 /// # Safety
 ///
@@ -163,24 +117,7 @@ pub unsafe extern "C" fn noican_engine_destroy(handle: *mut c_void) {
     }
 }
 
-/// Starts AUHAL on an already-created private Aggregate Device.
-///
-/// `virtual_output_first_channel` and `virtual_output_channel_count`
-/// locate the virtual output's channels inside the aggregate's output
-/// channel list: the aggregate is composed as `[microphone, virtual
-/// output]`, so the first index is the number of output channels the
-/// microphone itself has (0 for the built-in microphone, 2 for a USB
-/// microphone with a stereo headphone jack) and the count is the virtual
-/// output's channel count. The transport renders one client channel per
-/// virtual output channel (the mono engine signal duplicated into each)
-/// and routes them there with a one-to-one AUHAL channel map; it refuses
-/// to start when
-/// the range does not end at the aggregate's last output channel
-/// (`noican_coreaudio::routing`). An empty range is rejected here,
-/// before any weight download.
-///
-/// Missing model weights are downloaded first (on this control thread,
-/// without holding the control lock).
+/// See docs/adr/0004-aggregate-output-routing.md.
 ///
 /// # Safety
 ///
@@ -220,27 +157,7 @@ pub unsafe extern "C" fn noican_engine_start(
     })
 }
 
-/// Starts the split transport for a microphone that cannot run at the
-/// 48 kHz engine rate (issue #7).
-///
-/// `input_device` is the microphone's Core Audio device ID and
-/// `capture_sample_rate` its current nominal rate in Hz — whole hertz
-/// from 8000 to 192000 whose ratio to 48000 reduces to small terms, i.e.
-/// the standard rate families (Bluetooth telephony profiles at
-/// 8/16/24 kHz, the 44.1 kHz family, 88.2/96 kHz interfaces; see
-/// [`noican_core::capture`]). `output_device` is the Noican/`BlackHole`
-/// virtual output; the transport renders one client channel per output
-/// channel that device reports (read on the Rust side once the output
-/// AUHAL is bound to it — no channel count crosses this ABI) and refuses
-/// to start when it reports none. No Aggregate Device is involved: the
-/// microphone is captured natively and resampled to 48 kHz inside the
-/// transport by the exact rational ratio, with clock drift between the
-/// two devices compensated by a ring-occupancy servo.
-/// The split path adds a 50 ms output cushion; the aggregate path
-/// ([`noican_engine_start`]) is unchanged.
-///
-/// Missing model weights are downloaded first (on this control thread,
-/// without holding the control lock).
+/// See docs/adr/0003-coreaudio-transport.md.
 ///
 /// # Safety
 ///
@@ -278,11 +195,6 @@ pub unsafe extern "C" fn noican_engine_start_native(
     })
 }
 
-/// Shared start flow behind [`noican_engine_start`] and
-/// [`noican_engine_start_native`]: claims an epoch (tearing down any
-/// running transport), prepares the stage and engine unlocked, starts
-/// the runtime through `start_runtime`, and commits unless a newer
-/// control operation superseded the epoch.
 fn start_with(
     handle: &EngineHandle,
     model: String,
@@ -292,7 +204,6 @@ fn start_with(
         Arc<AtomicI32>,
     ) -> Result<Runtime, String>,
 ) -> i32 {
-    // Short lock: tear down any running transport and claim an epoch.
     let (models_dir, epoch, old_runtime) = {
         let Ok(mut control) = handle.state.lock() else {
             return FAILURE;
@@ -307,7 +218,6 @@ fn start_with(
         runtime.stop();
     }
 
-    // Slow work, unlocked: download/construct the stage, start the runtime.
     let levels = Arc::clone(&handle.levels);
     let monitor_state = Arc::clone(&handle.monitor_state);
     let intensity = handle.intensity.clone();
@@ -324,7 +234,6 @@ fn start_with(
         Err(error) => return set_error(handle, error),
     };
 
-    // Short lock: commit unless a newer stop/start superseded this epoch.
     let Ok(mut control) = handle.state.lock() else {
         runtime.stop();
         return FAILURE;
@@ -343,16 +252,6 @@ fn start_with(
     control.succeed()
 }
 
-/// Validates a native capture rate: finite, whole hertz (Core Audio
-/// nominal rates are exact integers in f64 — 44100.0, never 44100.3 —
-/// so anything fractional is a bogus reading, not a rate to round), and
-/// within the range the capture resampler converts
-/// ([`noican_core::capture::MIN_NATIVE_RATE`] to
-/// [`noican_core::capture::MAX_NATIVE_RATE`]). Rejecting here — before
-/// any weight download or audio object — keeps the failure instant and
-/// its message precise. The reduced ratio's size is bounded by the
-/// resampler itself ([`noican_core::capture::MAX_RATIO_TERM`]) when the
-/// transport constructs it, still before any audio object.
 fn validate_capture_rate(rate: f64) -> Result<u32, String> {
     let rounded = rate.round();
     let min = f64::from(MIN_NATIVE_RATE);
@@ -372,7 +271,7 @@ fn validate_capture_rate(rate: f64) -> Result<u32, String> {
     Ok(hertz)
 }
 
-/// Stops AUHAL while preserving the reusable control handle.
+/// See docs/adr/0011-ffi-boundary.md.
 ///
 /// # Safety
 ///
@@ -396,11 +295,7 @@ pub unsafe extern "C" fn noican_engine_stop(handle: *mut c_void) {
     }
 }
 
-/// Prepares and lock-free publishes a replacement model.
-///
-/// Fails fast when the engine is not running; missing model weights are
-/// downloaded first (on this control thread, without holding the control
-/// lock).
+/// See docs/adr/0011-ffi-boundary.md.
 ///
 /// # Safety
 ///
@@ -419,7 +314,6 @@ pub unsafe extern "C" fn noican_engine_set_model(
         Err(error) => return set_error(handle, error),
     };
 
-    // Short lock: fail fast when stopped, claim the current epoch.
     let (models_dir, publisher, epoch) = {
         let Ok(mut control) = handle.state.lock() else {
             return FAILURE;
@@ -430,13 +324,11 @@ pub unsafe extern "C" fn noican_engine_set_model(
         (control.models_dir.clone(), publisher, control.epoch)
     };
 
-    // Slow work, unlocked.
     let stage = match guard_panics(&model, || prepare_stage(&models_dir, &model)) {
         Ok(stage) => stage,
         Err(error) => return set_error(handle, error),
     };
 
-    // Short lock: publish unless the engine was stopped/restarted meanwhile.
     let Ok(mut control) = handle.state.lock() else {
         return FAILURE;
     };
@@ -458,7 +350,7 @@ pub unsafe extern "C" fn noican_engine_is_running(handle: *const c_void) -> i32 
     i32::from(unsafe { with_runtime(handle, Runtime::is_running) }.unwrap_or(false))
 }
 
-/// Returns 1 after an audio callback, workgroup, or inference fault.
+/// See docs/adr/0012-app-state-reducer.md.
 ///
 /// # Safety
 ///
@@ -473,26 +365,7 @@ pub unsafe extern "C" fn noican_engine_is_faulted(handle: *const c_void) -> i32 
     })
 }
 
-/// Enables (nonzero) or disables (zero) the preview self-monitor: the
-/// processed microphone signal plays on the system default output device.
-///
-/// The monitor target is resolved to the current default output at enable
-/// time; re-enable preview to follow a later default-output change. (A
-/// future explicit device selection would arrive as a separate setter,
-/// keeping this signature stable.) The monitor does not survive an engine
-/// stop/start, so callers re-enable it after `noican_engine_start`.
-///
-/// Enabling fails when the engine is not running, when the default output
-/// must not receive the preview (a virtual loopback, an aggregate /
-/// multi-output device, or the built-in speakers), or when the monitor
-/// AUHAL cannot start; the meeting-facing path is never affected.
-/// Disabling is always a success, including while stopped. Toggling holds
-/// the control lock for the monitor start/stop transition — starting an
-/// output device can take a moment, so callers should serialize their own
-/// control calls behind a busy flag while a toggle is in flight (the
-/// level and monitor-state getters stay lock-free and are always safe to
-/// poll). A toggle in either direction clears a pending feedback trip
-/// (see [`noican_engine_monitor_state`]).
+/// See docs/adr/0005-preview-monitor.md.
 ///
 /// # Safety
 ///
@@ -517,16 +390,7 @@ pub unsafe extern "C" fn noican_engine_set_monitor(handle: *mut c_void, enabled:
     }
 }
 
-/// Checks whether the current system default output may receive the
-/// preview, without starting or changing anything.
-///
-/// Returns 0 when preview can target the device. Otherwise copies the
-/// human-readable refusal reason as UTF-8 (loopback / aggregate /
-/// built-in speakers — the same vetting enabling applies) and returns the
-/// required byte count including the terminating NUL. Cheap (a few Core
-/// Audio property reads): the UI calls it before enabling and whenever
-/// the system default output changes, so an unsafe target disables the
-/// Preview control up front instead of failing after the fact.
+/// See docs/adr/0005-preview-monitor.md.
 ///
 /// # Safety
 ///
@@ -542,24 +406,7 @@ pub unsafe extern "C" fn noican_monitor_target_error(
     }
 }
 
-/// Checks whether a *specific* output device may (still) receive the
-/// preview.
-///
-/// The same vetting as [`noican_monitor_target_error`], but against a
-/// caller-chosen device instead of the current default output.
-/// The UI runs it against the device the running monitor actually plays
-/// on (see [`noican_engine_monitor_device`]): after enable time the
-/// default output can move on while the monitor stays put, and a
-/// built-in device can flip its data source from the headphone jack to
-/// the internal speakers without any device-list or default-output
-/// notification — re-classifying the monitor's own device is what
-/// catches that. A vanished device is *not* reported here (unreadable
-/// properties fail open by policy); device loss is visible in the device
-/// list and is the caller's check.
-///
-/// Returns 0 when the device may receive the preview. Otherwise copies
-/// the human-readable refusal reason as UTF-8 and returns the required
-/// byte count including the terminating NUL.
+/// See docs/adr/0005-preview-monitor.md.
 ///
 /// # Safety
 ///
@@ -576,16 +423,7 @@ pub unsafe extern "C" fn noican_monitor_device_error(
     }
 }
 
-/// Device ID the running preview monitor plays on, or 0 while no monitor
-/// AUHAL is up (stopped engine, preview off).
-///
-/// The target is resolved on the Rust side at enable time and stays
-/// fixed until the next toggle, so this is how the UI learns which
-/// device to watch for losing its safety
-/// (`noican_monitor_device_error`, device-list changes).
-///
-/// Reads the control mutex (never held across slow work), so it is meant
-/// for event-driven and low-rate callers — not the 20 Hz poll path.
+/// See docs/adr/0005-preview-monitor.md.
 ///
 /// # Safety
 ///
@@ -597,18 +435,7 @@ pub unsafe extern "C" fn noican_engine_monitor_device(handle: *const c_void) -> 
         .unwrap_or(0)
 }
 
-/// Diagnostic: how the running transport routes the engine output into
-/// the virtual output.
-///
-/// On the aggregate transport the description carries the output channel
-/// count AUHAL reports for the aggregate, the channel map requested, and
-/// the map read back after `AudioUnitInitialize`; on the split transport
-/// it carries the output channel count AUHAL reports for the virtual
-/// output device, the render format sized from it, and that format read
-/// back after initialize. Copies the description as UTF-8 and returns
-/// the required byte count including the terminating NUL; returns 0
-/// while stopped or for a null handle. Takes the control mutex (meant
-/// for the one-time start log, not the poll path).
+/// See docs/adr/0004-aggregate-output-routing.md.
 ///
 /// # Safety
 ///
@@ -633,21 +460,7 @@ pub unsafe extern "C" fn noican_engine_routing_description(
     copied.unwrap_or(0)
 }
 
-/// The preview monitor's state as one value.
-///
-/// 0 = off (no monitor AUHAL, including a stopped engine and a null
-/// handle), 1 = playing, 2 = tripped. The protocol lives in the
-/// [`MonitorState`] enum shared with the engine — including that
-/// *tripped* means the monitor AUHAL is still up but silenced (the
-/// feedback guard disarmed the tee), and that the next
-/// `noican_engine_set_monitor` call in either direction clears it
-/// (enable re-arms, disable tears down).
-///
-/// On 2, callers should disable the monitor to release the playback
-/// device and tell the user why; the meeting-facing path is unaffected.
-///
-/// Reads one atomic without taking the control lock, so it never blocks —
-/// safe to poll at UI rates even while a monitor start is in progress.
+/// See docs/adr/0005-preview-monitor.md.
 ///
 /// # Safety
 ///
@@ -660,12 +473,7 @@ pub unsafe extern "C" fn noican_engine_monitor_state(handle: *const c_void) -> i
     MonitorState::from_raw(handle.monitor_state.load(Ordering::Acquire)).as_raw()
 }
 
-/// Heartbeat: total input frames delivered since the engine started.
-///
-/// Returns 0 while stopped. A value that stops advancing while
-/// `noican_engine_is_running` reports 1 means the device stopped calling
-/// back (unplugged microphone, coreaudiod restart, post-sleep stall); the
-/// UI polls this once per second.
+/// See docs/adr/0002-engine-diagnostics.md.
 ///
 /// # Safety
 ///
@@ -675,21 +483,7 @@ pub unsafe extern "C" fn noican_engine_frames_processed(handle: *const c_void) -
     unsafe { with_runtime(handle, Runtime::frames_processed) }.unwrap_or(0)
 }
 
-/// Diagnostic: output callbacks that delivered no real audio at all —
-/// the output ring was dry for the entire I/O period.
-///
-/// Counted only after the ring first carried real audio (the start-up
-/// ramp is latency, not underrun), and partial zero-fills are not
-/// counted (benign block-quantization jitter — see the render
-/// callbacks). Returns 0 while stopped. A growing
-/// count means the inference worker misses its 10 ms block budget for
-/// the active model — audible as dropouts in recordings from the
-/// virtual microphone, while the preview monitor masks it behind its
-/// re-priming cushion. Counted on both transports (aggregate and
-/// split).
-///
-/// Cumulative since start or the last [`noican_engine_reset_debug_stats`];
-/// reset after a model switch to attribute underruns to one model.
+/// See docs/adr/0002-engine-diagnostics.md.
 ///
 /// # Safety
 ///
@@ -699,14 +493,7 @@ pub unsafe extern "C" fn noican_engine_output_underruns(handle: *const c_void) -
     unsafe { with_runtime(handle, Runtime::output_underruns) }.unwrap_or(0)
 }
 
-/// Diagnostic: input samples the capture ring dropped because it was
-/// full.
-///
-/// A full ring means the inference worker (or the capture side) fell
-/// behind by more than the whole ring — audible as clipped input
-/// reaching the models. Counted on both transports (aggregate and
-/// split), cumulative since start or the last
-/// [`noican_engine_reset_debug_stats`]; returns 0 while stopped.
+/// See docs/adr/0002-engine-diagnostics.md.
 ///
 /// # Safety
 ///
@@ -716,9 +503,7 @@ pub unsafe extern "C" fn noican_engine_input_overruns(handle: *const c_void) -> 
     unsafe { with_runtime(handle, Runtime::input_overruns) }.unwrap_or(0)
 }
 
-/// Diagnostic: engine blocks the inference worker has processed since
-/// start or the last [`noican_engine_reset_debug_stats`] (the
-/// denominator for the over-budget count). Returns 0 while stopped.
+/// See docs/adr/0002-engine-diagnostics.md.
 ///
 /// # Safety
 ///
@@ -728,11 +513,7 @@ pub unsafe extern "C" fn noican_engine_worker_blocks(handle: *const c_void) -> u
     unsafe { with_runtime(handle, Runtime::worker_blocks) }.unwrap_or(0)
 }
 
-/// Diagnostic: worker blocks whose processing exceeded the 10 ms budget.
-///
-/// Counted since start or the last [`noican_engine_reset_debug_stats`].
-/// Returns 0 while stopped. Blocks over budget are what drain the
-/// output ring into underrun.
+/// See docs/adr/0002-engine-diagnostics.md.
 ///
 /// # Safety
 ///
@@ -754,16 +535,7 @@ pub unsafe extern "C" fn noican_engine_worker_block_max_ns(handle: *const c_void
     unsafe { with_runtime(handle, Runtime::worker_block_max_ns) }.unwrap_or(0)
 }
 
-/// Diagnostic: 1 when the inference worker's mach time-constraint
-/// (real-time) promotion succeeded at engine start, 0 otherwise
-/// (including while stopped and for a null handle).
-///
-/// 0 while running means the promotion failed and the worker runs at
-/// default priority — budget misses in that state may be scheduling,
-/// not model cost, and hardware underrun numbers should be read with
-/// that in mind. The value is the start-time promotion result, not
-/// live membership: the kernel may later demote a persistently
-/// overrunning thread without this flag changing.
+/// See docs/adr/0002-engine-diagnostics.md.
 ///
 /// # Safety
 ///
@@ -773,12 +545,7 @@ pub unsafe extern "C" fn noican_engine_worker_realtime(handle: *const c_void) ->
     i32::from(unsafe { with_runtime(handle, Runtime::worker_realtime) }.unwrap_or(false))
 }
 
-/// Zeroes the diagnostic counters of the running engine.
-///
-/// Resets the output underruns, input overruns and the worker block
-/// statistics so a freshly selected model can be measured in isolation. A no-op while
-/// stopped or for a null handle. Plain atomic stores on the Rust side —
-/// safe while audio runs.
+/// See docs/adr/0002-engine-diagnostics.md.
 ///
 /// # Safety
 ///
@@ -788,11 +555,7 @@ pub unsafe extern "C" fn noican_engine_reset_debug_stats(handle: *mut c_void) {
     unsafe { with_runtime(handle, Runtime::reset_debug_stats) };
 }
 
-/// Decayed linear peak (0.0–1.0) of the model input (pre-processing),
-/// measured per 10 ms worker block; 0.0 while the engine is stopped.
-///
-/// Reads one atomic without taking the control lock, so it never blocks —
-/// regardless of what the control plane is doing.
+/// See docs/adr/0002-engine-diagnostics.md.
 ///
 /// # Safety
 ///
@@ -805,11 +568,7 @@ pub unsafe extern "C" fn noican_engine_input_level(handle: *const c_void) -> f32
     handle.levels.input()
 }
 
-/// Decayed linear peak (0.0–1.0) of the model output (post-processing),
-/// measured per 10 ms worker block; 0.0 while the engine is stopped.
-///
-/// Reads one atomic without taking the control lock, so it never blocks —
-/// regardless of what the control plane is doing.
+/// See docs/adr/0002-engine-diagnostics.md.
 ///
 /// # Safety
 ///
@@ -822,18 +581,7 @@ pub unsafe extern "C" fn noican_engine_output_level(handle: *const c_void) -> f3
     handle.levels.output()
 }
 
-/// Sets the dry/wet intensity ("strength").
-///
-/// 1.0 is fully processed output, 0.0 is the raw microphone, and values
-/// between blend the two with the dry path delay-compensated by the
-/// active model's reported latency (so a partial mix does not
-/// comb-filter).
-///
-/// One atomic store — never blocks, never rebuilds the engine, safe at
-/// UI slider rates and while stopped (the value carries into the next
-/// start). Out-of-range values are clamped; non-finite values are
-/// ignored. The same mix feeds the virtual microphone and the preview
-/// monitor. Returns 0, or -1 for a null handle.
+/// See docs/adr/0007-dsp-stages.md.
 ///
 /// # Safety
 ///
@@ -887,8 +635,7 @@ pub unsafe extern "C" fn noican_engine_last_error(
     unsafe { copy_string(&state.last_error, buffer, capacity) }
 }
 
-/// Number of runtime-selectable models (bypass included), taken from the
-/// registry catalog.
+/// See docs/adr/0009-model-catalog-fetch.md.
 #[unsafe(no_mangle)]
 pub extern "C" fn noican_model_count() -> usize {
     noican_models::catalog().count()
@@ -975,13 +722,7 @@ pub unsafe extern "C" fn noican_model_details(
     })
 }
 
-/// One picker rating for the model at `index`, 0–5 with "more is better".
-///
-/// `trait_id` follows `NoicanModelTrait` in noican.h: 0 = noise removal,
-/// 1 = voice quality, 2 = responsiveness (inverse latency),
-/// 3 = efficiency (inverse compute cost).
-///
-/// Returns -1 for an invalid index or trait selector.
+/// See docs/adr/0009-model-catalog-fetch.md.
 #[unsafe(no_mangle)]
 pub extern "C" fn noican_model_rating(index: usize, trait_id: i32) -> i32 {
     let Some(entry) = catalog_entry(index) else {
@@ -997,13 +738,7 @@ pub extern "C" fn noican_model_rating(index: usize, trait_id: i32) -> i32 {
     i32::from(rating)
 }
 
-/// Runs slow, panic-capable work (ONNX session construction, tar
-/// extraction, ...) behind a panic guard: a Rust panic crossing the C ABI
-/// would abort the whole app, so it is converted into an error string
-/// instead.
 fn guard_panics<T>(model_id: &str, work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-    // Nothing observes the closure's state after a panic; the result is
-    // discarded wholesale, so broken invariants cannot leak.
     catch_unwind(AssertUnwindSafe(work)).unwrap_or_else(|panic| {
         let message = panic
             .downcast_ref::<&str>()
@@ -1017,14 +752,6 @@ fn guard_panics<T>(model_id: &str, work: impl FnOnce() -> Result<T, String>) -> 
 }
 
 fn prepare_stage(models_dir: &Path, model_id: &str) -> Result<Box<dyn Stage>, String> {
-    // Registry stages may need weights; the bypass (not in the registry's
-    // ModelSpec list) needs nothing. fetch_model runs unconditionally,
-    // not only when files are missing: it no-ops per file whose pinned
-    // digest already matches, and it repairs a present-but-corrupt file
-    // here instead of letting it reach create_stage, which verifies
-    // digests and would refuse the stage. Stage preparation is a
-    // user-initiated action, so the re-hash costs far less than a
-    // refused start.
     if let Some(spec) = ModelSpec::find(model_id) {
         noican_models::fetch::fetch_model(models_dir, spec, |_line| {})
             .map_err(|error| format!("downloading {model_id} weights failed: {error}"))?;
@@ -1053,26 +780,10 @@ fn set_error(handle: &EngineHandle, error: String) -> i32 {
         .map_or(FAILURE, |mut state| state.fail(error))
 }
 
-/// Borrows the engine behind a C handle, or `None` for a null one.
-///
-/// # Safety
-///
-/// `handle` must be null or a live engine handle that is not destroyed
-/// while the borrow lasts (no caller keeps it past its own call).
 const unsafe fn engine_handle<'a>(handle: *const c_void) -> Option<&'a EngineHandle> {
     unsafe { handle.cast::<EngineHandle>().as_ref() }
 }
 
-/// Runs `read` on the running runtime under the control lock, or returns
-/// `None` when there is none to read: a null handle, a stopped engine, or
-/// a poisoned lock. The shared shape of the status and diagnostic
-/// getters, each of which maps `None` to its stopped value. Holds the
-/// control mutex, so it serves event-driven and 1 Hz callers, not the
-/// 20 Hz meter path.
-///
-/// # Safety
-///
-/// `handle` must be null or a live engine handle.
 unsafe fn with_runtime<T>(handle: *const c_void, read: impl FnOnce(&Runtime) -> T) -> Option<T> {
     let handle = unsafe { engine_handle(handle) }?;
     let state = handle.state.lock().ok()?;
@@ -1084,9 +795,6 @@ unsafe fn copy_string(value: &str, buffer: *mut c_char, capacity: usize) -> usiz
     if buffer.is_null() || capacity == 0 {
         return required;
     }
-    // A truncated copy must end on a UTF-8 char boundary — a multibyte
-    // sequence cut in the middle yields invalid UTF-8 for the caller
-    // even though it is NUL-terminated.
     let mut copied = value.len().min(capacity - 1);
     while !value.is_char_boundary(copied) {
         copied -= 1;
@@ -1156,7 +864,7 @@ mod tests {
 
     #[test]
     fn unknown_model_ids_are_rejected() {
-        let bogus = c"deepfilternet3"; // the old candidate-B id scheme
+        let bogus = c"deepfilternet3";
         assert!(parse_model_id(bogus.as_ptr()).is_err());
         let known = c"dfn3";
         assert_eq!(parse_model_id(known.as_ptr()).as_deref(), Ok("dfn3"));
@@ -1175,14 +883,11 @@ mod tests {
             unsafe { noican_engine_monitor_state(handle) },
             MonitorState::Off.as_raw()
         );
-        // Disabling an already-off monitor is an idempotent no-op.
         assert_eq!(unsafe { noican_engine_set_monitor(handle, 0) }, SUCCESS);
         assert_eq!(
             unsafe { noican_engine_monitor_state(handle) },
             MonitorState::Off.as_raw()
         );
-        // Enabling without a running engine fails with a clear reason and
-        // leaves the state off.
         assert_eq!(unsafe { noican_engine_set_monitor(handle, 1) }, FAILURE);
         let error = read_string(|buffer, capacity| unsafe {
             noican_engine_last_error(handle, buffer, capacity)
@@ -1198,14 +903,10 @@ mod tests {
 
     #[test]
     fn monitor_state_getter_is_null_safe_and_lock_free_under_state_changes() {
-        // Null handles read as off.
         assert_eq!(
             unsafe { noican_engine_monitor_state(ptr::null()) },
             MonitorState::Off.as_raw()
         );
-        // The getter reflects every protocol value written to the shared
-        // cell (as the monitor control and the worker's trip do), and
-        // maps unknown values back to off instead of leaking them.
         let handle = unsafe { noican_engine_create(ptr::null()) };
         assert!(!handle.is_null());
         let engine = unsafe { &*handle.cast::<EngineHandle>() };
@@ -1236,7 +937,6 @@ mod tests {
         assert!(!handle.is_null());
         assert!(unsafe { noican_engine_input_level(handle) }.abs() < f32::EPSILON);
         assert!(unsafe { noican_engine_output_level(handle) }.abs() < f32::EPSILON);
-        // Null handles are tolerated and also read as silence.
         assert!(unsafe { noican_engine_input_level(ptr::null()) }.abs() < f32::EPSILON);
         assert!(unsafe { noican_engine_output_level(ptr::null()) }.abs() < f32::EPSILON);
         unsafe { noican_engine_destroy(handle) };
@@ -1244,10 +944,6 @@ mod tests {
 
     #[test]
     fn monitor_target_check_is_null_safe_and_consistent() {
-        // The outcome depends on the host's audio devices (and on Linux it
-        // is always a refusal), but the contract holds everywhere: a null
-        // buffer only measures, and a nonzero result re-reads as a
-        // NUL-terminated reason string.
         let required = unsafe { noican_monitor_target_error(ptr::null_mut(), 0) };
         if required > 0 {
             let reason = read_string(|buffer, capacity| unsafe {
@@ -1270,10 +966,6 @@ mod tests {
 
     #[test]
     fn monitor_device_check_is_null_safe_and_consistent() {
-        // Same contract as the default-output check: a null buffer only
-        // measures, and a nonzero result re-reads as a NUL-terminated
-        // reason string. Device 0 (kAudioObjectUnknown) has unreadable
-        // properties, which fail open on macOS by policy.
         let required = unsafe { noican_monitor_device_error(0, ptr::null_mut(), 0) };
         if required > 0 {
             let reason = read_string(|buffer, capacity| unsafe {
@@ -1306,7 +998,6 @@ mod tests {
                 );
             }
         }
-        // The bypass profile is fixed: nothing removed, everything else full.
         assert_eq!(noican_model_rating(0, 0), 0);
         assert_eq!(noican_model_rating(0, 1), 5);
     }
@@ -1334,7 +1025,6 @@ mod tests {
         assert!((unsafe { noican_engine_intensity(handle) } - 1.0).abs() < f32::EPSILON);
         assert_eq!(unsafe { noican_engine_set_intensity(handle, 0.3) }, SUCCESS);
         assert!((unsafe { noican_engine_intensity(handle) } - 0.3).abs() < f32::EPSILON);
-        // Out-of-range values clamp; non-finite values are ignored.
         assert_eq!(unsafe { noican_engine_set_intensity(handle, 5.0) }, SUCCESS);
         assert!((unsafe { noican_engine_intensity(handle) } - 1.0).abs() < f32::EPSILON);
         assert_eq!(
@@ -1352,14 +1042,11 @@ mod tests {
 
     #[test]
     fn intensity_calls_are_null_safe_and_value_survives_while_stopped() {
-        // Null handles: setter fails cleanly, getter reads the default.
         assert_eq!(
             unsafe { noican_engine_set_intensity(ptr::null_mut(), 0.5) },
             FAILURE
         );
         assert!((unsafe { noican_engine_intensity(ptr::null()) } - 1.0).abs() < f32::EPSILON);
-        // The value is owned by the handle, not a runtime: setting it
-        // while stopped works and persists (it seeds the next start).
         let handle = unsafe { noican_engine_create(ptr::null()) };
         assert!(!handle.is_null());
         assert_eq!(unsafe { noican_engine_set_intensity(handle, 0.7) }, SUCCESS);
@@ -1382,8 +1069,6 @@ mod tests {
             let expected = rate as u32;
             assert_eq!(validate_capture_rate(rate), Ok(expected));
         }
-        // Core Audio nominal rates are whole hertz; a fractional value is
-        // a bogus reading and must not be rounded into an accepted rate.
         for rate in [
             0.0,
             -16_000.0,
@@ -1417,10 +1102,6 @@ mod tests {
             error.contains("4000") && error.contains("invalid capture sample rate"),
             "unhelpful message: {error}"
         );
-        // Valid rates — a telephony profile and the 44.1 kHz family —
-        // pass validation; on portable builds the transport itself then
-        // refuses (and macOS refuses the nonexistent device 0), but
-        // never with the rate message.
         for rate in [16_000.0, 44_100.0] {
             let result = unsafe { noican_engine_start_native(handle, 0, 0, rate, model.as_ptr()) };
             assert_eq!(result, FAILURE);
@@ -1446,25 +1127,16 @@ mod tests {
         let handle = unsafe { noican_engine_create(ptr::null()) };
         assert!(!handle.is_null());
         let model = c"passthrough";
-        // A virtual output without channels cannot receive audio: refused
-        // up front, before weights or audio objects are touched.
         let result = unsafe { noican_engine_start(handle, 0, 2, 0, model.as_ptr()) };
         assert_eq!(result, FAILURE);
         let error = read_string(|buffer, capacity| unsafe {
             noican_engine_last_error(handle, buffer, capacity)
         })
         .expect("range refusal records an error");
-        // (`read_string` truncates at 64 bytes; the prefix is what matters.)
         assert!(
             error.starts_with("virtual output routing failed"),
             "unhelpful message: {error}"
         );
-        // Valid layouts — the built-in microphone (no own outputs) and a
-        // headphone-equipped microphone (two outputs ahead of the
-        // virtual output) — pass validation; on portable builds the
-        // transport itself then refuses (and macOS fails on the
-        // nonexistent device 0 or its layout), but never with the
-        // empty-range message.
         for first in [0, 2] {
             let result = unsafe { noican_engine_start(handle, 0, first, 2, model.as_ptr()) };
             assert_eq!(result, FAILURE);
@@ -1507,7 +1179,6 @@ mod tests {
 
     #[test]
     fn debug_stats_read_zero_and_null_safe_while_stopped() {
-        // Null handles read as zero for every diagnostic counter.
         assert_eq!(unsafe { noican_engine_output_underruns(ptr::null()) }, 0);
         assert_eq!(unsafe { noican_engine_worker_blocks(ptr::null()) }, 0);
         assert_eq!(
@@ -1516,7 +1187,6 @@ mod tests {
         );
         assert_eq!(unsafe { noican_engine_worker_block_max_ns(ptr::null()) }, 0);
         assert_eq!(unsafe { noican_engine_worker_realtime(ptr::null()) }, 0);
-        // A stopped engine (no runtime) also reads zero everywhere.
         let handle = unsafe { noican_engine_create(ptr::null()) };
         assert!(!handle.is_null());
         assert_eq!(unsafe { noican_engine_output_underruns(handle) }, 0);
@@ -1532,9 +1202,7 @@ mod tests {
 
     #[test]
     fn debug_stats_reset_is_null_safe_and_a_no_op_while_stopped() {
-        // Null handle: must not crash.
         unsafe { noican_engine_reset_debug_stats(ptr::null_mut()) };
-        // Stopped engine: a no-op that leaves the handle fully usable.
         let handle = unsafe { noican_engine_create(ptr::null()) };
         assert!(!handle.is_null());
         unsafe { noican_engine_reset_debug_stats(handle) };

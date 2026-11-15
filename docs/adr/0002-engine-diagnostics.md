@@ -1,0 +1,379 @@
+# 0002. Engine diagnostics and observability
+
+Status: Accepted
+
+Moved from code comments on 2026-11-21 (the delete-comment pass).
+The original wording is preserved under each topic; the source
+location of each comment at the time of the move (commit 397e3df)
+is noted above its text.
+
+## diagnostic-counters
+
+Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 834–841.
+
+Diagnostic: output callbacks that were fully starved — zero
+real samples popped — after the ring first produced audio (the
+unprimed ramp-up on the aggregate path is start-up latency, not
+underrun, and partial shortfalls are benign block-quantization
+jitter). A count that keeps growing means the inference worker
+misses its 10 ms block budget — audible as dropouts in
+recordings from the virtual microphone. Resettable via
+[`Runtime::reset_debug_stats`] for per-model attribution.
+
+Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 847–851.
+
+Diagnostic: input samples the capture ring dropped because it
+was full — the inference worker (or the capture side) fell
+behind by more than the ring's capacity. Audible as clipped
+input reaching the models; resettable via
+[`Runtime::reset_debug_stats`] for per-model attribution.
+
+Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 891–894.
+
+Zeroes the diagnostic counters (underruns, input overruns and
+worker block statistics) so a model switch can be measured in
+isolation. Plain relaxed stores — safe while the callbacks and
+the worker run.
+
+Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 1566–1567.
+
+Nanoseconds since `started`, saturated into a `u64` (585 years —
+unreachable in practice, but the stats must never panic).
+
+## diagnostics-counter-baseline
+
+Source: `macos/Sources/NoicanMenuBar/EngineDiagnostics.swift` lines 19–22.
+
+Last underrun count already reported. The baseline resets with
+the engine counters: on engine start (via `reset()`) and on the
+post-switch stats reset (a counter that moved backwards only
+rebases silently).
+
+Source: `macos/Sources/NoicanMenuBar/EngineDiagnostics.swift` lines 32–37.
+
+Last virtual-output level reading written to the log. Deliberately
+*not* reset with the engine counters: the Noican Microphone slider
+belongs to the device, not to a transport, so a restart with the
+slider still down must not log a fresh "detection" of a slider
+that never moved — the log is meant as evidence of how often and
+how far it actually moves.
+
+## engine-diagnostics
+
+Source: `crates/noican-ffi/src/lib.rs` lines 663–672.
+
+Heartbeat: total input frames delivered since the engine started.
+
+Returns 0 while stopped. A value that stops advancing while
+`noican_engine_is_running` reports 1 means the device stopped calling
+back (unplugged microphone, coreaudiod restart, post-sleep stall); the
+UI polls this once per second.
+
+# Safety
+
+`handle` must be null or a live engine handle.
+
+Source: `crates/noican-ffi/src/lib.rs` lines 678–696.
+
+Diagnostic: output callbacks that delivered no real audio at all —
+the output ring was dry for the entire I/O period.
+
+Counted only after the ring first carried real audio (the start-up
+ramp is latency, not underrun), and partial zero-fills are not
+counted (benign block-quantization jitter — see the render
+callbacks). Returns 0 while stopped. A growing
+count means the inference worker misses its 10 ms block budget for
+the active model — audible as dropouts in recordings from the
+virtual microphone, while the preview monitor masks it behind its
+re-priming cushion. Counted on both transports (aggregate and
+split).
+
+Cumulative since start or the last [`noican_engine_reset_debug_stats`];
+reset after a model switch to attribute underruns to one model.
+
+# Safety
+
+`handle` must be null or a live engine handle.
+
+Source: `crates/noican-ffi/src/lib.rs` lines 702–713.
+
+Diagnostic: input samples the capture ring dropped because it was
+full.
+
+A full ring means the inference worker (or the capture side) fell
+behind by more than the whole ring — audible as clipped input
+reaching the models. Counted on both transports (aggregate and
+split), cumulative since start or the last
+[`noican_engine_reset_debug_stats`]; returns 0 while stopped.
+
+# Safety
+
+`handle` must be null or a live engine handle.
+
+Source: `crates/noican-ffi/src/lib.rs` lines 719–725.
+
+Diagnostic: engine blocks the inference worker has processed since
+start or the last [`noican_engine_reset_debug_stats`] (the
+denominator for the over-budget count). Returns 0 while stopped.
+
+# Safety
+
+`handle` must be null or a live engine handle.
+
+Source: `crates/noican-ffi/src/lib.rs` lines 731–739.
+
+Diagnostic: worker blocks whose processing exceeded the 10 ms budget.
+
+Counted since start or the last [`noican_engine_reset_debug_stats`].
+Returns 0 while stopped. Blocks over budget are what drain the
+output ring into underrun.
+
+# Safety
+
+`handle` must be null or a live engine handle.
+
+Source: `crates/noican-ffi/src/lib.rs` lines 757–770.
+
+Diagnostic: 1 when the inference worker's mach time-constraint
+(real-time) promotion succeeded at engine start, 0 otherwise
+(including while stopped and for a null handle).
+
+0 while running means the promotion failed and the worker runs at
+default priority — budget misses in that state may be scheduling,
+not model cost, and hardware underrun numbers should be read with
+that in mind. The value is the start-time promotion result, not
+live membership: the kernel may later demote a persistently
+overrunning thread without this flag changing.
+
+# Safety
+
+`handle` must be null or a live engine handle.
+
+Source: `crates/noican-ffi/src/lib.rs` lines 776–785.
+
+Zeroes the diagnostic counters of the running engine.
+
+Resets the output underruns, input overruns and the worker block
+statistics so a freshly selected model can be measured in isolation. A no-op while
+stopped or for a null handle. Plain atomic stores on the Rust side —
+safe while audio runs.
+
+# Safety
+
+`handle` must be null or a live engine handle.
+
+Source: `macos/Sources/NoicanMenuBar/RustEngine.swift` lines 98–100.
+
+Zero the underrun/block-time diagnostics on every successful
+switch, so the health poll attributes what follows to the
+newly published model (see EngineDiagnostics).
+
+Source: `macos/Sources/NoicanMenuBar/RustEngine.swift` lines 153–155.
+
+Decayed linear peak (0–1) of the model input, measured per 10 ms
+block by the inference worker; 0 while stopped. Reads one atomic —
+never blocks, so it is safe to poll from the UI.
+
+Source: `macos/Sources/NoicanMenuBar/RustEngine.swift` lines 183–184.
+
+Heartbeat: input frames delivered by the audio device since start.
+Stops advancing when the device stops calling back.
+
+Source: `macos/Sources/NoicanMenuBar/RustEngine.swift` lines 189–195.
+
+Diagnostic: output callbacks that delivered no real audio at all
+— the output ring dry for an entire I/O period (the start-up
+ramp and benign partial zero-fills are excluded on the Rust
+side). A growing count means the inference worker misses its
+10 ms block budget for the active model — audible as dropouts in
+recordings from the virtual microphone. Cumulative since engine
+start or the last `resetDebugStats()`.
+
+Source: `macos/Sources/NoicanMenuBar/RustEngine.swift` lines 200–204.
+
+Diagnostic: input samples the capture ring dropped because it
+was full — the inference worker (or the capture side) fell
+behind by more than the whole ring, audible as clipped input
+reaching the models. Cumulative since engine start or the last
+`resetDebugStats()`.
+
+Source: `macos/Sources/NoicanMenuBar/RustEngine.swift` lines 209–211.
+
+Diagnostic: engine blocks the inference worker has processed
+since start or the last `resetDebugStats()` (the denominator for
+`workerBlocksOverBudget`).
+
+Source: `macos/Sources/NoicanMenuBar/RustEngine.swift` lines 216–217.
+
+Diagnostic: worker blocks whose processing exceeded the 10 ms
+block budget — what drains the output ring into underrun.
+
+Source: `macos/Sources/NoicanMenuBar/RustEngine.swift` lines 227–231.
+
+Diagnostic: whether the inference worker's mach time-constraint
+(real-time) promotion succeeded at engine start. False while
+running means the promotion failed — budget misses in that state
+may be scheduling, not model cost. Start-time result only; the
+kernel may demote a persistently overrunning thread later.
+
+Source: `macos/Sources/NoicanMenuBar/RustEngine.swift` lines 236–237.
+
+Zeroes the diagnostic counters so a freshly selected model can
+be measured in isolation. A no-op while stopped.
+
+## engine-diagnostics-log-only
+
+Source: `macos/Sources/NoicanMenuBar/EngineDiagnostics.swift` lines 5–12.
+
+Reports the engine's real-time budget diagnostics (output-ring
+underruns plus the worker's block-time statistics) to the unified
+log. Underruns are a hardware-diagnosis tool, not a user-facing
+control, so nothing renders in the popover by design: one warning
+line per growth tick — sampled by the 1 Hz health poll — keeps the
+UI quiet while the counter, the active model, and the block
+statistics stay retrievable from Console.app (subsystem
+`com.lightsound.noican`, category `engine-diagnostics`).
+
+Source: `macos/Sources/NoicanMenuBar/EngineDiagnostics.swift` lines 57–63.
+
+Samples the engine's counters and logs one warning line when the
+underrun count grew since the previous sample, carrying the
+active model id and the worker block statistics — enough to
+attribute dropouts to a model on hardware without any UI.
+`splitTransport` says which transport shape the session runs
+(the control plane knows it from the start path it took) and
+only selects the prefix of the one-time routing line.
+
+Source: `macos/Sources/NoicanMenuBar/EngineDiagnostics.swift` lines 75–81.
+
+Where the engine output lands, as AUHAL reports it: inside
+the aggregate (channel map) on the aggregate path, or the
+virtual output's channel count and the render format sized
+from it on the split path. Neither is visible otherwise,
+and this is the line to read when the virtual microphone
+records silence. The prefixes differ so the acceptance
+procedures can pin each transport's line by name.
+
+Source: `macos/Sources/NoicanMenuBar/EngineDiagnostics.swift` lines 103–105.
+
+Input-side counterpart: capture-ring overruns drop real
+audio before it ever reaches the engine — underruns alone
+cannot show it, and `framesProcessed` still advances.
+
+## engine-diagnostics-logging
+
+Source: `macos/Sources/NoicanMenuBar/AppState.swift` lines 70–74.
+
+Real-time budget diagnostics (output underruns, worker block
+times), sampled by the 1 Hz health poll and reported to the
+unified log instead of the popover (see `EngineDiagnostics`).
+Internal so the virtual-output level check in its sibling file
+logs through the same object.
+
+## engine-liveness-lag
+
+Source: `macos/NoicanState/Sources/NoicanState/AppEvent.swift` lines 13–18.
+
+A mode-control segment was tapped. `monitorTargetError` is the
+preview-target pre-flight (nil when the default output may receive
+the preview; only sampled for Preview taps), and `isEngineRunning`
+is the engine's live answer — the machine's belief can lag it by
+up to one health-poll tick, and a tap in that window must rebuild
+instead of toggling the monitor on a dead transport.
+
+## health-polling-lifecycle
+
+Source: `macos/Sources/NoicanMenuBar/AppState.swift` lines 62–65.
+
+Watches for engine faults/unexpected stops while a transport is
+live. Owned here (not by the menu view) so faults are detected
+even when the popover is closed; started/stopped by
+`syncFaultPolling()` from the reducer's `hasLiveTransport`.
+
+Source: `macos/Sources/NoicanMenuBar/AppState.swift` lines 454–457.
+
+Derives the health-poll task from the reducer state: it runs
+exactly while a transport is live (including the failed-but-live
+window after an engine fault, matching the teardown-bounded
+polling this replaces).
+
+## latency-reporting
+
+Source: `crates/noican-core/src/stage.rs` lines 29–31.
+
+Total internal latency in samples at [`ENGINE_SAMPLE_RATE`]
+(resampling + frame buffering; excludes the model's own algorithmic
+lookahead unless the implementation accounts for it).
+
+Source: `crates/noican-core/src/stage.rs` lines 62–65.
+
+Additional algorithmic delay of the model itself, in samples at
+[`Self::sample_rate`] (e.g. STFT window minus hop for overlap-add
+models, or lookahead frames). Used only for latency reporting and
+offline alignment; defaults to zero.
+
+## level-meters
+
+Source: `crates/noican-ffi/src/lib.rs` lines 791–799.
+
+Decayed linear peak (0.0–1.0) of the model input (pre-processing),
+measured per 10 ms worker block; 0.0 while the engine is stopped.
+
+Reads one atomic without taking the control lock, so it never blocks —
+regardless of what the control plane is doing.
+
+# Safety
+
+`handle` must be null or a live engine handle.
+
+Source: `crates/noican-ffi/src/lib.rs` lines 808–816.
+
+Decayed linear peak (0.0–1.0) of the model output (post-processing),
+measured per 10 ms worker block; 0.0 while the engine is stopped.
+
+Reads one atomic without taking the control lock, so it never blocks —
+regardless of what the control plane is doing.
+
+# Safety
+
+`handle` must be null or a live engine handle.
+
+## meters-outside-reducer
+
+Source: `macos/Sources/NoicanMenuBar/AppState.swift` lines 27–30.
+
+Peak meters, refreshed by `pollLevels()` only while the popover is
+open. Display-only samples of lock-free engine atomics — not state
+machine state, so they stay outside the reducer. Independent of
+the Preview state: they move whenever the engine runs.
+
+## output-underrun-counting
+
+Source: `crates/noican-coreaudio/src/callback.rs` lines 143–157.
+
+The output side of a render callback on either transport: pops the
+worker's output ring into the device buffer as dual mono
+([`fill_dual_mono`]) and counts complete starvation as underrun.
+
+A callback counts as an underrun only when it delivered no real sample
+at all *after* the ring first produced audio. The ramp-up before that
+is start-up latency, not underrun: the aggregate transport's ring
+starts empty (the worker needs one full block of input before it
+produces anything), so counting it would flag every model, including
+ones that never miss the budget. Partial shortfalls are excluded on
+purpose too: the worker writes 480-sample blocks into (typically)
+smaller I/O periods, so a few benign partial zero-fills occur on every
+model while the ring's phase cushion forms. A fully starved callback,
+by contrast, means the worker fell a whole I/O period behind — audible
+as dropouts in recordings from the virtual microphone.
+
+Source: `crates/noican-coreaudio/src/callback.rs` lines 162–163.
+
+Whether any sample has ever been popped. Callback-thread-only
+state, hence no atomic.
+
+Source: `crates/noican-coreaudio/src/callback.rs` lines 179–181.
+
+Renders one callback into `samples` (interleaved, `channels` per
+frame); frames the ring cannot serve render silence. Never blocks;
+an underrun is counted with a relaxed add (real-time safe).

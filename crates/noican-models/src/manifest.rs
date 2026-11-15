@@ -1,9 +1,4 @@
-//! Static registry of supported models and their downloadable weights.
-//!
-//! Weights are never committed to the repository; they are fetched from the
-//! official distribution points recorded in docs/tech-research.md §14 (see
-//! [`crate::fetch`] and docs/models.md). SHA-256 digests are pinned to the
-//! artifacts verified during Phase 0 bring-up.
+//! See docs/adr/0009-model-catalog-fetch.md.
 
 /// Broad role of a model in the pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,14 +16,14 @@ pub struct FileSpec {
     pub name: &'static str,
     /// Direct download URL (official release asset).
     pub url: &'static str,
-    /// Expected SHA-256 (lowercase hex), when pinned.
+    /// See docs/adr/0009-model-catalog-fetch.md.
     pub sha256: Option<&'static str>,
 }
 
 /// A model available to the engine and CLI.
 #[derive(Debug, Clone, Copy)]
 pub struct ModelSpec {
-    /// Stable identifier (CLI argument, config value, UI key).
+    /// See docs/adr/0009-model-catalog-fetch.md.
     pub id: &'static str,
     /// Human-readable name for UIs.
     pub display_name: &'static str,
@@ -38,14 +33,9 @@ pub struct ModelSpec {
     pub sample_rate: u32,
     /// License of the weights (informational; see `THIRD_PARTY_NOTICES.md`).
     pub license: &'static str,
-    /// Files required at runtime (empty when the model is embedded in the
-    /// binary or when everything comes from [`ModelSpec::depends_on`]).
+    /// See docs/adr/0009-model-catalog-fetch.md.
     pub files: &'static [FileSpec],
-    /// Ids of registry models whose files this model also needs at
-    /// runtime (a composite stage built around another entry's weights).
-    /// Fetching and fetch-status checks follow these transitively; the
-    /// stage factory resolves their file paths through the dependency's
-    /// own spec, so the weights live in one place on disk.
+    /// See docs/adr/0009-model-catalog-fetch.md.
     pub depends_on: &'static [&'static str],
 }
 
@@ -56,9 +46,7 @@ impl ModelSpec {
         ALL_MODELS.iter().find(|m| m.id == id)
     }
 
-    /// The registry entries named in [`ModelSpec::depends_on`] (direct
-    /// dependencies only; the registry keeps dependency chains one level
-    /// deep, which a unit test pins).
+    /// See docs/adr/0009-model-catalog-fetch.md.
     pub fn dependencies(&self) -> impl Iterator<Item = &'static Self> {
         self.depends_on.iter().filter_map(|id| Self::find(id))
     }
@@ -86,8 +74,6 @@ pub static ALL_MODELS: &[ModelSpec] = &[
         sample_rate: 48_000,
         license: "Apache-2.0",
         files: &[FileSpec {
-            // Not on the sherpa-onnx GitHub release yet (docs are ahead of
-            // the release); the official ceva-ip Hugging Face repo hosts it.
             name: "dpdfnet8_48khz_hr.onnx",
             url: "https://huggingface.co/Ceva-IP/DPDFNet/resolve/main/onnx/dpdfnet8_48khz_hr.onnx",
             sha256: Some("7b3afbb260a08fe9af3d16e3bda992971be1e7e951d1dee7c2d235f5c43f5631"),
@@ -100,7 +86,6 @@ pub static ALL_MODELS: &[ModelSpec] = &[
         family: ModelFamily::Denoise,
         sample_rate: 48_000,
         license: "MIT OR Apache-2.0",
-        // Embedded in the deep_filter crate (default-model feature).
         files: &[],
         depends_on: &[],
     },
@@ -111,9 +96,6 @@ pub static ALL_MODELS: &[ModelSpec] = &[
         sample_rate: 48_000,
         license: "MIT OR Apache-2.0",
         files: &[FileSpec {
-            // Commit-pinned (tag v0.5.6, the `deep_filter` revision the
-            // workspace builds against); not part of the crate's embedded
-            // default model.
             name: "DeepFilterNet3_ll_onnx.tar.gz",
             url: "https://raw.githubusercontent.com/Rikorose/DeepFilterNet/978576aa8400552a4ce9730838c635aa30db5e61/models/DeepFilterNet3_ll_onnx.tar.gz",
             sha256: Some("5998e58e8ba0e09bb76986ef97b84afa065a571ef282d4a1222f341e3251cf3a"),
@@ -127,7 +109,6 @@ pub static ALL_MODELS: &[ModelSpec] = &[
         sample_rate: 16_000,
         license: "MIT",
         files: &[FileSpec {
-            // Commit-pinned permalink (the repo has no releases).
             name: "ulunas_stream_simple.onnx",
             url: "https://raw.githubusercontent.com/Xiaobin-Rong/ul-unas/00f7c700da43d38347f30a6ccebd86fcbc798e07/ulunas_onnx/onnx_models/ulunas_stream_simple.onnx",
             sha256: Some("f2e804d54d6a88f4f82f44d86c9f1cf646db2509bfca935cfbfc5fcd8cbfac3b"),
@@ -153,8 +134,6 @@ pub static ALL_MODELS: &[ModelSpec] = &[
         family: ModelFamily::SpeakerSuppression,
         sample_rate: 48_000,
         license: "Apache-2.0",
-        // Runs the `hush` weights inside a 48 kHz band-split wrapper (see
-        // `stages::hush_wideband`); no files of its own.
         files: &[],
         depends_on: &["hush"],
     },

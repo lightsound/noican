@@ -2,44 +2,20 @@ import Foundation
 import NoicanState
 import os
 
-/// Reports the engine's real-time budget diagnostics (output-ring
-/// underruns plus the worker's block-time statistics) to the unified
-/// log. Underruns are a hardware-diagnosis tool, not a user-facing
-/// control, so nothing renders in the popover by design: one warning
-/// line per growth tick — sampled by the 1 Hz health poll — keeps the
-/// UI quiet while the counter, the active model, and the block
-/// statistics stay retrievable from Console.app (subsystem
-/// `com.lightsound.noican`, category `engine-diagnostics`).
 @MainActor
 final class EngineDiagnostics {
     private static let log = Logger(
         subsystem: "com.lightsound.noican", category: "engine-diagnostics"
     )
 
-    /// Last underrun count already reported. The baseline resets with
-    /// the engine counters: on engine start (via `reset()`) and on the
-    /// post-switch stats reset (a counter that moved backwards only
-    /// rebases silently).
     private var lastUnderrunCount: UInt64 = 0
 
-    /// Last input-overrun count already reported. Same reset contract
-    /// as `lastUnderrunCount` (the engine counters reset together).
     private var lastInputOverrunCount: UInt64 = 0
 
-    /// Whether the one-time transport line was written for this start.
     private var startupLogged = false
 
-    /// Last virtual-output level reading written to the log. Deliberately
-    /// *not* reset with the engine counters: the Noican Microphone slider
-    /// belongs to the device, not to a transport, so a restart with the
-    /// slider still down must not log a fresh "detection" of a slider
-    /// that never moved — the log is meant as evidence of how often and
-    /// how far it actually moves.
     private var lastVirtualOutputLevel = VirtualOutputLevel.nominal
 
-    /// True when the process runs translated under Rosetta 2 — inference
-    /// would be silently slower, so hardware budget numbers must carry
-    /// this bit.
     private static let isTranslated: Bool = {
         var flag: Int32 = 0
         var size = MemoryLayout<Int32>.size
@@ -47,20 +23,12 @@ final class EngineDiagnostics {
         return status == 0 && flag == 1
     }()
 
-    /// Rebases the baseline for a fresh transport (engine start).
     func reset() {
         lastUnderrunCount = 0
         lastInputOverrunCount = 0
         startupLogged = false
     }
 
-    /// Samples the engine's counters and logs one warning line when the
-    /// underrun count grew since the previous sample, carrying the
-    /// active model id and the worker block statistics — enough to
-    /// attribute dropouts to a model on hardware without any UI.
-    /// `splitTransport` says which transport shape the session runs
-    /// (the control plane knows it from the start path it took) and
-    /// only selects the prefix of the one-time routing line.
     func sample(_ engine: RustEngine, activeModelID: String, splitTransport: Bool) {
         if !startupLogged {
             startupLogged = true
@@ -72,13 +40,6 @@ final class EngineDiagnostics {
                 \(Self.isTranslated, privacy: .public)
                 """
             )
-            // Where the engine output lands, as AUHAL reports it: inside
-            // the aggregate (channel map) on the aggregate path, or the
-            // virtual output's channel count and the render format sized
-            // from it on the split path. Neither is visible otherwise,
-            // and this is the line to read when the virtual microphone
-            // records silence. The prefixes differ so the acceptance
-            // procedures can pin each transport's line by name.
             if let routing = engine.routingDescription {
                 let prefix = splitTransport ? "Split output routing" : "Aggregate output routing"
                 Self.log.info("\(prefix, privacy: .public): \(routing, privacy: .public)")
@@ -100,9 +61,6 @@ final class EngineDiagnostics {
                 """
             )
         }
-        // Input-side counterpart: capture-ring overruns drop real
-        // audio before it ever reaches the engine — underruns alone
-        // cannot show it, and `framesProcessed` still advances.
         let overruns = engine.inputOverruns
         defer { lastInputOverrunCount = overruns }
         if overruns > lastInputOverrunCount {
@@ -116,11 +74,6 @@ final class EngineDiagnostics {
         }
     }
 
-    /// Records a reading of the virtual output device's own volume/mute
-    /// controls: one line per *distinct* reading (a turned-down slider
-    /// logs its scalar again whenever it moves; the return to unity logs
-    /// once), nothing while the reading is unchanged. Detection only —
-    /// the level is never written (see `VirtualOutputLevel`).
     func recordVirtualOutputLevel(_ level: VirtualOutputLevel, deviceName: String) {
         guard level != lastVirtualOutputLevel else {
             return
@@ -128,10 +81,6 @@ final class EngineDiagnostics {
         lastVirtualOutputLevel = level
         switch level {
         case let .turnedDown(scalar):
-            // Percent first (the slider position as the user sees it),
-            // scalar second for exact comparison between runs. Truncated,
-            // not rounded: a reading just under the unity threshold must
-            // not print "100%" next to "below unity".
             let percent = Int(scalar * 100)
             Self.log.warning(
                 """

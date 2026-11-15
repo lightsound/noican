@@ -5,100 +5,35 @@ import NoicanState
 import ServiceManagement
 import os
 
-/// The runtime shell around the pure state machine in the `NoicanState`
-/// package: it samples the environment (Core Audio device lists,
-/// pre-flight checks, engine health), feeds everything into
-/// `AppReducer.reduce` as events, performs the effects the reducer
-/// requests against the aggregate and the Rust engine, and publishes the
-/// resulting `AppModel` for SwiftUI. All transition *decisions* live in
-/// the reducer; nothing here changes `model` except `dispatch(_:)`.
 @MainActor
 final class AppState: ObservableObject {
-    /// Internal for the extensions in sibling files (the listener
-    /// observation in `ListenerObservation.swift` logs through it).
     static let log = Logger(
         subsystem: "com.lightsound.noican", category: "engine-diagnostics"
     )
 
-    /// The reducer state, replaced wholesale by `dispatch(_:)`. The UI
-    /// renders its projections (`statusText`, `phase`, message slots, …),
-    /// which are all derived from settled snapshots.
     @Published private(set) var model: AppModel
-    /// Peak meters, refreshed by `pollLevels()` only while the popover is
-    /// open. Display-only samples of lock-free engine atomics — not state
-    /// machine state, so they stay outside the reducer. Independent of
-    /// the Preview state: they move whenever the engine runs.
     @Published private(set) var inputLevel: Float = 0
     @Published private(set) var outputLevel: Float = 0
 
-    /// Selectable models, read from the Rust registry at launch.
     let models = RustEngine.models()
 
-    /// Model selected on first launch (also labeled "Default" in the
-    /// model list). The default must be a model whose training data is
-    /// clear for commercial use (docs/tech-research.md §11, licensing
-    /// notes); of the registered models, only `dfn3` is.
     nonisolated static let defaultModelID = "dfn3"
 
-    /// `UserDefaults` keys for the persisted preferences. Only picker
-    /// state is persisted (microphone UID, model id, strength) — never
-    /// the mode: the app always launches Off so it never captures the
-    /// microphone without a user action.
     private enum PreferenceKey {
         static let modelID = "selectedModelID"
         static let inputUID = "selectedInputUID"
         static let intensity = "intensity"
     }
 
-    /// Full Core Audio device snapshot (the reducer sees the pure
-    /// `InputDevice` projection; effects need the identifiers here).
-    /// Internal for the extensions in sibling files (the virtual-output
-    /// level check); written only by `refreshDevices()`.
     private(set) var allDevices: [AudioDeviceInfo] = []
     private let aggregate = AggregateDevice()
-    /// Internal for the extensions in sibling files (the listeners
-    /// in `ListenerObservation.swift` read the monitor device off it).
     var engine: RustEngine?
-    /// Watches for engine faults/unexpected stops while a transport is
-    /// live. Owned here (not by the menu view) so faults are detected
-    /// even when the popover is closed; started/stopped by
-    /// `syncFaultPolling()` from the reducer's `hasLiveTransport`.
     private var faultPollTask: Task<Void, Never>?
-    /// Heartbeat state for detecting a device that stopped calling back.
     private var lastFrameCount: UInt64 = 0
     private var stalledTicks = 0
-    /// Real-time budget diagnostics (output underruns, worker block
-    /// times), sampled by the 1 Hz health poll and reported to the
-    /// unified log instead of the popover (see `EngineDiagnostics`).
-    /// Internal so the virtual-output level check in its sibling file
-    /// logs through the same object.
     let diagnostics = EngineDiagnostics()
-    /// Follows the monitor's actual output device while the preview
-    /// plays: a data-source flip (headphone jack → internal speakers on
-    /// the same built-in device) fires no device-list or default-output
-    /// notification, so this per-device listener — plus the 1 Hz health
-    /// poll as belt and braces — is what catches it. Registered when a
-    /// monitor enable settles; always removed when the monitor disarms
-    /// (`syncMonitorSafetyObservation`).
-    /// Internal for `ListenerObservation.swift`, which owns its
-    /// registration lifecycle.
     var monitorSafetyListener: (device: AudioObjectID, block: AudioObjectPropertyListenerBlock)?
-    /// Rate the running transport captures at when the native-capture
-    /// (split) path is active, or nil on the 48 kHz aggregate path.
-    /// Recorded by the start effect and used as the baseline the
-    /// nominal-rate listener compares against.
-    /// Internal for `ListenerObservation.swift` (the nominal-rate
-    /// listener compares against it).
     var activeCaptureRate: Double?
-    /// Watches the running session's microphone for nominal-rate changes
-    /// while the native-capture path is active: Bluetooth headsets
-    /// renegotiate between A2DP and HFP profiles, and the split
-    /// transport captures at the rate fixed at start time, so a change
-    /// means the transport must be rebuilt. Registered when a
-    /// native-capture start settles; always removed when the session
-    /// ends (`syncInputRateObservation`).
-    /// Internal for `ListenerObservation.swift`, which owns its
-    /// registration lifecycle.
     var inputRateListener: (device: AudioObjectID, block: AudioObjectPropertyListenerBlock)?
 
     init() {
@@ -118,8 +53,6 @@ final class AppState: ObservableObject {
             isEngineAvailable: engine != nil
         )
         refreshDevices()
-        // Restore after the first device read so the reducer can vet the
-        // stored microphone against the live list.
         restorePreferences()
         dispatch(.launchAtLoginStatusRead(
             isEnabled: Self.isLoginItemRegistered(SMAppService.mainApp.status)
@@ -128,15 +61,7 @@ final class AppState: ObservableObject {
         registerDefaultOutputListener()
     }
 
-    // MARK: - User intents (forwarded to the reducer with environment reads)
-
-    /// The mode control is intent: the reducer never moves it on its own
-    /// and re-tapping the selected segment retries an unfulfilled mode.
     func setMode(_ newMode: EngineMode) {
-        // Environment reads the pure reducer cannot perform, sampled at
-        // dispatch time. Guarded on busy first so a tap during a
-        // transition never touches the engine (the monitor-target check
-        // is lock-free, but `isRunning` takes the control mutex).
         guard !model.isBusy, let engine else {
             return
         }
@@ -147,10 +72,6 @@ final class AppState: ObservableObject {
         ))
     }
 
-    /// User-initiated model pick (the Picker's binding setter).
-    /// Programmatic reverts happen inside the reducer, which never
-    /// re-enters this path — so they cannot wipe the failure message
-    /// they accompany.
     func selectModel(_ id: String) {
         dispatch(.modelSelected(id))
     }
@@ -159,31 +80,18 @@ final class AppState: ObservableObject {
         dispatch(.microphoneSelected(uid))
     }
 
-    /// Strength slider binding setter (0 = raw microphone, 1 = fully
-    /// processed). Not busy-gated: applying it is a lock-free atomic
-    /// write, so the slider stays live even during a model download.
     func setIntensity(_ value: Double) {
         dispatch(.intensityChanged(value))
     }
 
-    /// Login-item toggle binding setter. The reducer moves the toggle
-    /// optimistically; the completion event snaps it back to the re-read
-    /// `SMAppService` status when registration fails.
     func setLaunchAtLogin(_ enabled: Bool) {
         dispatch(.launchAtLoginToggled(enabled))
     }
 
-    /// Fed by `LicenseModel` whenever the license status changes.
     func setProcessingAllowed(_ isAllowed: Bool) {
         dispatch(.processingAllowanceChanged(isAllowed))
     }
 
-    // MARK: - Reducer plumbing
-
-    /// The single writer of `model`: reduce, publish, persist changed
-    /// preferences, perform effects, then re-derive the pollers from the
-    /// new state. Internal (not private) so the extensions in sibling
-    /// files can dispatch their observations through the same path.
     func dispatch(_ event: AppEvent) {
         let previous = model
         let (newModel, effects) = AppReducer.reduce(model, event)
@@ -221,10 +129,6 @@ final class AppState: ObservableObject {
             let input = allDevices.first(where: { $0.uid == attempt.inputUID }),
             let virtualOutput = AudioDeviceCatalog.virtualOutput(in: allDevices)
         else {
-            // The reducer pre-flighted all three against the same
-            // snapshot, so this cannot happen; fail the attempt cleanly
-            // rather than trap. Deferred: completions never re-enter
-            // `dispatch` while an effect list is still being performed.
             Task { @MainActor in
                 self.dispatch(.startCompleted(error: "The selected device disappeared"))
             }
@@ -232,13 +136,7 @@ final class AppState: ObservableObject {
         }
         let aggregate = self.aggregate
         let modelID = attempt.modelID
-        // Snapshot capability, kept as the fallback vote for the
-        // transport-shape decision below.
         let snapshotCapture = model.inputDevices.first { $0.uid == attempt.inputUID }?.capture
-        // Detached: aggregate creation polls the device until it is alive
-        // (up to ~1.5 s) and engine start may download weights — neither
-        // may block the main actor. The busy machine state keeps this the
-        // only operation touching `aggregate`/`engine` until it finishes.
         Task.detached {
             var captureRate: Double?
             let result = Result {
@@ -248,15 +146,9 @@ final class AppState: ObservableObject {
                     )
                     try engine.start(composition, model: modelID)
                 } else {
-                    // The virtual output feeds consumers and must stay at
-                    // 48 kHz; the aggregate path switches it inside
-                    // `create`, the split path must do it explicitly.
                     try AggregateDevice.ensure48k(
                         virtualOutput, role: "virtual output \"\(virtualOutput.name)\""
                     )
-                    // The effective capture rate settles when capture
-                    // starts (Bluetooth renegotiates profiles), so read
-                    // it as late as possible; the Rust side validates it.
                     let rate = AudioDeviceCatalog.nominalSampleRate(input.id) ?? 0
                     captureRate = rate
                     try engine.startNative(
@@ -271,10 +163,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Sends the monitor toggle to the engine off the main actor,
-    /// serialized like every other engine transition: the busy machine
-    /// state blocks concurrent mode changes (and the pollers' engine
-    /// calls) until the outcome lands, so rapid taps cannot interleave.
     private func setMonitor(_ enabled: Bool) {
         guard let engine else {
             return
@@ -289,32 +177,16 @@ final class AppState: ObservableObject {
         guard let engine else {
             return
         }
-        // Detached: weight download and model construction must not run
-        // on (or inherit) the main actor.
         Task.detached {
             let result = Result { try engine.setModel(id) }
             await self.finish(.modelSwitchCompleted(error: result.errorMessage))
         }
     }
 
-    /// Whether the login item counts as on for the toggle. Registered
-    /// but pending the user's consent (`requiresApproval` — common for
-    /// development builds and previously denied items) reads as on: the
-    /// registration itself succeeded and the remaining step lives in
-    /// System Settings, so snapping the toggle off would misreport a
-    /// successful attempt (and invite a pointless re-register loop).
     private static func isLoginItemRegistered(_ status: SMAppService.Status) -> Bool {
         status == .enabled || status == .requiresApproval
     }
 
-    /// Registers or unregisters the login item off the main actor
-    /// (registration can touch the service database). The completion
-    /// carries the *re-read* status: registration depends on the app's
-    /// location and signature (development builds under dist/ commonly
-    /// fail), so the outcome — not the request — is what the reducer
-    /// must show, together with the reason under the toggle: a failure,
-    /// or the pending-approval notice when macOS wants the user's
-    /// consent in System Settings.
     private func applyLaunchAtLogin(_ enabled: Bool) {
         Task.detached {
             var message: String?
@@ -338,17 +210,10 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Completion entry point for detached effect tasks.
     private func finish(_ event: AppEvent) {
         dispatch(event)
     }
 
-    // MARK: - Preference persistence
-
-    /// Feeds the persisted preferences back through the reducer (the
-    /// restore is an event like everything else, so it stays testable).
-    /// The stored model id is validated against the live registry here —
-    /// the reducer has no model catalog.
     private func restorePreferences() {
         let defaults = UserDefaults.standard
         var modelID = defaults.string(forKey: PreferenceKey.modelID)
@@ -362,12 +227,6 @@ final class AppState: ObservableObject {
         ))
     }
 
-    /// Persists preference fields the reduce step changed. Skipped for
-    /// `devicesChanged` (hot-plug reassignment of a vanished selection is
-    /// not a user choice — the stored microphone must survive being
-    /// temporarily unplugged across a relaunch) and for the restore
-    /// event itself. Reverts (a failed model switch or microphone
-    /// fallback) do persist: they record what actually runs.
     private func persistPreferences(from previous: AppModel, event: AppEvent) {
         switch event {
         case .devicesChanged, .preferencesRestored:
@@ -387,8 +246,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    // MARK: - Device catalog
-
     func refreshDevices() {
         do {
             allDevices = try AudioDeviceCatalog.devices()
@@ -407,8 +264,6 @@ final class AppState: ObservableObject {
                 }
             dispatch(.devicesChanged(
                 inputs: inputs,
-                // The transport-loss check runs against every device with
-                // input channels, not just the selectable ones.
                 allInputUIDs: Set(allDevices.filter { $0.inputChannels > 0 }.map(\.uid)),
                 isVirtualOutputPresent: AudioDeviceCatalog.virtualOutput(in: allDevices) != nil
             ))
@@ -417,28 +272,20 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Follows device hot-plug: refreshes the picker automatically (the
-    /// reducer stops the engine when the microphone in use or the virtual
-    /// output disappears).
     private func registerDeviceListener() {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-        // A failed registration would leave topology changes silently
-        // unnoticed — log the status instead of discarding it.
         let status = AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject),
             &address,
             DispatchQueue.main
         ) { [weak self] _, _ in
-            // Delivered on the main queue, which is the main actor.
             MainActor.assumeIsolated {
                 self?.refreshDevices()
                 self?.refreshPreviewAvailability()
-                // The monitor's target can vanish as a whole device (on
-                // machines whose headphone jack is a separate device).
                 self?.checkMonitorSafety()
             }
         }
@@ -448,13 +295,7 @@ final class AppState: ObservableObject {
     }
 }
 
-// MARK: - Health polling
-
 extension AppState {
-    /// Derives the health-poll task from the reducer state: it runs
-    /// exactly while a transport is live (including the failed-but-live
-    /// window after an engine fault, matching the teardown-bounded
-    /// polling this replaces).
     private func syncFaultPolling() {
         if model.hasLiveTransport {
             guard faultPollTask == nil else {
@@ -476,18 +317,12 @@ extension AppState {
     }
 
     private func checkEngineHealth() {
-        // Ahead of the busy guard: the virtual output's level controls are
-        // a device property read, not an engine call, and the reducer
-        // accepts the reading through monitor/model transitions.
         checkVirtualOutputLevel()
         guard model.mode != .off, !model.isBusy, let engine else {
             return
         }
         checkMonitorTrip()
         checkMonitorSafety()
-        // Belt and braces for the nominal-rate listener: a profile flip
-        // landing during a busy transition is dropped by the listener's
-        // busy guard, so the poll re-checks once per second.
         checkInputRate()
         if engine.isFaulted {
             dispatch(.engineFaulted)
@@ -497,9 +332,6 @@ extension AppState {
             dispatch(.engineStoppedUnexpectedly)
             return
         }
-        // Heartbeat: the device must keep delivering callbacks while
-        // running. Three silent seconds means it stopped (unplugged mic,
-        // coreaudiod restart, post-sleep stall) without reporting an error.
         let frames = engine.framesProcessed
         if frames == lastFrameCount {
             stalledTicks += 1
@@ -514,14 +346,7 @@ extension AppState {
     }
 }
 
-// MARK: - Monitoring: meters polling and preview availability
-
 extension AppState {
-    /// Runs while the menu popover is visible (bound to the menu view's
-    /// task) and stops when it closes: ~20 Hz, two non-blocking atomic
-    /// reads per tick, plus a preview-availability re-check about once
-    /// per second (the default-output listener misses same-device
-    /// data-source flips such as the headphone jack).
     func pollLevels() async {
         refreshPreviewAvailability()
         var ticks = 0
@@ -546,9 +371,6 @@ extension AppState {
         checkMonitorTrip()
     }
 
-    /// Forwards the engine-side feedback killswitch to the reducer, which
-    /// releases the playback device and explains why. Checked lock-free
-    /// at 20 Hz while the popover is open and at 1 Hz by the health poll.
     private func checkMonitorTrip() {
         guard
             model.mode != .off, !model.isBusy, let engine,
@@ -559,11 +381,6 @@ extension AppState {
         dispatch(.monitorTripped)
     }
 
-    /// Maintains a shown refusal message only: once a Preview attempt was
-    /// refused, re-sample the pre-flight so the reducer clears (or
-    /// updates) the message live as the user fixes the output. Called
-    /// from the default-output listener, device hot-plug, and popover
-    /// polling.
     private func refreshPreviewAvailability() {
         guard model.messages.previewUnavailableReason != nil else {
             return
@@ -571,29 +388,6 @@ extension AppState {
         dispatch(.monitorTargetErrorChanged(RustEngine.monitorTargetError))
     }
 
-    /// Transport shape for a start effect: 48 kHz-capable microphones
-    /// keep the original aggregate path unchanged; other devices
-    /// (Bluetooth telephony profiles, 44.1 kHz-family devices) are
-    /// captured natively through the split transport and resampled
-    /// inside it by the exact ratio (issue #7). Decided from
-    /// *live* facts at effect time — a rate-change rebuild can race a
-    /// profile flip, and a device that meanwhile reached a
-    /// 48 kHz-capable state must take the aggregate path instead of
-    /// failing rate validation.
-    ///
-    /// When the advertised-rate list is unreadable (the tri-state probe
-    /// reads nil), the live *nominal rate* — readable independently —
-    /// outranks the reducer's possibly stale snapshot: a device sitting
-    /// at a rate the split transport cannot convert (outside the
-    /// resampler's 8–192 kHz range) goes to the aggregate path, whose
-    /// `ensure48k` produces the precise refusal. Only for a live
-    /// convertible (or unreadable) nominal does the snapshot decide: a
-    /// `.nativeRate` pre-flight takes the split path — failing open onto
-    /// the aggregate would poll `ensure48k` for two seconds and then
-    /// fail a device the reducer already approved for native capture —
-    /// while unknown or non-native snapshots keep Phase 0's fail-open
-    /// behavior (a device idling at 48 kHz with an unreadable rate list
-    /// therefore still reaches `ensure48k`, which returns immediately).
     private nonisolated static func shouldUseAggregate(
         for device: AudioObjectID,
         snapshot: CaptureSupport?
@@ -613,20 +407,12 @@ extension AppState {
         return true
     }
 
-    /// Completion entry point for start effects: records the capture
-    /// rate the split transport was built around (nil on the aggregate
-    /// path or on failure) as the baseline for the nominal-rate
-    /// listener, then dispatches the outcome and reads the virtual
-    /// output's level controls once right away (the health poll's first
-    /// tick is a second out).
     private func finishStart(captureRate: Double?, error: String?) {
         activeCaptureRate = error == nil ? captureRate : nil
         dispatch(.startCompleted(error: error))
         checkVirtualOutputLevel()
     }
 
-    /// Follows default-output changes so a shown refusal message clears
-    /// the moment the user switches to a safe device.
     private func registerDefaultOutputListener() {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
@@ -638,7 +424,6 @@ extension AppState {
             &address,
             DispatchQueue.main
         ) { [weak self] _, _ in
-            // Delivered on the main queue, which is the main actor.
             MainActor.assumeIsolated {
                 self?.refreshPreviewAvailability()
             }
@@ -650,8 +435,6 @@ extension AppState {
 }
 
 extension Result where Success == Void {
-    /// The failure as a user-facing message, or nil on success — the
-    /// shape completion events carry (`Result` itself is not `Equatable`).
     fileprivate var errorMessage: String? {
         if case let .failure(error) = self {
             return error.localizedDescription

@@ -2,11 +2,6 @@ import Testing
 
 @testable import NoicanState
 
-// Fixtures and drivers are shared with the other reducer suites; see
-// ReducerTestSupport.swift.
-
-// MARK: - Classification (pure)
-
 @Suite("Virtual output level classification")
 struct VirtualOutputLevelClassificationTests {
     @Test("Unity volume without mute is nominal")
@@ -55,8 +50,6 @@ struct VirtualOutputLevelClassificationTests {
     }
 }
 
-// MARK: - Reducer transitions
-
 @Suite("Virtual output level notice")
 struct VirtualOutputLevelReducerTests {
     @Test("A turned-down reading shows the notice; a nominal reading clears it")
@@ -64,7 +57,6 @@ struct VirtualOutputLevelReducerTests {
         let running = runningModel()
         let (shown, effects) = step(running, .virtualOutputLevelObserved(.turnedDown(scalar: 0.18)))
         #expect(shown.virtualOutputLevelNotice == VirtualOutputLevel.turnedDown(scalar: 0.18).notice)
-        // Only the message moves: no engine transition, no effect.
         #expect(effects.isEmpty, "the level is never restored automatically")
         #expect(shown.machine == running.machine)
         #expect(shown.statusText == "Running")
@@ -77,9 +69,6 @@ struct VirtualOutputLevelReducerTests {
 
     @Test("Distinct slider positions are distinct readings behind one notice")
     func scalarMovesAreRecorded() {
-        // The shell dedupes on the whole reading so every move reaches
-        // the log; the model must therefore keep the scalar, not just
-        // the (identical) notice text.
         let low = drive(runningModel(), [.virtualOutputLevelObserved(.turnedDown(scalar: 0.5))])
         let lower = drive(low, [.virtualOutputLevelObserved(.turnedDown(scalar: 0.05))])
         #expect(low.virtualOutputLevel == .turnedDown(scalar: 0.5))
@@ -101,8 +90,6 @@ struct VirtualOutputLevelReducerTests {
 
     @Test("Readings are accepted through busy monitor and model transitions")
     func acceptedWhileTransportBusy() {
-        // Preview start: the transport is up while the monitor half is
-        // still settling, and the start-completion check lands here.
         let armingMonitor = drive(readyModel(), [tap(.preview), .startCompleted(error: nil)])
         #expect(armingMonitor.isBusy)
         let noticed = drive(armingMonitor, [.virtualOutputLevelObserved(.muted)])
@@ -135,8 +122,6 @@ struct VirtualOutputLevelReducerTests {
         let stalled = drive(shown, [.audioStalled])
         #expect(stalled.virtualOutputLevelNotice == nil)
 
-        // A live microphone switch rebuilds the transport; the new one
-        // is re-read once it is up.
         let rebuilding = drive(shown, [.microphoneSelected(usbMic.uid)])
         #expect(rebuilding.isBusy)
         #expect(rebuilding.virtualOutputLevelNotice == nil)
@@ -149,8 +134,6 @@ struct VirtualOutputLevelReducerTests {
             .engineFaulted
         ])
         #expect(faulted.virtualOutputLevelNotice == VirtualOutputLevel.muted.notice)
-        // The poll keeps running on the faulted-but-live transport, so a
-        // nominal reading still clears it.
         let cleared = drive(faulted, [.virtualOutputLevelObserved(.nominal)])
         #expect(cleared.virtualOutputLevelNotice == nil)
     }
