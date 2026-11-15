@@ -252,11 +252,71 @@ struct PolarResponseTests {
         }
     }
 
-    @Test("Fields a later API version drops do not invalidate a license")
-    func minimalResponse() async throws {
-        let transport = FakeTransport(.http(200, #"{"id": "act-9", "license_key": {"id": "lk-1"}}"#))
-        let grant = try await backend(transport).activate(key: "1C285B2D-6CE6-4BC7-B8BE-ADB6A7E304DA", device: thisMac)
-        #expect(grant.activationID == "act-9")
-        #expect(grant.displayKey == "****-E304DA", "masked locally when the server sends no display key")
+    @Test("A response missing the fields the grant depends on is refused and its activation released")
+    func minimalResponse() async {
+        // The response is unsigned, so a body carrying only IDs — the
+        // shape anything interposing on the connection could serve —
+        // must not mint a grant, however forward-compatible that would
+        // be. The fresh activation is given back before refusing.
+        let transport = FakeTransport(.http(200, #"{"id": "act-9", "license_key": {"id": "lk-1"}}"#), .http(204, ""))
+        await #expect(throws: LicenseBackendError.rejected(.wrongProduct)) {
+            try await backend(transport).activate(key: "1C285B2D-6CE6-4BC7-B8BE-ADB6A7E304DA", device: thisMac)
+        }
+        #expect(transport.requests.map(\.url?.lastPathComponent) == ["activate", "deactivate"], "the slot is given back")
+    }
+
+    @Test("An activation response without a status is refused and its activation released")
+    func activationMissingStatus() async {
+        let body = #"{"id": "act-9", "license_key": {"id": "lk-1", "benefit_id": "\#(benefitID)"}}"#
+        let transport = FakeTransport(.http(200, body), .http(204, ""))
+        await #expect(throws: LicenseBackendError.rejected(.refused(detail: "the license key is not active"))) {
+            try await backend(transport).activate(key: "KEY-1", device: thisMac)
+        }
+        #expect(transport.requests.map(\.url?.lastPathComponent) == ["activate", "deactivate"], "the slot is given back")
+    }
+
+    @Test("A present-and-wrong field still rejects when another field is absent")
+    func validationWrongFieldWithAbsentField() async {
+        // Absence downgrades only the absent field to unavailable; it
+        // must not shield a field that is present and definitively
+        // wrong. (licenseKeyJSON's default activation is null.)
+        let revoked = licenseKeyJSON(status: "revoked")
+        await #expect(throws: LicenseBackendError.rejected(.activationRevoked)) {
+            try await backend(FakeTransport(.http(200, revoked))).validate(key: "KEY-1", activationID: "act-1")
+        }
+    }
+
+    @Test("A validation missing the fields the grant depends on is unavailable, never a grant")
+    func validationMissingFields() async {
+        let noStatus = """
+        {
+          "id": "508176f7-065a-4b5d-b524-4e9c8a11ed63",
+          "benefit_id": "\(benefitID)",
+          "activation": \(ownActivation)
+        }
+        """
+        let noBenefit = """
+        {
+          "id": "508176f7-065a-4b5d-b524-4e9c8a11ed63",
+          "status": "granted",
+          "activation": \(ownActivation)
+        }
+        """
+        let cases: [String] = [
+            #"{"id": "lk-1"}"#,
+            licenseKeyJSON(),
+            noStatus,
+            noBenefit
+        ]
+        for body in cases {
+            await #expect {
+                try await backend(FakeTransport(.http(200, body))).validate(key: "KEY-1", activationID: "b6724bc8-7ad9-4ca0-b143-7c896fcbb6fe")
+            } throws: { error in
+                guard case .unavailable = error as? LicenseBackendError else {
+                    return false
+                }
+                return true
+            }
+        }
     }
 }
