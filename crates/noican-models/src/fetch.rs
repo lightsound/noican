@@ -1,6 +1,6 @@
 //! Downloading and verifying model weights.
 
-use std::io::Read as _;
+use std::io::Read;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
