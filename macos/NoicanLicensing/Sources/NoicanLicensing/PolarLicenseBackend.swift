@@ -97,6 +97,12 @@ public struct URLSessionTransport: HTTPTransport {
 /// read is `.unavailable` (grace period), never a rejection.
 public struct PolarLicenseBackend: LicenseBackend {
     public let identifier = "polar"
+
+    /// The `.unavailable` reason for a 200 response this build cannot
+    /// use — undecodable, or missing a field the grant depends on.
+    /// One constant so the two cases can never drift apart in wording.
+    private static let unreadableResponseReason = "The license server sent a response this version of Noican can't read."
+
     private let configuration: PolarConfiguration
     private let transport: any HTTPTransport
     private let userAgent: String
@@ -154,11 +160,25 @@ public struct PolarLicenseBackend: LicenseBackend {
         switch response.statusCode {
         case 200:
             let license: LicenseKeyResponse = try decode(data)
-            guard license.isForBenefit(configuration.benefitID) else {
+            // A field that is present and wrong is definitive evidence
+            // against the key: reject, as before. A field that is absent
+            // proves nothing either way — the response is unsigned, so a
+            // body that merely omits the fields the grant depends on
+            // must not mint one — but absence is not evidence of
+            // revocation either, so it takes the unavailable path (the
+            // offline grace) rather than recording a rejection the
+            // server never made.
+            if let benefitID = license.benefitID, benefitID != configuration.benefitID {
                 throw .rejected(.wrongProduct)
             }
-            guard license.isGranted, (license.activation?.id ?? activationID) == activationID else {
+            if let status = license.status, status != "granted" {
                 throw .rejected(.activationRevoked)
+            }
+            if let activation = license.activation, activation.id != activationID {
+                throw .rejected(.activationRevoked)
+            }
+            guard license.benefitID != nil, license.status != nil, license.activation != nil else {
+                throw .unavailable(reason: Self.unreadableResponseReason)
             }
             return license.grant(activationID: activationID, key: key)
         case 404 where ErrorResponse.parse(data)?.error == "ResourceNotFound":
@@ -216,7 +236,7 @@ public struct PolarLicenseBackend: LicenseBackend {
         do {
             return try decoder.decode(T.self, from: data)
         } catch {
-            throw .unavailable(reason: "The license server sent a response this version of Noican can't read.")
+            throw .unavailable(reason: Self.unreadableResponseReason)
         }
     }
 
@@ -321,9 +341,14 @@ private struct DeactivateRequest: Encodable {
     }
 }
 
-/// Only the fields the app acts on, and all but the key's own ID
-/// optional: a field a later API version drops must not turn a valid
-/// license into an unreadable one.
+/// Only the fields the app acts on. Decoding stays lenient — all but
+/// the key's own ID are optional, so a field a later API version drops
+/// does not make the body unreadable — but the grant decision is not
+/// lenient: Polar's response is unsigned, so `status` and `benefit_id`
+/// must be present and correct, and validation must name this Mac's
+/// activation, before any of them counts as evidence for a grant. The
+/// remaining fields (display key, expiry, activation limit) stay
+/// optional in effect as well: none of them decides a grant.
 private struct LicenseKeyResponse: Decodable {
     struct Activation: Decodable {
         var id: String
@@ -348,15 +373,17 @@ private struct LicenseKeyResponse: Decodable {
     }
 
     /// Polar answers 404 for revoked or disabled keys, so a 200 should
-    /// always say `granted`; any other status is still refused. A response
-    /// without the field is not held against the key.
+    /// always say `granted`; any other status is refused — and so is a
+    /// response without the field, which proves nothing about the key.
     var isGranted: Bool {
-        status.map { $0 == "granted" } ?? true
+        status == "granted"
     }
 
-    /// A response without the field is not held against the key.
+    /// The configured benefit, named in the response: a key for another
+    /// product is refused, and a response that does not name the benefit
+    /// at all has not shown the key is for this product.
     func isForBenefit(_ expected: String) -> Bool {
-        benefitID.map { $0 == expected } ?? true
+        benefitID == expected
     }
 
     func grant(activationID: String, key: String) -> LicenseGrant {

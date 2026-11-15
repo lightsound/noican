@@ -109,11 +109,34 @@ final class LicenseModel: ObservableObject {
 
     /// A salted hash of the hardware UUID: identifies this Mac to the
     /// local record without sending the UUID anywhere.
+    ///
+    /// When the UUID cannot be read, the ID is a random value minted
+    /// for this launch — never a constant. A constant fallback would be
+    /// shared by every Mac in that state, so a license record carried
+    /// to another such Mac (Migration Assistant moves the Keychain)
+    /// would be mistaken for that Mac's own, including by
+    /// `LicenseController.deactivate`, which would then release the
+    /// first Mac's activation on the server. A per-launch ID makes any
+    /// stored record read as another Mac's — forgotten locally, never
+    /// released. The price on a Mac whose UUID stays unreadable is
+    /// real: `refreshIfDue` re-activates the stored key automatically
+    /// at every launch, spending a fresh activation slot each time
+    /// (orphaned slots are releasable only in the customer portal)
+    /// until the key's activation limit refuses further launches, and
+    /// no launch can release a previous launch's slot. That state
+    /// means IOKit is not reporting a platform UUID at all — broken
+    /// IOKit or a VM, not a healthy Mac — and failing closed there is
+    /// the point. Persisting the random ID would defeat this:
+    /// Migration Assistant would carry it along with the record it is
+    /// meant to disown.
     private static func hardwareID() -> String {
         let platform = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPlatformExpertDevice"))
         defer { IOObjectRelease(platform) }
-        let uuid = IORegistryEntryCreateCFProperty(platform, "IOPlatformUUID" as CFString, kCFAllocatorDefault, 0)?
-            .takeRetainedValue() as? String ?? "unknown"
+        guard let uuid = IORegistryEntryCreateCFProperty(platform, "IOPlatformUUID" as CFString, kCFAllocatorDefault, 0)?
+            .takeRetainedValue() as? String
+        else {
+            return UUID().uuidString
+        }
         let digest = SHA256.hash(data: Data("com.lightsound.noican.license:\(uuid)".utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
     }
