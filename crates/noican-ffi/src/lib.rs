@@ -1018,10 +1018,14 @@ fn guard_panics<T>(model_id: &str, work: impl FnOnce() -> Result<T, String>) -> 
 
 fn prepare_stage(models_dir: &Path, model_id: &str) -> Result<Box<dyn Stage>, String> {
     // Registry stages may need weights; the bypass (not in the registry's
-    // ModelSpec list) needs nothing.
-    if let Some(spec) = ModelSpec::find(model_id)
-        && !noican_models::fetch::is_fetched(models_dir, spec)
-    {
+    // ModelSpec list) needs nothing. fetch_model runs unconditionally,
+    // not only when files are missing: it no-ops per file whose pinned
+    // digest already matches, and it repairs a present-but-corrupt file
+    // here instead of letting it reach create_stage, which verifies
+    // digests and would refuse the stage. Stage preparation is a
+    // user-initiated action, so the re-hash costs far less than a
+    // refused start.
+    if let Some(spec) = ModelSpec::find(model_id) {
         noican_models::fetch::fetch_model(models_dir, spec, |_line| {})
             .map_err(|error| format!("downloading {model_id} weights failed: {error}"))?;
     }
