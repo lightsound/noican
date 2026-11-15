@@ -1,1 +1,22 @@
-IyBEZXBlbmRlbmN5IGNvb2xkb3duIChSRkMgMzkyMywgc3RhYmxlIHNpbmNlIENhcmdvIDEuMTAwKTogd2hlbiBzZWxlY3RpbmcKIyB2ZXJzaW9ucywgdGhlIHJlc29sdmVyIGlnbm9yZXMgY3JhdGUgdmVyc2lvbnMgcHVibGlzaGVkIGxlc3MgdGhhbiAzIGRheXMKIyBhZ28sIHVubGVzcyB0aGUgdmVyc2lvbiBpcyBhbHJlYWR5IHJlY29yZGVkIGluIENhcmdvLmxvY2suIFRoaXMgZ2l2ZXMKIyBtYWxpY2lvdXMgb3IgYnJva2VuIHJlbGVhc2VzIHRpbWUgdG8gYmUKIyBzcG90dGVkIGFuZCB5YW5rZWQgYmVmb3JlIGFuIHVwZGF0ZSBoZXJlIGNhbiBwaWNrIHRoZW0gdXAuIFZlcnNpb25zIHdpdGhvdXQKIyBhIHB1Ymxpc2ggdGltZXN0YW1wIGluIHRoZSByZWdpc3RyeSBpbmRleCwgZ2l0IGRlcGVuZGVuY2llcywgYW5kIHBhdGgKIyBkZXBlbmRlbmNpZXMgYXJlIG5vdCBhZmZlY3RlZC4KIwojIE9uZSBzaGFycCBlZGdlOiB3aXRoIGEgY29sZCByZWdpc3RyeSBjYWNoZSwgQ2FyZ28gYWxzbyAqdmVyaWZpZXMqIGFuCiMgZXhpc3RpbmcgbG9ja2ZpbGUgYWdhaW5zdCB0aGlzIHNldHRpbmcsIHNvIGEgYnVpbGQgZmFpbHMgd2hpbGUgYW55IGxvY2tlZAojIHZlcnNpb24gaXMgeW91bmdlciB0aGFuIDMgZGF5cy4gVGhhdCBzdGF0ZSBhcmlzZXMgd2hlbiBhIHZlcnNpb24gd2FzIGxvY2tlZAojIGJlZm9yZSB0aGlzIGZpbGUgZXhpc3RlZCwgb3IgdmlhIHRoZSBieXBhc3MgYmVsb3cuIENJIHRoZXJlZm9yZSBzZXRzCiMgQ0FSR09fUkVTT0xWRVJfSU5DT01QQVRJQkxFX1BVQkxJU0hfQUdFPWFsbG93IChzZWUgY2kueW1sKTogQ0kgYnVpbGRzIHRoZQojIHJldmlld2VkIGxvY2tmaWxlIGFzLWlzLCB3aGlsZSB2ZXJzaW9uICpzZWxlY3Rpb24qIChjYXJnbyB1cGRhdGUgLyBhZGQpIG9uCiMgYSBkZXZlbG9wZXIgbWFjaGluZSBzdGF5cyBnb3Zlcm5lZCBieSB0aGUgY29vbGRvd24uCiMKIyBUbyB0YWtlIGEgdmVyc2lvbiB0aGF0IGlzIHlvdW5nZXIgdGhhbiB0aGUgY29vbGRvd24gYW55d2F5IChmb3IgZXhhbXBsZSBhbgojIHVyZ2VudCBzZWN1cml0eSBmaXgpLCBieXBhc3MgaXQgZm9yIHRoYXQgb25lIHVwZGF0ZToKIwojICAgQ0FSR09fUkVTT0xWRVJfSU5DT01QQVRJQkxFX1BVQkxJU0hfQUdFPWFsbG93IGNhcmdvIHVwZGF0ZSAtcCA8Y3JhdGU+IC0tcHJlY2lzZSA8dmVyc2lvbj4KW3JlZ2lzdHJ5XQpnbG9iYWwtbWluLXB1Ymxpc2gtYWdlID0gIjMgZGF5cyIK
+# Dependency cooldown (RFC 3923, stable since Cargo 1.100): when selecting
+# versions, the resolver ignores crate versions published less than 3 days
+# ago, unless the version is already recorded in Cargo.lock. This gives
+# malicious or broken releases time to be
+# spotted and yanked before an update here can pick them up. Versions without
+# a publish timestamp in the registry index, git dependencies, and path
+# dependencies are not affected.
+#
+# One sharp edge: with a cold registry cache, Cargo also *verifies* an
+# existing lockfile against this setting, so a build fails while any locked
+# version is younger than 3 days. That state arises when a version was locked
+# before this file existed, or via the bypass below. CI therefore sets
+# CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow (see ci.yml): CI builds the
+# reviewed lockfile as-is, while version *selection* (cargo update / add) on
+# a developer machine stays governed by the cooldown.
+#
+# To take a version that is younger than the cooldown anyway (for example an
+# urgent security fix), bypass it for that one update:
+#
+#   CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow cargo update -p <crate> --precise <version>
+[registry]
+global-min-publish-age = "3 days"
