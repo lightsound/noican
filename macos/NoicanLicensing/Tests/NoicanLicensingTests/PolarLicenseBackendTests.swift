@@ -310,7 +310,8 @@ struct PolarResponseTests {
         ]
         for body in cases {
             await #expect {
-                try await backend(FakeTransport(.http(200, body))).validate(key: "KEY-1", activationID: "b6724bc8-7ad9-4ca0-b143-7c896fcbb6fe")
+                try await backend(FakeTransport(.http(200, body)))
+                    .validate(key: "KEY-1", activationID: "b6724bc8-7ad9-4ca0-b143-7c896fcbb6fe")
             } throws: { error in
                 guard case .unavailable = error as? LicenseBackendError else {
                     return false
