@@ -75,16 +75,25 @@ fn dependency_file_path(
 /// Instantiates the stage for `id`, loading weights from `models_dir`
 /// (fetch them first with [`crate::fetch::fetch_model`]).
 ///
+/// Before anything is loaded, every weight file that carries a pinned
+/// digest is verified against it ([`crate::fetch::verify_model`]), so
+/// bytes placed in `models_dir` by hand — or corrupted after download —
+/// are rejected here instead of reaching a parser unverified.
+///
 /// # Errors
 ///
 /// Returns [`StageError::Unsupported`] for unknown ids and
-/// [`StageError::Inference`] when weights are missing or fail to load.
+/// [`StageError::Inference`] when weights are missing, fail
+/// verification, or fail to load.
 pub fn create_stage(id: &str, models_dir: &Path) -> Result<Box<dyn Stage>, StageError> {
     if id == PASSTHROUGH_ID {
         return Ok(Box::new(Passthrough));
     }
     let spec = ModelSpec::find(id)
         .ok_or_else(|| StageError::Unsupported(format!("unknown model id: {id}")))?;
+    crate::fetch::verify_model(models_dir, spec).map_err(|error| {
+        StageError::Inference(format!("verifying weights for {}: {error}", spec.id))
+    })?;
     match spec.id {
         "dpdfnet2" | "dpdfnet8" => {
             let stage = DpdfnetStage::new(spec.id, &file_path(models_dir, spec, 0))?;

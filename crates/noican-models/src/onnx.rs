@@ -134,7 +134,11 @@ impl StateBank {
         let mut slots = Vec::with_capacity(pairs.len());
         for (input_name, output_name) in pairs {
             let shape = input_shape(session, input_name)?;
-            let len = shape.iter().product();
+            let len = state_len(&shape).ok_or_else(|| {
+                StageError::Inference(format!(
+                    "state tensor {input_name} has an implausible shape {shape:?}"
+                ))
+            })?;
             slots.push(StateSlot {
                 input_name: (*input_name).to_owned(),
                 output_name: (*output_name).to_owned(),
@@ -202,5 +206,46 @@ impl StateBank {
         for slot in &mut self.slots {
             slot.data.copy_from_slice(&slot.init);
         }
+    }
+}
+
+/// Largest element count accepted for one recurrent state tensor. The
+/// shipped models' state tensors are orders of magnitude smaller; the
+/// cap exists because the shape is model-declared data — multiplying
+/// its dims unchecked would let a crafted model (e.g. dims
+/// `[1, 65536, 65536]`) force a multi-GB zeroing allocation, and an
+/// allocation failure aborts the process rather than unwinding, so the
+/// FFI layer's `catch_unwind` could not contain it. Stage constructors
+/// that size allocations from other model-declared counts (DPDFNet's
+/// `state_size` metadata) bound them by the same constant.
+pub(crate) const MAX_STATE_ELEMENTS: usize = 1 << 24;
+
+/// Element count of a state tensor with `shape`, or `None` when the
+/// count overflows or exceeds [`MAX_STATE_ELEMENTS`].
+fn state_len(shape: &[usize]) -> Option<usize> {
+    let len = shape
+        .iter()
+        .try_fold(1_usize, |acc, &dim| acc.checked_mul(dim))?;
+    (len <= MAX_STATE_ELEMENTS).then_some(len)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn state_len_accepts_plausible_shapes() {
+        assert_eq!(state_len(&[1, 128, 64]), Some(8192));
+        assert_eq!(state_len(&[MAX_STATE_ELEMENTS]), Some(MAX_STATE_ELEMENTS));
+        assert_eq!(state_len(&[]), Some(1));
+    }
+
+    #[test]
+    fn state_len_rejects_implausible_shapes() {
+        // Over the cap, though the product itself fits in a usize.
+        assert_eq!(state_len(&[1, 65_536, 65_536]), None);
+        assert_eq!(state_len(&[MAX_STATE_ELEMENTS + 1]), None);
+        // The product overflows outright.
+        assert_eq!(state_len(&[usize::MAX, 2]), None);
     }
 }

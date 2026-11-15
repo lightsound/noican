@@ -21,6 +21,11 @@ use ort::value::Tensor;
 use crate::dsp::{FftPair, sqrt_hann_window, vorbis_window};
 use crate::onnx::{inference_error, load_streaming_session, required_metadata};
 
+/// Largest plausible STFT window length in samples (the real DPDFNet
+/// profiles use 960–4096). Bounds the model-declared `window_length`
+/// metadata before it sizes buffers and the FFT plan.
+const MAX_WINDOW_LEN: usize = 1 << 17;
+
 /// Model lookahead in STFT hops, on top of the overlap-add window delay.
 ///
 /// The DPDFNet architecture (`DeepFilterNet2` + dual-path RNN) keeps
@@ -94,6 +99,23 @@ impl DpdfnetStage {
                 "window_length {win_len} != n_fft {n_fft} is not supported"
             )));
         }
+        // win_len sizes the analysis/overlap buffers and the FFT plan;
+        // like every model-declared count it is bounded before it is
+        // trusted. Real profiles use at most a few thousand samples.
+        if win_len > MAX_WINDOW_LEN {
+            return Err(StageError::Inference(format!(
+                "window_length metadata {win_len} exceeds the plausible maximum {MAX_WINDOW_LEN}"
+            )));
+        }
+        // hop sizes the framed stage's buffers and indexes the sliding
+        // window: zero would stall the frame loop, and anything above
+        // win_len underflows the delay arithmetic and panics the window
+        // slide. Real profiles use hop = win_len / 2.
+        if hop == 0 || hop > win_len {
+            return Err(StageError::Inference(format!(
+                "hop_length metadata {hop} is outside the supported range 1..={win_len}"
+            )));
+        }
         let window_type = required_metadata(&session, "window_type")?;
         let window = match window_type.trim() {
             "vorbis" => vorbis_window(win_len),
@@ -105,6 +127,14 @@ impl DpdfnetStage {
             }
         };
         let state_size = parse_meta_usize(&session, "state_size")?;
+        // state_size sizes the zeroed state vectors below; bound it
+        // like the state-tensor shapes in onnx.rs.
+        if state_size > crate::onnx::MAX_STATE_ELEMENTS {
+            return Err(StageError::Inference(format!(
+                "state_size metadata {state_size} exceeds the plausible maximum {}",
+                crate::onnx::MAX_STATE_ELEMENTS
+            )));
+        }
         let erb_init = parse_meta_floats(&session, "erb_norm_init")?;
         let spec_init = parse_meta_floats(&session, "spec_norm_init")?;
         let erb_len = parse_meta_usize(&session, "erb_norm_state_size")?;

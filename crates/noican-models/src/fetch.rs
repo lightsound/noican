@@ -1,6 +1,6 @@
 //! Downloading and verifying model weights.
 
-use std::io::Read as _;
+use std::io::Read;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -41,6 +41,22 @@ pub enum FetchError {
         /// Actual digest.
         got: String,
     },
+    /// A file with a pinned digest is absent (verification only; the
+    /// fetcher itself downloads missing files instead of erroring).
+    #[error("pinned file {file} is missing")]
+    Missing {
+        /// File identity, as `<model id>/<file name>`.
+        file: String,
+    },
+    /// A download grew past the maximum plausible size of a weights
+    /// file, so it was aborted before the digest check could run.
+    #[error("download of {url} exceeded the {limit}-byte limit for model weights")]
+    TooLarge {
+        /// URL that was being downloaded.
+        url: String,
+        /// Byte limit that was exceeded.
+        limit: u64,
+    },
 }
 
 /// Returns the directory holding `model`'s files under `models_dir`.
@@ -54,15 +70,63 @@ pub fn model_dir(models_dir: &Path, model: &ModelSpec) -> PathBuf {
 /// `models_dir`.
 ///
 /// Presence is the only thing checked: this runs on hot paths (the
-/// picker's "fetched" status, `prepare_stage`'s decision to fetch), so
-/// re-hashing every file would be too expensive. Pinned digests are
-/// verified by [`fetch_model`] whenever it touches a file, which is
-/// where corrupt or wrongly-placed files get repaired.
+/// picker's "fetched" status, the CLI's default model set), so
+/// re-hashing every file would be too expensive. Integrity is enforced
+/// separately: [`fetch_model`] re-verifies and repairs pinned files
+/// whenever it runs, and [`verify_model`] gates the load path.
 #[must_use]
 pub fn is_fetched(models_dir: &Path, model: &ModelSpec) -> bool {
     let dir = model_dir(models_dir, model);
     model.files.iter().all(|f| dir.join(f.name).is_file())
         && model.dependencies().all(|dep| is_fetched(models_dir, dep))
+}
+
+/// Verifies that every file of `model` — and of every entry it
+/// [depends on](ModelSpec::depends_on) — that carries a pinned digest
+/// is present under `models_dir` and matches that digest.
+///
+/// Unlike [`fetch_model`] this never downloads or repairs: it is the
+/// load path's gate, called by [`crate::create_stage`] so weight bytes
+/// are never handed to a parser unverified, however they were placed
+/// in `models_dir`. Files without a pinned digest are not checked
+/// (presence is all that can be said about them; a missing one fails
+/// in the stage constructor as before).
+///
+/// # Errors
+///
+/// Returns [`FetchError::Missing`] for an absent pinned file,
+/// [`FetchError::Checksum`] for a digest mismatch, and
+/// [`FetchError::Io`] when a present file cannot be read.
+pub fn verify_model(models_dir: &Path, model: &ModelSpec) -> Result<(), FetchError> {
+    verify_model_dyn(models_dir, model)
+}
+
+/// Type-erased body of [`verify_model`] (recursion over dependencies,
+/// mirroring [`fetch_model_dyn`]).
+fn verify_model_dyn(models_dir: &Path, model: &ModelSpec) -> Result<(), FetchError> {
+    for dep in model.dependencies() {
+        verify_model_dyn(models_dir, dep)?;
+    }
+    let dir = model_dir(models_dir, model);
+    for file in model.files {
+        let Some(expected) = file.sha256 else {
+            continue;
+        };
+        let dest = dir.join(file.name);
+        let identity = format!("{}/{}", model.id, file.name);
+        if !dest.is_file() {
+            return Err(FetchError::Missing { file: identity });
+        }
+        let got = sha256_file(&dest)?;
+        if got != expected {
+            return Err(FetchError::Checksum {
+                file: identity,
+                expected: expected.to_owned(),
+                got,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Downloads any missing files of `model` into `models_dir`, verifying
@@ -184,6 +248,13 @@ fn download_agent() -> &'static ureq::Agent {
     })
 }
 
+/// Hard ceiling on one downloaded file. The largest legitimate weights
+/// are tens of MB, so this never fires on a real model; it exists
+/// because the digest is only compared after the whole body lands, and
+/// without a cap a malicious or broken endpoint could fill the disk
+/// before that check gets a chance to reject the bytes.
+const MAX_DOWNLOAD_BYTES: u64 = 1 << 30;
+
 /// Streams `url` into `tmp`, hashing as it goes, and returns the digest
 /// and byte count. The body never lives in memory: a stopped or corrupt
 /// transfer leaves a partial `tmp` for the caller to remove, never a
@@ -201,6 +272,22 @@ fn download_to(url: &str, tmp: &Path) -> Result<(String, u64), FetchError> {
     }
     let mut response = request.call().map_err(wrap)?;
     let mut reader = response.body_mut().as_reader();
+    copy_body(url, &mut reader, tmp, MAX_DOWNLOAD_BYTES)
+}
+
+/// The streaming body of [`download_to`], split out so the size cap can
+/// be tested without a server. Aborts with [`FetchError::TooLarge`]
+/// once more than `limit` bytes have arrived.
+fn copy_body(
+    url: &str,
+    reader: &mut impl Read,
+    tmp: &Path,
+    limit: u64,
+) -> Result<(String, u64), FetchError> {
+    let wrap = |source: ureq::Error| FetchError::Http {
+        url: url.to_owned(),
+        source: Box::new(source),
+    };
     let mut writer = std::fs::File::create(tmp).map_err(|source| FetchError::Io {
         path: tmp.to_owned(),
         source,
@@ -215,6 +302,13 @@ fn download_to(url: &str, tmp: &Path) -> Result<(String, u64), FetchError> {
         if read == 0 {
             break;
         }
+        len += read as u64;
+        if len > limit {
+            return Err(FetchError::TooLarge {
+                url: url.to_owned(),
+                limit,
+            });
+        }
         hasher.update(&chunk[..read]);
         writer
             .write_all(&chunk[..read])
@@ -222,7 +316,6 @@ fn download_to(url: &str, tmp: &Path) -> Result<(String, u64), FetchError> {
                 path: tmp.to_owned(),
                 source,
             })?;
-        len += read as u64;
     }
     writer.flush().map_err(|source| FetchError::Io {
         path: tmp.to_owned(),
@@ -355,5 +448,94 @@ mod tests {
         assert_eq!(std::fs::read(&dest).expect("read"), b"wrong bytes");
         assert!(!dest.with_extension("part").exists());
         std::fs::remove_dir_all(&models_dir).expect("cleanup");
+    }
+
+    /// The load path's gate: a pinned file that is present and correct
+    /// verifies; a substituted one is a checksum error; an absent one
+    /// is reported missing. Nothing is downloaded or repaired.
+    #[test]
+    fn verify_model_gates_on_the_pinned_digest() {
+        let models_dir = std::env::temp_dir().join(format!(
+            "noican-fetch-test-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let dir = model_dir(&models_dir, &VERIFY_SPEC);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let dest = dir.join("weights.bin");
+
+        let error = verify_model(&models_dir, &VERIFY_SPEC).expect_err("absent file");
+        assert!(matches!(error, FetchError::Missing { .. }), "{error}");
+
+        std::fs::write(&dest, b"correct weights").expect("write");
+        verify_model(&models_dir, &VERIFY_SPEC).expect("matching digest verifies");
+
+        std::fs::write(&dest, b"wrong bytes").expect("write");
+        let error = verify_model(&models_dir, &VERIFY_SPEC).expect_err("substituted file");
+        assert!(matches!(error, FetchError::Checksum { .. }), "{error}");
+        std::fs::remove_dir_all(&models_dir).expect("cleanup");
+    }
+
+    /// Verification recurses into dependencies: `hush-48k` has no files
+    /// of its own, so its gate is exactly the pinned tarball of `hush`
+    /// it depends on — missing and substituted states of that file must
+    /// both be reported under the dependency's identity.
+    #[test]
+    fn verify_model_recurses_into_dependencies() {
+        let models_dir = std::env::temp_dir().join(format!(
+            "noican-fetch-test-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let wideband = ModelSpec::find("hush-48k").expect("registered");
+        let hush = ModelSpec::find("hush").expect("registered");
+        let tarball_name = hush.files[0].name;
+
+        let error = verify_model(&models_dir, wideband).expect_err("dependency file absent");
+        assert!(
+            matches!(&error, FetchError::Missing { file } if file == &format!("hush/{tarball_name}")),
+            "{error}"
+        );
+
+        let dir = model_dir(&models_dir, hush);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        std::fs::write(dir.join(tarball_name), b"substituted tarball").expect("write");
+        let error = verify_model(&models_dir, wideband).expect_err("dependency file substituted");
+        assert!(
+            matches!(&error, FetchError::Checksum { file, .. } if file == &format!("hush/{tarball_name}")),
+            "{error}"
+        );
+        std::fs::remove_dir_all(&models_dir).expect("cleanup");
+    }
+
+    /// The download cap aborts an oversized body and passes a body at
+    /// or under the limit through with its digest.
+    #[test]
+    fn copy_body_enforces_the_size_cap() {
+        let tmp = std::env::temp_dir().join(format!(
+            "noican-fetch-test-{}-{}.part",
+            std::process::id(),
+            line!()
+        ));
+        let body = vec![7_u8; 2048];
+        let mut reader = std::io::Cursor::new(body.clone());
+        let error = copy_body("http://test.invalid/big", &mut reader, &tmp, 1024)
+            .expect_err("over the cap");
+        assert!(
+            matches!(
+                error,
+                FetchError::TooLarge { limit: 1024, ref url } if url == "http://test.invalid/big"
+            ),
+            "{error}"
+        );
+
+        let mut reader = std::io::Cursor::new(body);
+        let (digest, len) = copy_body("http://test.invalid/ok", &mut reader, &tmp, 2048)
+            .expect("at the cap passes");
+        assert_eq!(len, 2048);
+        let mut hasher = Sha256::new();
+        hasher.update(vec![7_u8; 2048]);
+        assert_eq!(digest, hex_digest(hasher));
+        std::fs::remove_file(&tmp).expect("cleanup");
     }
 }

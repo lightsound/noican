@@ -171,6 +171,15 @@ fn mix_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
 
 /// Offline-resamples mono samples from `sample_rate` to the engine rate.
 fn to_engine_rate(mono: Vec<f32>, sample_rate: u32) -> anyhow::Result<Vec<f32>> {
+    // The declared rate is unvalidated file data, and it sizes the
+    // resampler's output buffer by `ENGINE_SAMPLE_RATE / sample_rate ×
+    // input_len`: a header patched to a tiny rate (1 Hz would turn an
+    // 8 MB file into a ~768 GB allocation attempt) must be rejected
+    // before the resampler is built. The accepted range covers every
+    // real audio rate, from below telephony to DXD, with headroom.
+    if !(4_000..=768_000).contains(&sample_rate) {
+        anyhow::bail!("implausible sample rate {sample_rate} Hz");
+    }
     if sample_rate == ENGINE_SAMPLE_RATE {
         return Ok(mono);
     }
@@ -354,5 +363,35 @@ mod tests {
         let error = read_mono_48k(&fixture("not-audio.bin")).expect_err("must fail");
         let message = format!("{error:#}");
         assert!(message.contains("afconvert"), "unhelpful error: {message}");
+    }
+
+    /// A crafted header must not be able to size the resampler's output
+    /// buffer: rates far outside real audio are rejected up front,
+    /// while the engine rate passes through untouched and a telephony
+    /// rate still resamples.
+    #[test]
+    fn implausible_sample_rates_are_rejected() {
+        for rate in [0, 1, 100, 3_999, 768_001, u32::MAX] {
+            let error = to_engine_rate(vec![0.0; 16], rate)
+                .expect_err(&format!("rate {rate} must be rejected"));
+            assert!(
+                format!("{error}").contains("implausible sample rate"),
+                "rate {rate}: {error}"
+            );
+        }
+        let input = vec![0.25_f32; 64];
+        let output = to_engine_rate(input.clone(), ENGINE_SAMPLE_RATE).expect("passthrough");
+        assert_eq!(output, input);
+        let output = to_engine_rate(vec![0.0; 8_000], 8_000).expect("telephony resamples");
+        assert!(output.len() > 40_000, "unexpected length {}", output.len());
+        // The exact bounds of the accepted range are accepted.
+        let output = to_engine_rate(vec![0.0; 4_000], 4_000).expect("lower bound resamples");
+        assert!(output.len() > 40_000, "unexpected length {}", output.len());
+        let output = to_engine_rate(vec![0.0; 768_000], 768_000).expect("upper bound resamples");
+        assert!(
+            output.len().abs_diff(48_000) < 2_000,
+            "unexpected length {}",
+            output.len()
+        );
     }
 }
