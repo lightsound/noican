@@ -18,6 +18,12 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # CI builds the reviewed Cargo.lock as-is. Without this, Cargo's publish-age
+  # cooldown (.cargo/config.toml) also *verifies* the lockfile on a cold
+  # registry cache and fails the build while any locked version is younger
+  # than 3 days. Version selection stays governed by the cooldown on
+  # developer machines, where `cargo update` / `cargo add` actually run.
+  CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE: allow
 
 jobs:
   fmt:
