@@ -1,15 +1,4 @@
-//! Integration tests that exercise real model weights.
-//!
-//! These are `#[ignore]`d because they need the weights downloaded first
-//! (CI runs lint + unit tests only). Locally:
-//!
-//! ```text
-//! cargo run -p noican-cli --release -- fetch
-//! cargo test -p noican-models --test model_integration -- --ignored
-//! ```
-//!
-//! The models directory defaults to `models/` at the workspace root and can
-//! be overridden with `NOICAN_MODELS_DIR`.
+//! See docs/adr/0009-model-catalog-fetch.md.
 
 #![expect(
     clippy::print_stderr,
@@ -32,12 +21,9 @@ fn models_dir() -> PathBuf {
     )
 }
 
-/// One second of speech-band test signal: an amplitude-modulated tone
-/// stack plus deterministic pseudo-noise.
 fn test_signal() -> Vec<f32> {
     let mut rng_state = 0x1234_5678_u32;
     let mut noise = move || {
-        // xorshift32; deterministic, no external RNG dependency.
         rng_state ^= rng_state << 13;
         rng_state ^= rng_state >> 17;
         rng_state ^= rng_state << 5;
@@ -65,12 +51,9 @@ fn test_signal() -> Vec<f32> {
 
 fn run_model(id: &str) {
     let dir = models_dir();
-    // `is_fetched` is true for embedded models (no files) and follows
-    // `depends_on`, so composites skip when their dependency is missing.
     if let Some(spec) = ModelSpec::find(id)
         && !noican_models::fetch::is_fetched(&dir, spec)
     {
-        // Treated as a skip: weights are intentionally not part of the repo.
         eprintln!("[skip] {id}: weights not fetched under {}", dir.display());
         return;
     }
@@ -91,8 +74,6 @@ fn run_model(id: &str) {
         latency < input.len(),
         "{id}: latency {latency} exceeds one second"
     );
-    // Denoisers may attenuate the synthetic signal heavily, but the
-    // pipeline must not explode.
     let peak = output.iter().fold(0.0_f32, |m, s| m.max(s.abs()));
     assert!(peak < 10.0, "{id}: implausible output peak {peak}");
 }
@@ -114,16 +95,12 @@ model_test!(ulunas_runs, "ul-unas");
 model_test!(hush_runs, "hush");
 model_test!(hush_48k_runs, "hush-48k");
 
-/// DeepFilterNet3 is embedded in the binary — runnable even without a
-/// models directory.
 #[test]
 #[ignore = "slow (tract plan build); run with --ignored"]
 fn dfn3_runs() {
     run_model("dfn3");
 }
 
-/// The zero-lookahead variant's delay is one hop of framing plus the
-/// overlap-add window: 960 samples (20 ms) at 48 kHz, half of `dfn3`'s.
 #[test]
 #[ignore = "requires downloaded model weights (run: noican fetch dfn3-ll)"]
 fn dfn3_ll_latency_is_twenty_ms() {

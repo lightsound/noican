@@ -2,29 +2,15 @@ import AppKit
 import NoicanState
 import SwiftUI
 
-/// The app is an AppKit status-item shell around the SwiftUI menu.
-///
-/// It deliberately does *not* use `MenuBarExtra(.window)`: its window is
-/// sized by `NSHostingView`'s automatic window resizing, which anchors
-/// at the AppKit bottom-left origin, so any content-height reduction
-/// (collapsing the "Model & strength" section, the monitoring section
-/// disappearing) visibly dropped the whole menu — and nothing outside
-/// the framework can deterministically prevent it. The status item and
-/// menu live in `StatusBarController`, which shows the menu in a native
-/// `NSPopover`: content-size changes resize anchored to the status item
-/// (downward only), with the system's own menu chrome and dismissal.
 @main
 struct NoicanMenuBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        // The menu lives in the AppKit panel; SwiftUI still requires a
-        // Scene, and an empty Settings scene contributes no UI.
         Settings {}
     }
 }
 
-/// Boots the status-item shell once AppKit is ready.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBar: StatusBarController?
@@ -34,22 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// Menu bar icon renderer: the glyph is the selected mode (`mic.slash`
-/// Off, `waveform.badge.mic` On, `headphones` Preview), the color is its
-/// health — monochrome Off, green while the mode is actually delivering,
-/// red (matching the status dot and the pill's warning tint) while the
-/// selection is not delivering, so trouble is visible without opening
-/// the menu.
-///
-/// Every state draws into the same fixed-size canvas: the glyphs have
-/// different intrinsic widths, and a status item that changes width
-/// shifts the menu's anchor on every mode change.
-///
-/// Main-actor bound: the image cache is UI state and every caller is
-/// the status-item controller.
 @MainActor
 enum MenuBarIcon {
-    /// The prerendered status-item image for a mode × health state.
     static func image(mode: EngineMode, isUnfulfilled: Bool) -> NSImage {
         icons["\(mode.rawValue)-\(isUnfulfilled)"] ?? NSImage()
     }
@@ -62,11 +34,6 @@ enum MenuBarIcon {
         }
     }
 
-    /// One prerendered image per mode × health, keyed
-    /// "<mode>-<isUnfulfilled>". Off is a template image (the system
-    /// adapts it to the menu bar appearance); colored states are
-    /// non-template with palette colors, because status items render
-    /// template images tint-free.
     private static let icons: [String: NSImage] = {
         var icons: [String: NSImage] = [:]
         for mode in EngineMode.allCases {
@@ -77,8 +44,6 @@ enum MenuBarIcon {
         return icons
     }()
 
-    /// Draws `symbolName` centered on a constant-size canvas; `nil` tint
-    /// produces a template image.
     private static func canvas(_ symbolName: String, tint: NSColor?) -> NSImage {
         var configuration = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
         if let tint {
@@ -89,10 +54,6 @@ enum MenuBarIcon {
             systemSymbolName: symbolName,
             accessibilityDescription: "Noican"
         )?.withSymbolConfiguration(configuration) ?? NSImage()
-        // System symbols are template images; drawn directly, a template
-        // is treated as a monochrome mask and the palette tint would not
-        // survive the bake. The canvas re-applies templateness for the
-        // untinted (Off) state below.
         symbol.isTemplate = false
         let size = NSSize(width: 22, height: 16)
         let image = NSImage(size: size, flipped: false) { rect in

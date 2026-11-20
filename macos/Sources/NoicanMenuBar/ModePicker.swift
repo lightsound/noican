@@ -1,16 +1,6 @@
 import NoicanState
 import SwiftUI
 
-/// Custom three-segment mode control: a capsule track with a highlight
-/// pill that slides between segments. Every segment stays tappable
-/// (except while busy); when a selection is refused — Preview on an
-/// unsafe output — the caller keeps the mode where it was and explains
-/// why below the control, which confuses less than a segment that
-/// cannot be pressed.
-///
-/// The selection is the user's *intent* and never moves on its own: when
-/// the selected mode is not actually delivering (`isUnfulfilled`), the
-/// pill turns red instead, and tapping the same segment retries.
 struct ModePicker: View {
     let mode: EngineMode
     let isBusy: Bool
@@ -26,12 +16,6 @@ struct ModePicker: View {
             }
         }
         .padding(3)
-        // One *persistent* pill that moves between the segments' anchor
-        // frames. The previous per-segment `if` pill was inserted/removed
-        // on every switch, so an opacity transition ran alongside the
-        // slide (ghosting) and a mid-flight retarget could snap (visible
-        // teleport). A single view that only changes its matched target
-        // has neither failure mode.
         .background {
             Capsule()
                 .fill(pillColor(for: mode))
@@ -39,9 +23,6 @@ struct ModePicker: View {
         }
         .background(Capsule().fill(.quaternary.opacity(0.5)))
         .animation(.spring(response: 0.25, dampingFraction: 0.9), value: mode)
-        // Isolate the sliding pill's matched geometry from outside layout
-        // shifts (status/error text changing the control's vertical
-        // position mid-slide would otherwise distort the animation).
         .geometryGroup()
     }
 
@@ -58,7 +39,6 @@ struct ModePicker: View {
             .foregroundStyle(labelStyle(for: candidate))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 5)
-            // Invisible anchor the pill can target.
             .matchedGeometryEffect(id: candidate, in: highlightNamespace, isSource: true)
             .contentShape(Capsule())
         }
@@ -67,8 +47,6 @@ struct ModePicker: View {
         .disabled(isBusy)
     }
 
-    /// Off reads as a neutral pill; the active modes carry the accent;
-    /// an unfulfilled selection warns in red.
     private func pillColor(for candidate: EngineMode) -> Color {
         if isUnfulfilled {
             return .red
@@ -85,7 +63,3 @@ struct ModePicker: View {
         return AnyShapeStyle(.secondary)
     }
 }
-
-// The segments use the shared StaticButtonStyle (StaticButtonStyle.swift):
-// the sliding pill is the selection feedback, and the plain style's
-// momentary dimming read as flicker on the segments.

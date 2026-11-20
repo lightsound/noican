@@ -1,88 +1,23 @@
-//! Objective metrics for comparing speaker-suppression candidates.
-//!
-//! The question this module answers is the one behind the re-scoped
-//! Phase 1 item (docs/tech-research.md §6.4): *does a candidate keep
-//! Hush's background-speaker suppression while keeping the user's own
-//! voice at 48 kHz bandwidth?* Listening decides in the end, but the
-//! candidates are first ranked on numbers that come out of a controlled
-//! mixture:
-//!
-//! ```text
-//! |---- you only ----|---- you + other (at SIR) ----|---- other only ----|
-//! 0                  L                              2L                   3L
-//! ```
-//!
-//! `L` is one segment ([`build_mixture`]); the clean own-voice recording
-//! supplies the first two segments, the interferer recording supplies the
-//! last two, scaled so that the RMS ratio inside the middle segment is the
-//! requested signal-to-interference ratio. The processed output is
-//! time-aligned with the mixture (the CLI compensates each stage's
-//! reported latency), so every metric is a plain comparison over one
-//! region, skipping [`REGION_GUARD`] at each region start so a model's
-//! adaptation to the new condition does not count against it:
-//!
-//! - **High-band retention** (you only): energy at or above
-//!   [`HIGH_BAND_HZ`] in the output relative to the clean voice, in dB.
-//!   A 16 kHz model scores about −80 dB here (the resampler's stopband;
-//!   −83.6 dB measured for `hush`); a transparent 48 kHz path scores 0 dB.
-//! - **Own-voice level** (you only): output RMS relative to the clean
-//!   voice, the loudness-parity figure `HUSH_MAKEUP_GAIN_DB` was set
-//!   from (±1 dB is the acceptance band there).
-//! - **Own-voice SI-SDR** (you only): scale-invariant SDR of the output
-//!   against the clean voice. Artefacts, band limits and pumping all
-//!   lower it; the metric is scale-invariant on purpose because gain
-//!   parity is the previous figure.
-//! - **Both-talking SI-SDR** (you + other): the same against the clean
-//!   voice while the interferer is present. The mixture itself scores
-//!   about the SIR; a suppressor should score above it.
-//! - **Interferer residual** (other only): output RMS relative to the
-//!   mixture RMS, full band and at or above [`HIGH_BAND_HZ`]. More
-//!   negative is better. The high-band figure is the leak a band-split
-//!   design would show if its upper band were not gated.
-//!
-//! Everything here is pure arithmetic on `f32` slices so it is unit-tested
-//! against synthetic signals with known answers; file I/O and stage
-//! execution live in `main.rs` / `process.rs`.
-
 use std::ops::Range;
 
 use noican_core::ENGINE_SAMPLE_RATE;
 use realfft::RealFftPlanner;
 use realfft::num_complex::Complex32;
 
-/// Lower edge of the "high band" whose survival distinguishes a 48 kHz
-/// path from a 16 kHz one. 8 kHz is the 16 kHz model's Nyquist frequency.
 pub(crate) const HIGH_BAND_HZ: f64 = 8_000.0;
 
-/// Samples skipped at the start of every region before measuring, so a
-/// model's reaction time to a new condition (Hush's ERB/DF stages
-/// switching on the local SNR estimate, smoothing filters settling) is
-/// not scored as leakage or damage. 250 ms at the engine rate.
 pub(crate) const REGION_GUARD: usize = ENGINE_SAMPLE_RATE as usize / 4;
 
-/// Frame used by [`trim_silence`]: 10 ms at the engine rate, matching
-/// the worker block so "silence" means the same thing as in the live path.
 const TRIM_FRAME: usize = 480;
 
-/// Frames quieter than this (RMS, dBFS) at the head and tail of a
-/// recording are dropped by [`trim_silence`]. −50 dBFS sits well below
-/// speech recorded at conversational level on a built-in microphone
-/// (−36 dBFS RMS in the 2026-09-11 acceptance record) and well above the
-/// noise floor of the recordings this tool is meant for.
 const TRIM_THRESHOLD_DBFS: f64 = -50.0;
 
-/// Analysis window of the band-energy estimate: 1024 samples at 48 kHz
-/// gives 46.9 Hz bins, fine enough that the 8 kHz edge falls within one
-/// bin of the nominal value.
 const BAND_FFT_LEN: usize = 1024;
 
-/// Floor applied to logarithms of zero energy, in dB.
 const DB_FLOOR: f64 = -120.0;
 
-/// Ceiling applied to SI-SDR so an exact copy reads as a finite number.
 const SI_SDR_CEILING_DB: f64 = 100.0;
 
-/// Root-mean-square of `samples` (0 for an empty slice).
 pub(crate) fn rms(samples: &[f32]) -> f64 {
     if samples.is_empty() {
         return 0.0;
@@ -91,7 +26,6 @@ pub(crate) fn rms(samples: &[f32]) -> f64 {
     (energy / to_f64(samples.len())).sqrt()
 }
 
-/// `20·log10(ratio)`, floored at [`DB_FLOOR`] for zero or negative input.
 pub(crate) fn amplitude_db(ratio: f64) -> f64 {
     if ratio <= 0.0 {
         DB_FLOOR
@@ -100,7 +34,6 @@ pub(crate) fn amplitude_db(ratio: f64) -> f64 {
     }
 }
 
-/// `10·log10(ratio)` for energy ratios, floored at [`DB_FLOOR`].
 pub(crate) fn power_db(ratio: f64) -> f64 {
     if ratio <= 0.0 {
         DB_FLOOR
@@ -109,9 +42,6 @@ pub(crate) fn power_db(ratio: f64) -> f64 {
     }
 }
 
-/// Drops leading and trailing 10 ms frames whose RMS is below
-/// [`TRIM_THRESHOLD_DBFS`]. Internal pauses are kept (they are part of
-/// natural speech and of what the models see live).
 pub(crate) fn trim_silence(samples: &[f32]) -> &[f32] {
     let threshold = 10f64.powf(TRIM_THRESHOLD_DBFS / 20.0);
     let frames = samples.len() / TRIM_FRAME;
@@ -120,13 +50,10 @@ pub(crate) fn trim_silence(samples: &[f32]) -> &[f32] {
     let Some(first) = (0..frames).find(|&f| loud(f)) else {
         return &samples[..0];
     };
-    // `first` is loud, so the reverse search always finds a frame.
     let last = (0..frames).rev().find(|&f| loud(f)).unwrap_or(first);
     &samples[first * TRIM_FRAME..(last + 1) * TRIM_FRAME]
 }
 
-/// Linear gain for `interferer` such that `rms(target) / rms(gain ×
-/// interferer)` equals `sir_db`. A silent interferer yields 0.
 pub(crate) fn sir_gain(target: &[f32], interferer: &[f32], sir_db: f64) -> f32 {
     let interferer_rms = rms(interferer);
     if interferer_rms == 0.0 {
@@ -141,8 +68,6 @@ pub(crate) fn sir_gain(target: &[f32], interferer: &[f32], sir_db: f64) -> f32 {
     gain
 }
 
-/// Linear gain that brings `samples` to an RMS of `level_dbfs`. Silence
-/// yields 1 (nothing to normalize).
 pub(crate) fn level_gain(samples: &[f32], level_dbfs: f64) -> f32 {
     let current = rms(samples);
     if current == 0.0 {
@@ -156,43 +81,21 @@ pub(crate) fn level_gain(samples: &[f32], level_dbfs: f64) -> f32 {
     gain
 }
 
-/// Sample ranges of the three conditions in a [`Mixture`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Regions {
-    /// Only the user's voice is present.
     pub(crate) target_only: Range<usize>,
-    /// Voice and interferer overlap at the requested SIR.
     pub(crate) both: Range<usize>,
-    /// Only the interferer is present.
     pub(crate) interferer_only: Range<usize>,
 }
 
-/// One evaluation input: the mixture the stages hear plus the aligned
-/// clean components the metrics compare against.
 #[derive(Debug, Clone)]
 pub(crate) struct Mixture {
-    /// What the stage processes: voice, voice + interferer, interferer.
     pub(crate) input: Vec<f32>,
-    /// The clean voice, zero outside its two segments (the interferer
-    /// component is `input - target`).
     pub(crate) target: Vec<f32>,
-    /// Region boundaries.
     pub(crate) regions: Regions,
-    /// Gain that was applied to the interferer.
     pub(crate) interferer_gain: f32,
 }
 
-/// Lays out the three-segment mixture described in the module docs.
-///
-/// `segment_len` is `L` in samples; `target` must provide at least `2L`
-/// samples and `interferer` at least `2L`. The interferer gain is set on
-/// the two halves that actually overlap (target `L..2L` against
-/// interferer `0..L`), so the SIR inside the middle region is exact.
-///
-/// # Errors
-///
-/// Returns a message when either recording is too short or `segment_len`
-/// is zero.
 pub(crate) fn build_mixture(
     target: &[f32],
     interferer: &[f32],
@@ -242,11 +145,6 @@ pub(crate) fn build_mixture(
     })
 }
 
-/// Energy of `samples` between `lo_hz` (inclusive) and `hi_hz`
-/// (exclusive), summed over Hann-windowed [`BAND_FFT_LEN`] frames at half
-/// overlap. The scale is arbitrary but identical for equal-length inputs,
-/// which is all the ratios here need. Returns 0 for inputs shorter than
-/// one frame.
 pub(crate) fn band_energy(samples: &[f32], lo_hz: f64, hi_hz: f64) -> f64 {
     if samples.len() < BAND_FFT_LEN {
         return 0.0;
@@ -290,15 +188,10 @@ pub(crate) fn band_energy(samples: &[f32], lo_hz: f64, hi_hz: f64) -> f64 {
     energy
 }
 
-/// Energy at or above [`HIGH_BAND_HZ`].
 pub(crate) fn high_band_energy(samples: &[f32]) -> f64 {
     band_energy(samples, HIGH_BAND_HZ, f64::from(ENGINE_SAMPLE_RATE) / 2.0)
 }
 
-/// Scale-invariant signal-to-distortion ratio of `estimate` against
-/// `reference`, in dB (Le Roux et al., 2019). The estimate is projected
-/// onto the reference, so a pure gain change scores the ceiling
-/// ([`SI_SDR_CEILING_DB`]); a silent estimate scores [`DB_FLOOR`].
 pub(crate) fn si_sdr_db(estimate: &[f32], reference: &[f32]) -> f64 {
     let len = estimate.len().min(reference.len());
     let mut dot = 0.0_f64;
@@ -326,32 +219,21 @@ pub(crate) fn si_sdr_db(estimate: &[f32], reference: &[f32]) -> f64 {
     power_db(target_energy / error_energy).min(SI_SDR_CEILING_DB)
 }
 
-/// The metric set for one (stage, mixture) pair. See the module docs for
-/// definitions; all values in dB.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Metrics {
-    /// Output high-band energy relative to the clean voice (you only).
     pub(crate) high_band_retention: f64,
-    /// Output RMS relative to the clean voice (you only).
     pub(crate) own_voice_level: f64,
-    /// SI-SDR against the clean voice (you only).
     pub(crate) own_voice_si_sdr: f64,
-    /// SI-SDR against the clean voice while the interferer talks.
     pub(crate) both_si_sdr: f64,
-    /// Output RMS relative to the mixture RMS (other only), full band.
     pub(crate) interferer_residual: f64,
-    /// Same, high band only.
     pub(crate) interferer_residual_high: f64,
 }
 
-/// Skips the guard at the start of `region`, clamped to the slice.
 fn measured(region: &Range<usize>, len: usize) -> Range<usize> {
     let start = (region.start + REGION_GUARD).min(region.end).min(len);
     start..region.end.min(len)
 }
 
-/// Computes [`Metrics`] for `output`, which must be time-aligned with
-/// `mixture.input` (same length, latency already compensated).
 pub(crate) fn evaluate(output: &[f32], mixture: &Mixture) -> Metrics {
     let len = output.len().min(mixture.input.len());
     let you = measured(&mixture.regions.target_only, len);
@@ -380,20 +262,12 @@ pub(crate) fn evaluate(output: &[f32], mixture: &Mixture) -> Metrics {
     }
 }
 
-/// Share of a recording's energy at or above [`HIGH_BAND_HZ`], in dB
-/// relative to its full-band energy. Used to warn when a recording
-/// cannot exercise the high-band metrics (e.g. a Bluetooth HFP capture).
 pub(crate) fn high_band_share_db(samples: &[f32]) -> f64 {
     power_db(
         high_band_energy(samples) / band_energy(samples, 0.0, f64::from(ENGINE_SAMPLE_RATE) / 2.0),
     )
 }
 
-/// Value at quantile `q` (0..=1) of an ascending-sorted slice.
-///
-/// # Panics
-///
-/// Panics on an empty slice.
 pub(crate) fn quantile<T: Copy>(sorted: &[T], q: f64) -> T {
     assert!(!sorted.is_empty(), "quantile of an empty sample");
     #[expect(
@@ -406,9 +280,6 @@ pub(crate) fn quantile<T: Copy>(sorted: &[T], q: f64) -> T {
     sorted[index.min(sorted.len() - 1)]
 }
 
-/// A deterministic permutation of `0..n` from `seed` (Fisher–Yates over
-/// a splitmix64 stream), used to letter the blind listening set so the
-/// owner cannot infer a model from file order.
 pub(crate) fn blind_order(n: usize, seed: u64) -> Vec<usize> {
     let mut state = seed ^ 0x9E37_79B9_7F4A_7C15;
     let mut next = move || {
@@ -430,7 +301,6 @@ pub(crate) fn blind_order(n: usize, seed: u64) -> Vec<usize> {
     order
 }
 
-/// Exact `usize → f64` for sample counts and indices.
 const fn to_f64(value: usize) -> f64 {
     #[expect(
         clippy::cast_precision_loss,
@@ -463,7 +333,6 @@ mod tests {
             .collect()
     }
 
-    /// Deterministic uniform noise in ±`amplitude` (xorshift32).
     fn noise(amplitude: f32, len: usize, mut state: u32) -> Vec<f32> {
         (0..len)
             .map(|_| {
@@ -497,7 +366,6 @@ mod tests {
         let mut x = vec![0.0_f32; 480 * 5];
         x.extend(sine(440.0, 0.3, 480 * 10));
         x.extend(vec![0.0_f32; 480 * 3]);
-        // An internal pause must survive.
         x.extend(vec![0.0_f32; 480 * 2]);
         x.extend(sine(440.0, 0.3, 480 * 4));
         x.extend(vec![0.0_f32; 480 * 7 + 100]);
@@ -549,7 +417,6 @@ mod tests {
                 interferer_only: 2 * l..3 * l,
             }
         );
-        // Region 1 is the untouched target; region 3 is scaled interferer.
         for (got, want) in mixture.input[..l].iter().zip(&target[..l]) {
             assert_close(f64::from(*got), f64::from(*want), 0.0);
         }
@@ -563,7 +430,6 @@ mod tests {
         assert!(interferer_track[..l].iter().all(|s| *s == 0.0));
         let sir = amplitude_db(rms(&mixture.target[l..2 * l]) / rms(&interferer_track[l..2 * l]));
         assert!((sir - 6.0).abs() < 0.01, "SIR in the overlap: {sir}");
-        // The last region is the interferer alone, at the same gain.
         for (got, want) in interferer_track[2 * l..].iter().zip(&interferer[l..2 * l]) {
             assert_close(
                 f64::from(*got),
@@ -596,7 +462,6 @@ mod tests {
             high_share > -0.01,
             "12 kHz tone lost from the high band: {high_share} dB"
         );
-        // Equal-amplitude tones carry equal energy regardless of band.
         let ratio = power_db(high_band_energy(&high) / band_energy(&low, 0.0, HIGH_BAND_HZ));
         assert!(ratio.abs() < 0.1, "band energies differ by {ratio} dB");
         assert_close(band_energy(&low[..100], 0.0, 24_000.0), 0.0, 0.0);
@@ -608,7 +473,6 @@ mod tests {
         assert_close(si_sdr_db(&reference, &reference), SI_SDR_CEILING_DB, 0.0);
         let half: Vec<f32> = reference.iter().map(|s| s * 0.5).collect();
         assert_close(si_sdr_db(&half, &reference), SI_SDR_CEILING_DB, 0.0);
-        // Noise 20 dB below the sine (RMS-wise) gives SI-SDR ≈ 20 dB.
         let sine_rms = 0.5 / std::f64::consts::SQRT_2;
         #[expect(clippy::cast_possible_truncation, reason = "test amplitude")]
         let noise_amp = (sine_rms / 10.0 * 3.0_f64.sqrt()) as f32;
@@ -659,14 +523,11 @@ mod tests {
         }
         let interferer = noise(0.4, 2 * l, 9);
         let mixture = build_mixture(&target, &interferer, 6.0, l).expect("valid");
-        // A "16 kHz path": the low tone only.
         let mut low_only = sine(300.0, 0.3, 2 * l);
         low_only.resize(3 * l, 0.0);
         let metrics = evaluate(&low_only, &mixture);
         assert!(metrics.high_band_retention < -60.0, "{metrics:?}");
-        // Dropping the −9.5 dB component costs 10·log10(0.9) ≈ −0.46 dB.
         assert!((metrics.own_voice_level + 0.46).abs() < 0.05, "{metrics:?}");
-        // The 10 kHz component (−9.5 dB relative) becomes the error term.
         assert!((metrics.own_voice_si_sdr - 9.54).abs() < 0.2, "{metrics:?}");
     }
 
@@ -676,8 +537,6 @@ mod tests {
         let target = sine(300.0, 0.3, 2 * l);
         let interferer = noise(0.4, 2 * l, 13);
         let mixture = build_mixture(&target, &interferer, 6.0, l).expect("valid");
-        // Corrupt only the first 200 ms of the interferer-only region:
-        // inside the guard, so the residual must still read as silence.
         let mut output = mixture.target.clone();
         for s in &mut output[2 * l..2 * l + 9600] {
             *s = 1.0;

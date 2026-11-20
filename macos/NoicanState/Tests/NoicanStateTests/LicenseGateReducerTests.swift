@@ -2,10 +2,6 @@ import Testing
 
 @testable import NoicanState
 
-// Reducer coverage for the license gate: without a valid license, Preview
-// and On taps are refused in place with an explanation, while Off, the
-// pickers, and any session already running are untouched.
-
 @Suite("License gate")
 struct LicenseGateReducerTests {
     private func unlicensed(_ model: AppModel = readyModel()) -> AppModel {
@@ -57,7 +53,6 @@ struct LicenseGateReducerTests {
         #expect(effects.isEmpty)
         #expect(state.machine == running.machine)
         #expect(state.mode == .on)
-        // Automatic rebuilds of that session keep working.
         let (rebuilt, rebuildEffects) = step(state, .microphoneSelected(usbMic.uid))
         #expect(rebuildEffects.contains { if case .startEngine = $0 { true } else { false } })
         #expect(rebuilt.messages.licenseRequired == nil)

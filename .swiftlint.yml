@@ -35,9 +35,9 @@ type_body_length:
 file_length:
   warning: 500
   error: 700
-  # This codebase deliberately carries heavy rationale comments (real-time
-  # rules, state-machine invariants). Counting them against file length
-  # would reward deleting documentation; the limit is meant to bound code.
+  # Rationale lives in docs/adr/, not in code comments: comments are banned
+  # in principle and ratcheted by scripts/comment-ratchet.py, and the few
+  # that remain should not count against a limit meant to bound code.
   ignore_comment_only_lines: true
 
 reporter: xcode

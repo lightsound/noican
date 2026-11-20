@@ -3,9 +3,6 @@ import Foundation
 import FoundationNetworking
 #endif
 
-/// Where the app's Polar integration points. Every value is public
-/// (the customer-portal license endpoints take no secret), so it is
-/// compiled into the app.
 public struct PolarConfiguration: Hashable, Sendable {
     public enum Server: String, Hashable, Sendable {
         case production
@@ -27,13 +24,8 @@ public struct PolarConfiguration: Hashable, Sendable {
     }
 
     public var server: Server
-    /// Polar organization ID. Polar scopes every key lookup to it.
     public var organizationID: String
-    /// ID of the license-key benefit attached to the Noican product; keys
-    /// from the seller's other products are refused.
     public var benefitID: String
-    /// Organization slug, for the customer-portal link
-    /// (`https://polar.sh/<slug>/portal`).
     public var organizationSlug: String?
 
     public init(server: Server, organizationID: String, benefitID: String, organizationSlug: String? = nil) {
@@ -45,10 +37,6 @@ public struct PolarConfiguration: Hashable, Sendable {
             .flatMap { $0.isEmpty ? nil : $0 }
     }
 
-    /// Whether both IDs are filled in with UUIDs. Anything less leaves the
-    /// build unconfigured (ungated) rather than half-scoped: a missing
-    /// benefit ID would accept keys for any product of the organization,
-    /// and a malformed one would fail every validation.
     public var isComplete: Bool {
         UUID(uuidString: organizationID) != nil && UUID(uuidString: benefitID) != nil
     }
@@ -60,7 +48,6 @@ public struct PolarConfiguration: Hashable, Sendable {
     }
 }
 
-/// One HTTP round trip; `URLSession` in the app, a scripted fake in tests.
 public protocol HTTPTransport: Sendable {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse)
 }
@@ -84,23 +71,9 @@ public struct URLSessionTransport: HTTPTransport {
     }
 }
 
-/// Polar's public customer-portal license-key API
-/// (`POST /v1/customer-portal/license-keys/{activate,validate,deactivate}`),
-/// which needs no access token and is meant for desktop clients.
-///
-/// No `Polar-Version` header is sent, deliberately: Polar removes each
-/// dated API version about nine months after release and then answers
-/// requests pinned to it with 404, so every customer on an old build
-/// would run out the grace period and be locked out. Unpinned requests
-/// use Polar's Current version; the decoding below reads only the
-/// handful of fields every version has carried, and anything it cannot
-/// read is `.unavailable` (grace period), never a rejection.
 public struct PolarLicenseBackend: LicenseBackend {
     public let identifier = "polar"
 
-    /// The `.unavailable` reason for a 200 response this build cannot
-    /// use — undecodable, or missing a field the grant depends on.
-    /// One constant so the two cases can never drift apart in wording.
     private static let unreadableResponseReason = "The license server sent a response this version of Noican can't read."
 
     private let configuration: PolarConfiguration
@@ -130,8 +103,6 @@ public struct PolarLicenseBackend: LicenseBackend {
         case 200:
             let activation: ActivationResponse = try decode(data)
             guard activation.licenseKey.isForBenefit(configuration.benefitID) else {
-                // Activation takes no benefit filter, so a key for another
-                // product got a slot; give it back before refusing.
                 try? await deactivate(key: key, activationID: activation.id)
                 throw .rejected(.wrongProduct)
             }
@@ -160,14 +131,6 @@ public struct PolarLicenseBackend: LicenseBackend {
         switch response.statusCode {
         case 200:
             let license: LicenseKeyResponse = try decode(data)
-            // A field that is present and wrong is definitive evidence
-            // against the key: reject, as before. A field that is absent
-            // proves nothing either way — the response is unsigned, so a
-            // body that merely omits the fields the grant depends on
-            // must not mint one — but absence is not evidence of
-            // revocation either, so it takes the unavailable path (the
-            // offline grace) rather than recording a rejection the
-            // server never made.
             if let benefitID = license.benefitID, benefitID != configuration.benefitID {
                 throw .rejected(.wrongProduct)
             }
@@ -205,8 +168,6 @@ public struct PolarLicenseBackend: LicenseBackend {
         }
     }
 
-    // MARK: - Transport
-
     private func post(_ action: String, _ body: some Encodable) async throws(LicenseBackendError) -> (Data, HTTPURLResponse) {
         let url = configuration.server.apiBaseURL
             .appendingPathComponent("v1/customer-portal/license-keys")
@@ -240,10 +201,6 @@ public struct PolarLicenseBackend: LicenseBackend {
         }
     }
 
-    // MARK: - Helpers
-
-    /// Polar timestamps carry microseconds (`2024-09-02T13:48:13.251621Z`);
-    /// the fraction is dropped rather than trusted to a formatter.
     static func parseDate(_ text: String) -> Date? {
         var trimmed = text
         if let dot = trimmed.firstIndex(of: "."),
@@ -282,8 +239,6 @@ public struct PolarLicenseBackend: LicenseBackend {
         return "Couldn't reach the license server: \(error.localizedDescription)"
     }
 
-    /// Polar limits metadata keys to 40 characters and values to 1–500;
-    /// the label has no documented bound and gets the same one.
     private static func clamped(_ text: String) -> String {
         String(text.prefix(500))
     }
@@ -298,8 +253,6 @@ public struct PolarLicenseBackend: LicenseBackend {
         }
     }
 }
-
-// MARK: - Wire format
 
 private struct ActivateRequest: Encodable {
     var key: String
@@ -341,14 +294,6 @@ private struct DeactivateRequest: Encodable {
     }
 }
 
-/// Only the fields the app acts on. Decoding stays lenient — all but
-/// the key's own ID are optional, so a field a later API version drops
-/// does not make the body unreadable — but the grant decision is not
-/// lenient: Polar's response is unsigned, so `status` and `benefit_id`
-/// must be present and correct, and validation must name this Mac's
-/// activation, before any of them counts as evidence for a grant. The
-/// remaining fields (display key, expiry, activation limit) stay
-/// optional in effect as well: none of them decides a grant.
 private struct LicenseKeyResponse: Decodable {
     struct Activation: Decodable {
         var id: String
@@ -372,16 +317,10 @@ private struct LicenseKeyResponse: Decodable {
         case activation
     }
 
-    /// Polar answers 404 for revoked or disabled keys, so a 200 should
-    /// always say `granted`; any other status is refused — and so is a
-    /// response without the field, which proves nothing about the key.
     var isGranted: Bool {
         status == "granted"
     }
 
-    /// The configured benefit, named in the response: a key for another
-    /// product is refused, and a response that does not name the benefit
-    /// at all has not shown the key is for this product.
     func isForBenefit(_ expected: String) -> Bool {
         benefitID == expected
     }
@@ -406,8 +345,6 @@ private struct ActivationResponse: Decodable {
     }
 }
 
-/// Polar's error body: `{"error": "ResourceNotFound", "detail": "…"}`.
-/// Validation errors (422) carry an array in `detail`, read as nil.
 private struct ErrorResponse: Decodable {
     var error: String?
     var detail: String?

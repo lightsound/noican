@@ -1,15 +1,4 @@
-//! DPDFNet 48 kHz HR streaming stage.
-//!
-//! The graph consumes one raw complex STFT frame (`spec [1, 1, bins, 2]`)
-//! and returns the enhanced frame plus an opaque flat state vector; ERB
-//! features, normalization, masking, and deep filtering all live inside
-//! the graph. Outside the graph (mirroring sherpa-onnx's
-//! `online-speech-denoiser-stft-impl.h` and ceva-ip's `stream.py`):
-//! sliding analysis window → analysis window function → unnormalized rfft
-//! → run graph → irfft (scaled 1/n) → synthesis window (same window) →
-//! 50% overlap-add, emitting `hop` samples per call. The window satisfies
-//! squared-COLA, so no OLA normalization is needed. All STFT parameters
-//! and the state-vector initialization come from the ONNX metadata.
+//! See docs/adr/0008-model-runtime.md.
 
 use std::borrow::Cow;
 use std::path::Path;
@@ -21,24 +10,8 @@ use ort::value::Tensor;
 use crate::dsp::{FftPair, sqrt_hann_window, vorbis_window};
 use crate::onnx::{inference_error, load_streaming_session, required_metadata};
 
-/// Largest plausible STFT window length in samples (the real DPDFNet
-/// profiles use 960–4096). Bounds the model-declared `window_length`
-/// metadata before it sizes buffers and the FFT plan.
 const MAX_WINDOW_LEN: usize = 1 << 17;
 
-/// Model lookahead in STFT hops, on top of the overlap-add window delay.
-///
-/// The DPDFNet architecture (`DeepFilterNet2` + dual-path RNN) keeps
-/// DFN2's two hops of convolutional lookahead plus two hops of
-/// deep-filtering lookahead. The streaming ONNX exports carry no
-/// latency/lookahead metadata key, so this is a constant of the
-/// architecture, confirmed empirically: cross-correlating real speech
-/// against the latency-aligned CLI output measured **exactly 4 hops
-/// (1920 samples, 40 ms) of unreported delay on both the
-/// `dpdfnet2_48khz_hr` and `dpdfnet8_48khz_hr` profiles** (2026-08-27,
-/// `x86_64` ONNX Runtime). Without it, the intensity control's
-/// delay-compensated dry path is 40 ms early and a partial mix doubles
-/// the voice (hardware test C5).
 const LOOKAHEAD_HOPS: usize = 4;
 
 fn parse_meta_usize(session: &Session, key: &str) -> Result<usize, StageError> {
@@ -69,9 +42,7 @@ pub struct DpdfnetStage {
     hop: usize,
     window: Vec<f32>,
     fft: FftPair,
-    /// Sliding analysis buffer, length `window_length`.
     analysis: Vec<f32>,
-    /// Overlap-add buffer, length `window_length`.
     ola: Vec<f32>,
     spec: Vec<f32>,
     frame: Vec<f32>,
@@ -80,8 +51,7 @@ pub struct DpdfnetStage {
 }
 
 impl DpdfnetStage {
-    /// Loads a DPDFNet streaming ONNX at `path`, reading all STFT and
-    /// state parameters from its embedded metadata.
+    /// See docs/adr/0008-model-runtime.md.
     ///
     /// # Errors
     ///
@@ -99,18 +69,11 @@ impl DpdfnetStage {
                 "window_length {win_len} != n_fft {n_fft} is not supported"
             )));
         }
-        // win_len sizes the analysis/overlap buffers and the FFT plan;
-        // like every model-declared count it is bounded before it is
-        // trusted. Real profiles use at most a few thousand samples.
         if win_len > MAX_WINDOW_LEN {
             return Err(StageError::Inference(format!(
                 "window_length metadata {win_len} exceeds the plausible maximum {MAX_WINDOW_LEN}"
             )));
         }
-        // hop sizes the framed stage's buffers and indexes the sliding
-        // window: zero would stall the frame loop, and anything above
-        // win_len underflows the delay arithmetic and panics the window
-        // slide. Real profiles use hop = win_len / 2.
         if hop == 0 || hop > win_len {
             return Err(StageError::Inference(format!(
                 "hop_length metadata {hop} is outside the supported range 1..={win_len}"
@@ -127,8 +90,6 @@ impl DpdfnetStage {
             }
         };
         let state_size = parse_meta_usize(&session, "state_size")?;
-        // state_size sizes the zeroed state vectors below; bound it
-        // like the state-tensor shapes in onnx.rs.
         if state_size > crate::onnx::MAX_STATE_ELEMENTS {
             return Err(StageError::Inference(format!(
                 "state_size metadata {state_size} exceeds the plausible maximum {}",
@@ -190,18 +151,14 @@ impl FrameProcessor for DpdfnetStage {
     }
 
     fn output_delay(&self) -> usize {
-        // One analysis window of overlap-add delay plus the model's own
-        // lookahead (see [`LOOKAHEAD_HOPS`]).
         (self.n_fft - self.hop) + LOOKAHEAD_HOPS * self.hop
     }
 
     fn process_frame(&mut self, input: &[f32], output: &mut [f32]) -> Result<(), StageError> {
         let win_len = self.analysis.len();
-        // Slide the analysis window and append the new hop.
         self.analysis.copy_within(self.hop.., 0);
         self.analysis[win_len - self.hop..].copy_from_slice(input);
 
-        // Analysis window + forward FFT.
         for (dst, (x, w)) in self
             .frame
             .iter_mut()
@@ -252,7 +209,6 @@ impl FrameProcessor for DpdfnetStage {
         }
         self.state.copy_from_slice(next_state);
 
-        // Inverse FFT + synthesis window + overlap-add.
         self.fft.inverse_interleaved(&spec, &mut self.frame)?;
         self.spec = spec;
         for (acc, (y, w)) in self.ola.iter_mut().zip(self.frame.iter().zip(&self.window)) {

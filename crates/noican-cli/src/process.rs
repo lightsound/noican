@@ -1,6 +1,3 @@
-//! Batch audio processing: run inputs through selected models and organize
-//! outputs for side-by-side comparison.
-
 use std::path::Path;
 use std::time::Instant;
 
@@ -9,29 +6,12 @@ use noican_core::Stage;
 
 use crate::audio;
 
-/// Block size (48 kHz samples) used to drive stages. Mirrors a realistic
-/// real-time block so offline results match live behavior.
 pub(crate) const BLOCK_LEN: usize = 480;
 
-/// Runs `input` through `stage`, compensating the stage's internal buffering
-/// latency so the output is time-aligned with the input.
-///
-/// # Errors
-///
-/// Propagates stage processing failures.
 pub(crate) fn run_stage_aligned(stage: &mut dyn Stage, input: &[f32]) -> anyhow::Result<Vec<f32>> {
     run_stage_aligned_timed(stage, input).map(|(output, _)| output)
 }
 
-/// [`run_stage_aligned`] that also returns the wall-clock time of every
-/// `process_block` call in nanoseconds (one entry per [`BLOCK_LEN`]
-/// block, in order). This is the same measurement `block_bench` makes,
-/// taken on real audio instead of noise, so the evaluation table can
-/// show whether a candidate fits the live worker's budget.
-///
-/// # Errors
-///
-/// Propagates stage processing failures.
 pub(crate) fn run_stage_aligned_timed(
     stage: &mut dyn Stage,
     input: &[f32],
@@ -55,16 +35,6 @@ pub(crate) fn run_stage_aligned_timed(
     Ok((output, block_times_ns))
 }
 
-/// Processes `input_path` through every model in `model_ids`, writing
-/// `out_dir/<input_stem>/<model_id>.wav` plus a `reference.wav` (the input
-/// converted to mono 48 kHz) for fair comparison.
-///
-/// `make_stage` maps a model id to a fresh stage (state is never shared
-/// between files).
-///
-/// # Errors
-///
-/// Fails on I/O errors or when a stage cannot be created/run.
 pub(crate) fn process_file(
     input_path: &Path,
     out_dir: &Path,

@@ -1,11 +1,6 @@
 import NoicanLicensing
 import SwiftUI
 
-/// The popover's license section. Without a working license the key
-/// field is always visible (it is what the refused mode control points
-/// at); a working license folds into one row that advertises its status
-/// and expands to the key, the last verification, and "Deactivate this
-/// Mac".
 struct LicenseSection: View {
     @ObservedObject var license: LicenseModel
 
@@ -58,8 +53,6 @@ struct LicenseSection: View {
                 }
             }
             if let notice = state.notice {
-                // Offline, the status caption already says the license
-                // still works; the reason is detail, not an error.
                 caption(notice, color: isOffline ? .secondary : .red)
             }
         }
@@ -73,10 +66,6 @@ struct LicenseSection: View {
         }
     }
 
-    // MARK: - Pieces
-
-    /// "License" label with the status summary; foldable only while the
-    /// license works (otherwise the key field must stay in view).
     private var header: some View {
         Button {
             isExpanded.toggle()
@@ -183,7 +172,6 @@ struct LicenseSection: View {
         .controlSize(.small)
     }
 
-    /// Purchase and customer-portal links, each shown when configured.
     private var links: some View {
         HStack(spacing: 10) {
             if let url = license.purchaseURL, !state.status.allowsProcessing {

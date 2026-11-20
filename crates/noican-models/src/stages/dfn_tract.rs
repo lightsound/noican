@@ -1,77 +1,24 @@
-//! DeepFilterNet-family stages via the upstream `deep_filter` (tract) crate.
-//!
-//! DeepFilterNet3 and Hush ship their networks as three ONNX graphs
-//! (`enc`/`erb_dec`/`df_dec`) with a free time axis and *implicit*
-//! recurrent state, which ONNX Runtime cannot stream one hop at a time.
-//! The upstream `deep_filter` crate solves this with tract-pulse (the same
-//! route Hush's own `libweya_nc` takes), so these two models run on tract
-//! while every other model runs on ONNX Runtime — hidden behind the same
-//! [`FrameProcessor`] interface.
+//! See docs/adr/0008-model-runtime.md.
 
 use std::path::Path;
 
 use df::tract::{DfParams, DfTract, ReduceMask, RuntimeParams};
 use noican_core::{FrameProcessor, StageError};
 
-/// Fixed makeup gain applied to Hush's output, in dB.
-///
-/// Hush's network attenuates speech, not just noise. Measurement (same
-/// discipline as `LOOKAHEAD_HOPS` in the DPDFNet stage — an empirical
-/// constant with its measurement recorded): the aligned CLI batch
-/// (espeak-ng speech → 48 kHz mono → `process` → voiced-frame RMS over
-/// 10 ms frames whose own level exceeds −50 dB, compared against
-/// passthrough) measured a **−3.4 dB to −1.5 dB voiced-frame RMS deficit
-/// depending on the speech material and level** (−3.4 dB on the
-/// 2026-08-31 hardware-follow-up corpus at 0.70 peak; −2.5/−2.0/−1.9 dB
-/// on two other espeak voices at 0.70 peak; −1.5 dB at 0.35 peak —
-/// `x86_64` CLI builds). UL-UNAS on the same 16 kHz resampling path
-/// measured ±0.4 dB, so the deficit is Hush's own gain characteristic,
-/// not the rate conversion. This constant is the midpoint of the
-/// measured deficit range. The authoritative acceptance bound is the
-/// **±1 dB band around passthrough** (what the unit test pins): over
-/// the recorded deficits above the midpoint predicts residuals of
-/// −0.95 dB to +0.95 dB, and end-to-end re-measurement on the three
-/// re-runnable materials landed at +0.5, −0.1 and +0.97 dB — the
-/// prediction and the measurements all inside the band.
-///
-/// No clipping guard follows the gain, by design. The worst measured
-/// output/input peak ratio after the gain is ≈1.16 (raw Hush peak 0.61
-/// on a 0.70-peak input, ×1.33), so input peaking above ≈0.86 can push
-/// isolated output samples past 0 dBFS in the all-`f32` engine path.
-/// That path has no hard ceiling (floats do not wrap; downstream
-/// consumers clamp on conversion), a microphone captured that hot is
-/// already at its own clipping point, and a limiter here would distort
-/// every loud syllable to guard a corner case — so the overshoot is
-/// accepted and documented instead.
 pub(crate) const HUSH_MAKEUP_GAIN_DB: f32 = 2.45;
 
-/// Mean-square level below which `DfTract::process` skips the network,
-/// zeroes its output and leaves its spectrum buffers stale (upstream
-/// `tract.rs`, `process`: `if rms < 1e-7 { enh.fill(0.); return … }` —
-/// the variable is named `rms` upstream but holds the mean square).
-/// Mirrored here so [`DfTractStage::band_gain`] can report 0 for such a
-/// frame instead of reading the previous frame's spectra.
-///
-/// Pinned against `deep_filter` **v0.5.6** (the workspace `Cargo.toml`
-/// git tag). This is a silent coupling — no test can compare it with
-/// upstream — so re-read `DfTract::process` when that tag moves.
 const SILENT_FRAME_MEAN_SQUARE: f32 = 1e-7;
 
-/// Converts a dB gain into the linear factor applied per sample.
 pub(crate) fn db_to_linear(gain_db: f32) -> f32 {
     10.0_f32.powf(gain_db / 20.0)
 }
 
-/// Applies a fixed linear gain in place (the Hush makeup gain hook;
-/// separated from the model call so it is testable without weights).
 pub(crate) fn apply_gain(samples: &mut [f32], linear_gain: f32) {
     for sample in samples {
         *sample *= linear_gain;
     }
 }
 
-/// Mean square of a frame (the quantity upstream compares against
-/// [`SILENT_FRAME_MEAN_SQUARE`]).
 fn mean_square(samples: &[f32]) -> f32 {
     if samples.is_empty() {
         return 0.0;
@@ -84,11 +31,6 @@ fn mean_square(samples: &[f32]) -> f32 {
     samples.iter().map(|s| s * s).sum::<f32>() / len
 }
 
-/// Ratio of enhanced to noisy magnitude from the two band energies: the
-/// broadband gain the model applied there, `sqrt(Σ|Y|² / Σ|X|²)`,
-/// clamped to `0..=1` (the network's ERB mask and deep-filter stage
-/// attenuate; any apparent amplification is numerical). A zero (or
-/// denormal) noisy energy yields 0.
 fn magnitude_ratio(noisy_energy: f32, enhanced_energy: f32) -> f32 {
     if noisy_energy <= f32::MIN_POSITIVE {
         return 0.0;
@@ -96,7 +38,6 @@ fn magnitude_ratio(noisy_energy: f32, enhanced_energy: f32) -> f32 {
     (enhanced_energy / noisy_energy).sqrt().clamp(0.0, 1.0)
 }
 
-/// Σ|X|² over `bins` of one channel of a complex spectrum.
 fn band_energy(
     spectrum: ndarray::ArrayView1<'_, df::Complex32>,
     bins: &std::ops::Range<usize>,
@@ -109,20 +50,8 @@ fn band_energy(
         .sum()
 }
 
-/// Moves a whole [`DfTract`] across threads.
-///
-/// `DfTract` is not `Send` because tract's stateful plans hold `Rc`s
-/// internally. Those `Rc`s are created by and confined to the `DfTract`
-/// instance: we never clone the model (its `Clone` impl is unused here),
-/// never hand out references to its internals, and only access it through
-/// `&mut self` from one thread at a time — the whole object graph migrates
-/// together, which is sound for `Rc`. Upstream ships the same pattern in
-/// its C API (`DFState` is used from arbitrary caller threads).
 struct SendModel(DfTract);
 
-// SAFETY: see the type-level comment — no `Rc` inside the wrapped value
-// can be observed from more than one thread because the value is only
-// accessible via `&mut` and is never cloned or shared.
 #[expect(
     unsafe_code,
     clippy::non_send_fields_in_send_ty,
@@ -137,14 +66,9 @@ pub struct DfTractStage {
     sample_rate: u32,
     hop: usize,
     output_delay: usize,
-    /// Linear output gain (1.0 for DeepFilterNet3; the measured makeup
-    /// gain for Hush — see [`HUSH_MAKEUP_GAIN_DB`]).
     output_gain: f32,
-    /// Kept to rebuild the model on reset (`DfTract` has no state-reset API).
     params: DfParams,
     runtime: RuntimeParams,
-    /// True when the last frame fell under [`SILENT_FRAME_MEAN_SQUARE`]
-    /// (the model produced zeros without touching its spectra).
     last_frame_silent: bool,
 }
 
@@ -164,8 +88,7 @@ fn build(params: &DfParams, runtime: &RuntimeParams) -> Result<DfTract, StageErr
 }
 
 impl DfTractStage {
-    /// DeepFilterNet3 48 kHz baseline from the model bundle embedded in the
-    /// `deep_filter` crate (no download required).
+    /// See docs/adr/0008-model-runtime.md.
     ///
     /// # Errors
     ///
@@ -180,9 +103,7 @@ impl DfTractStage {
         )
     }
 
-    /// DeepFilterNet3's zero-lookahead 48 kHz variant from its ONNX tarball
-    /// (`DeepFilterNet3_ll_onnx.tar.gz`: `df_lookahead = conv_lookahead =
-    /// 0`), with the same runtime thresholds as [`Self::deepfilternet3`].
+    /// See docs/adr/0008-model-runtime.md.
     ///
     /// # Errors
     ///
@@ -193,9 +114,7 @@ impl DfTractStage {
         Self::from_params(id, params, RuntimeParams::default_with_ch(1), 1.0)
     }
 
-    /// Hush 16 kHz from its ONNX tarball (`advanced_dfnet16k_*.tar.gz`),
-    /// using the thresholds Hush's own `weya_nc` runtime uses
-    /// (min −15 dB, ERB/DF max 35 dB).
+    /// See docs/adr/0008-model-runtime.md.
     ///
     /// # Errors
     ///
@@ -204,9 +123,7 @@ impl DfTractStage {
         Self::hush_with_gain(id, tarball, db_to_linear(HUSH_MAKEUP_GAIN_DB))
     }
 
-    /// Hush without the makeup gain, for composite stages that apply
-    /// `HUSH_MAKEUP_GAIN_DB` themselves after mixing in other material
-    /// (see `stages::hush_wideband`).
+    /// See docs/adr/0007-dsp-stages.md.
     ///
     /// # Errors
     ///
@@ -222,26 +139,10 @@ impl DfTractStage {
         Self::from_params(id, params, runtime, output_gain)
     }
 
-    /// Number of STFT bins of the model's spectra (`fft_size / 2 + 1`).
     pub(crate) const fn n_freqs(&self) -> usize {
         self.model.0.n_freqs
     }
 
-    /// Broadband gain the model applied to the last processed frame over
-    /// `bins` (STFT bin indices, `bin × sample_rate / fft_size` Hz),
-    /// `sqrt(Σ|Y|² / Σ|X|²)` of the enhanced over the noisy spectrum,
-    /// clamped to `0..=1`.
-    ///
-    /// The upstream `DfTract` exposes both spectra publicly
-    /// (`get_spec_noisy` / `get_spec_enh`); with Hush's zero lookahead
-    /// they describe the same frame, after the ERB mask, the deep-filter
-    /// stage and the attenuation limit — i.e. exactly what the time
-    /// domain output was synthesised from. A frame the model skipped as
-    /// silent reports 0 (its output was zeroed).
-    ///
-    /// # Panics
-    ///
-    /// Panics when `bins` exceeds [`Self::n_freqs`].
     pub(crate) fn band_gain(&self, bins: std::ops::Range<usize>) -> f32 {
         assert!(bins.end <= self.n_freqs(), "bin range past the spectrum");
         if self.last_frame_silent {
@@ -262,7 +163,6 @@ impl DfTractStage {
         let sample_rate = u32::try_from(model.sr)
             .map_err(|_| StageError::Inference("bad model sample rate".to_owned()))?;
         let hop = model.hop_size;
-        // Overlap-add window delay plus the model's lookahead frames.
         let output_delay = (model.fft_size - hop) + model.lookahead * hop;
         Ok(Self {
             id: id.to_owned(),
@@ -305,8 +205,6 @@ impl FrameProcessor for DfTractStage {
             .0
             .process(noisy, enh)
             .map_err(|e| StageError::Inference(format!("DfTract process failed: {e}")))?;
-        // A pure per-sample gain: latency, alignment, and the
-        // cross-correlation residual are unaffected.
         if (self.output_gain - 1.0).abs() > f32::EPSILON {
             apply_gain(output, self.output_gain);
         }
@@ -314,9 +212,6 @@ impl FrameProcessor for DfTractStage {
     }
 
     fn reset(&mut self) {
-        // DfTract exposes no state reset; rebuild the plans. This is a
-        // control-plane operation (model switch / stream restart), not an
-        // audio-thread one, so the cost is acceptable.
         if let Ok(model) = build(&self.params, &self.runtime) {
             self.model = SendModel(model);
         }
@@ -333,16 +228,11 @@ mod tests {
         assert!((db_to_linear(0.0) - 1.0).abs() < 1e-6);
         assert!((db_to_linear(20.0) - 10.0).abs() < 1e-5);
         assert!((db_to_linear(-20.0) - 0.1).abs() < 1e-6);
-        // 6.020... dB doubles the amplitude.
         assert!((db_to_linear(6.020_6) - 2.0).abs() < 1e-4);
     }
 
     #[test]
     fn hush_makeup_gain_cancels_every_measured_deficit() {
-        // The measured voiced-frame RMS deficits across the corpus in
-        // the constant's doc comment (dB versus passthrough). The
-        // constant must bring every one of them into the ±1 dB
-        // acceptance band around passthrough.
         let measured_deficits_db = [-3.4_f32, -2.5, -2.0, -1.9, -1.5];
         for deficit_db in measured_deficits_db {
             let residual_db = deficit_db + HUSH_MAKEUP_GAIN_DB;
@@ -352,10 +242,6 @@ mod tests {
                  residual on the {deficit_db} dB material"
             );
         }
-        // The no-clipping-guard design decision: the worst measured raw
-        // output peak (0.61 on a 0.70-peak input) must stay under full
-        // scale after the gain — overshoot only enters with inputs
-        // already at their own clipping point (see the doc comment).
         let gained_peak = 0.61 * db_to_linear(HUSH_MAKEUP_GAIN_DB);
         assert!(
             gained_peak < 1.0,
@@ -386,7 +272,6 @@ mod tests {
     fn magnitude_ratio_is_the_clamped_amplitude_ratio() {
         assert!((magnitude_ratio(4.0, 1.0) - 0.5).abs() < 1e-6);
         assert!((magnitude_ratio(1.0, 1.0) - 1.0).abs() < 1e-6);
-        // Numerical overshoot clamps to unity; no noisy energy reads 0.
         assert!((magnitude_ratio(1.0, 1.5) - 1.0).abs() < 1e-6);
         assert!(magnitude_ratio(0.0, 1.0).abs() < 1e-6);
         assert!(magnitude_ratio(1.0, 0.0).abs() < 1e-6);
@@ -416,9 +301,6 @@ mod tests {
         }
     }
 
-    /// With real weights, the Hush stage output must be exactly the
-    /// gain-1.0 stage output scaled by the makeup gain — the gain is a
-    /// pure post-multiply, so alignment and residual delay are untouched.
     #[test]
     #[ignore = "requires downloaded model weights (run: noican fetch)"]
     fn hush_stage_output_is_scaled_by_the_makeup_gain() {

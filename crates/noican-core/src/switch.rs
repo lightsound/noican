@@ -1,20 +1,4 @@
-//! Lock-free publication and click-free activation of prepared stages.
-//!
-//! The control plane (UI / model-loader thread) fully constructs the next
-//! [`Stage`] — including weight loading and inference-session setup — and
-//! hands it to the inference thread through a bounded lock-free queue
-//! ([`StagePublisher::publish`]). The inference thread ([`SwitchingEngine`])
-//! fades the current stage to silence, swaps ownership, and fades the new
-//! stage in, so a model switch never clicks and never blocks the audio path
-//! (docs/tech-research.md §9).
-//!
-//! The engine also owns the dry/wet intensity blend ([`crate::mix`]):
-//! it runs *before* the switch fade gain, so during a model switch the
-//! whole mixed signal — wet and delay-compensated dry alike — fades out
-//! and back in. That ordering is what lets the dry-compensation delay
-//! jump to the new stage's latency exactly at the silent fade boundary,
-//! so switching stages with different latencies stays click-free at any
-//! intensity.
+//! See docs/adr/0007-dsp-stages.md.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,10 +14,7 @@ struct PreparedStage {
     stage: Box<dyn Stage>,
 }
 
-/// Producer-side handle used by the UI or model-loader thread.
-///
-/// The queue has one preallocated slot: publishing a newer stage replaces an
-/// older unconsumed stage without locking the inference thread.
+/// See docs/adr/0007-dsp-stages.md.
 #[derive(Clone)]
 pub struct StagePublisher {
     queue: Arc<ArrayQueue<PreparedStage>>,
@@ -49,9 +30,7 @@ impl std::fmt::Debug for StagePublisher {
 }
 
 impl StagePublisher {
-    /// Publishes a fully initialized stage for activation by the inference
-    /// thread. Returns the id of a previously published stage that was
-    /// superseded before the inference thread consumed it, if any.
+    /// See docs/adr/0007-dsp-stages.md.
     #[must_use = "a superseded stage id usually indicates rapid re-publication worth logging"]
     pub fn publish(&self, stage: Box<dyn Stage>) -> Option<String> {
         let generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
@@ -67,11 +46,7 @@ enum Transition {
     FadeIn { completed: usize },
 }
 
-/// Inference-thread owner of the active stage.
-///
-/// Retrieving a published replacement requires no mutex and no heap
-/// allocation; the pending stage is warmed (fed input) while the current one
-/// fades out, so its internal pipeline is primed at activation time.
+/// See docs/adr/0007-dsp-stages.md.
 pub struct SwitchingEngine {
     queue: Arc<ArrayQueue<PreparedStage>>,
     current: Box<dyn Stage>,
@@ -93,21 +68,11 @@ impl std::fmt::Debug for SwitchingEngine {
     }
 }
 
-/// Longest supported fade half. Bounds the fade so the internal gain
-/// arithmetic is exact (`u16` → `f32` is lossless); ~1.37 s at 48 kHz,
-/// orders of magnitude above any sensible switch fade.
+/// See docs/adr/0007-dsp-stages.md.
 pub const MAX_FADE_SAMPLES: usize = u16::MAX as usize;
 
 impl SwitchingEngine {
-    /// Creates a switching engine and its producer-side publisher.
-    ///
-    /// `fade_samples` is the length of each fade half (out and in) in
-    /// samples at [`crate::stage::ENGINE_SAMPLE_RATE`]; `max_block_len`
-    /// pre-sizes the warmup buffer (larger blocks still work at the cost of
-    /// a reallocation on the control-of-flow path, not the audio callback).
-    /// `intensity` is the shared dry/wet control the engine's mixer reads
-    /// each block; the caller keeps a clone to move the slider without
-    /// touching the engine.
+    /// See docs/adr/0007-dsp-stages.md.
     ///
     /// # Errors
     ///
@@ -162,14 +127,7 @@ impl SwitchingEngine {
         self.current_generation
     }
 
-    /// Processes one block at the engine rate and advances any switch
-    /// transition. `output.len()` must equal `input.len()`.
-    ///
-    /// The block passes through three steps in order: the active stage
-    /// (wet), the dry/wet intensity blend (dry delayed by the *active*
-    /// stage's reported latency), then the switch fade gain — so a
-    /// switch fades the complete mix, and the dry-compensation delay
-    /// only ever changes at the silent fade boundary.
+    /// See docs/adr/0007-dsp-stages.md.
     ///
     /// # Errors
     ///
@@ -228,16 +186,10 @@ impl SwitchingEngine {
         })?;
         std::mem::swap(&mut self.current, &mut prepared.stage);
         self.current_generation = prepared.generation;
-        // `prepared` (now holding the superseded stage) is dropped here, on
-        // the inference thread — allowed, since only the audio I/O callback
-        // is allocation-free (docs/tech-research.md §9).
         Ok(())
     }
 }
 
-/// Exact fade gain: both operands fit `u16` (enforced by
-/// [`MAX_FADE_SAMPLES`] in [`SwitchingEngine::new`]) and `u16` → `f32` is
-/// lossless, so no precision-loss opt-out is needed.
 fn ratio(numerator: usize, denominator: usize) -> f32 {
     debug_assert!(denominator <= MAX_FADE_SAMPLES);
     let numerator = u16::try_from(numerator.min(denominator)).unwrap_or(u16::MAX);
@@ -249,7 +201,6 @@ fn ratio(numerator: usize, denominator: usize) -> f32 {
 mod tests {
     use super::*;
 
-    /// Emits a constant value regardless of input, with a reported latency.
     #[derive(Debug)]
     struct Constant {
         id: &'static str,
@@ -331,19 +282,16 @@ mod tests {
 
         assert!(publisher.publish(boxed("b", -1.0)).is_none());
 
-        // Fade-out of "a": first block after publication.
         engine.process_block(&input, &mut output).expect("fade-out");
         assert!((output[0] - 1.0).abs() < 1e-2);
         assert!(output[fade..].iter().all(|s| s.abs() < 1e-6));
         assert_eq!(engine.active_id(), "b");
 
-        // Fade-in of "b".
         engine.process_block(&input, &mut output).expect("fade-in");
         assert!(output[0].abs() < 1e-2);
         assert!((output[fade] - -1.0).abs() < 1e-6);
         assert_eq!(engine.active_generation(), 1);
 
-        // Stable on the replacement.
         engine.process_block(&input, &mut output).expect("stable");
         assert!(output.iter().all(|s| (*s - -1.0).abs() < 1e-6));
     }
@@ -378,7 +326,6 @@ mod tests {
             engine.process_block(&input, &mut output).expect("block");
             all.extend_from_slice(&output);
         }
-        // Bounded step size between consecutive samples: no click.
         for pair in all.windows(2) {
             assert!(
                 (pair[1] - pair[0]).abs() <= 1.0 / 16.0 + 1e-6,
@@ -393,9 +340,6 @@ mod tests {
 
     #[test]
     fn partial_intensity_blends_the_delay_compensated_dry_signal() {
-        // A "silent" stage with latency: at intensity 0.5 the output is
-        // exactly half the dry signal, delayed by the stage's reported
-        // latency — proving the blend runs and the dry path is aligned.
         let latency = 100;
         let stage = Box::new(Constant {
             id: "silent",
@@ -423,10 +367,6 @@ mod tests {
 
     #[test]
     fn switching_between_latencies_at_partial_intensity_stays_click_free() {
-        // The dry-compensation delay jumps from the old stage's latency
-        // to the new one's exactly at the silent fade boundary; on a
-        // steadily rising input any unmasked jump would appear as a
-        // step. Bounded sample-to-sample deltas prove the fade masks it.
         let fade = 240;
         let old = Box::new(Constant {
             id: "old",
@@ -451,8 +391,6 @@ mod tests {
             all.extend_from_slice(&output);
         }
         assert_eq!(engine.active_id(), "new");
-        // Loosest legitimate slope: the fade ramp over a signal that
-        // peaks below 0.5 → well under 0.5/240 per sample.
         for (n, pair) in all.windows(2).enumerate() {
             assert!(
                 (pair[1] - pair[0]).abs() <= 0.5 / 240.0 + 1e-6,

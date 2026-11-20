@@ -1,32 +1,4 @@
-//! AUHAL transport between Core Audio devices and the Rust engine.
-//!
-//! Ported from the Phase 0 transport candidate that passed hardware
-//! acceptance on macOS 26 / Apple Silicon (mic permission → Running,
-//! QuickTime recording through `BlackHole` 2ch, clean teardown), rewired to
-//! drive [`noican_core::SwitchingEngine`] so the processing path — including
-//! the 16 kHz polyphase resampling in [`noican_core::FramedStage`] — is the
-//! exact code the CLI comparison mode exercises.
-//!
-//! Two transport shapes exist: one AUHAL on a private Aggregate Device
-//! for 48 kHz-capable microphones (the original path, unchanged), and a
-//! split transport — a native-rate capture AUHAL plus a 48 kHz virtual-
-//! output AUHAL bridged by a drift-compensating resampler — for
-//! telephony-profile microphones such as Bluetooth headsets (issue #7).
-//! On the aggregate path the engine output is rendered as one client
-//! channel per virtual-output channel (the mono engine sample duplicated
-//! into each — dual mono, like the split path and the monitor) and
-//! steered to the virtual output's channels with an explicit one-to-one
-//! AUHAL channel map ([`routing`]), so a microphone with its own output
-//! channels (a headphone jack) does not capture the engine output ahead
-//! of the virtual output.
-//!
-//! Real-time rules (docs/tech-research.md §9): the Core Audio render
-//! callback only calls `AudioUnitRender`, moves `f32` samples through
-//! preallocated lock-free SPSC rings, and signals a dispatch semaphore
-//! (non-blocking); inference runs on a dedicated worker thread joined to
-//! the device's `os_workgroup`, blocking on that semaphore between
-//! callbacks instead of spinning; output-ring underrun produces silence,
-//! never blocking the callback.
+//! See docs/adr/0003-coreaudio-transport.md.
 
 use thiserror::Error;
 
@@ -70,8 +42,7 @@ pub const fn check_monitor_device(_device: u32) -> Result<(), CoreAudioError> {
     Err(CoreAudioError::UnsupportedPlatform)
 }
 
-/// Samples per engine block driven by the inference worker (10 ms at the
-/// 48 kHz engine rate; matches the CLI comparison block size).
+/// See docs/adr/0001-realtime-audio-rules.md.
 pub const WORKER_BLOCK_SAMPLES: usize = 480;
 
 /// AUHAL lifecycle failures.
@@ -94,46 +65,25 @@ pub enum CoreAudioError {
     /// A control call needs a running transport.
     #[error("the engine transport is not running")]
     NotRunning,
-    /// The preview monitor path could not start. Monitor failures never
-    /// affect the meeting-facing path.
+    /// See docs/adr/0005-preview-monitor.md.
     #[error("preview monitor failed: {0}")]
     Monitor(String),
-    /// Enabling preview was refused because the system default output is a
-    /// virtual loopback device, which would feed the processed voice into
-    /// the meeting a second time.
-    ///
-    /// The message is one short cause (no UID, no remedy): the UI composes
-    /// it into its own sentences ("Preview needs headphones — …",
-    /// "Preview stopped: …"), and the rejected device's UID is kept in
-    /// the variant for programmatic callers.
+    /// See docs/adr/0005-preview-monitor.md.
     #[error("the system output is a virtual loopback device")]
     MonitorLoopbackOutput {
         /// UID of the rejected default output device.
         uid: String,
     },
-    /// Enabling preview was refused because the system default output is
-    /// an aggregate or Multi-Output device, which can contain the meeting
-    /// loopback as a subdevice this check cannot cheaply inspect. Message
-    /// shape: see [`CoreAudioError::MonitorLoopbackOutput`].
+    /// See docs/adr/0005-preview-monitor.md.
     #[error("the system output is a multi-output device")]
     MonitorAggregateOutput {
         /// UID of the rejected default output device.
         uid: String,
     },
-    /// Enabling preview was refused because the system default output is
-    /// the built-in speakers, which would feed the processed microphone
-    /// straight back into itself (Phase 0/1 has no echo cancellation).
-    /// Message shape: see [`CoreAudioError::MonitorLoopbackOutput`].
+    /// See docs/adr/0005-preview-monitor.md.
     #[error("the built-in speakers would feed back")]
     MonitorSpeakerOutput,
-    /// The engine output could not be routed to the virtual output's
-    /// channels: inside the Aggregate Device the layout the control plane
-    /// composed does not match the channel count the device reports, or
-    /// the described range is empty; on the split transport the virtual
-    /// output device reports no output channels to size the render
-    /// format from (see [`routing`]). Refusing to start is deliberate — a
-    /// guessed map or width could feed a microphone's headphone output,
-    /// or be refused by AUHAL, and leave the virtual microphone silent.
+    /// See docs/adr/0004-aggregate-output-routing.md.
     #[error("virtual output routing failed: {0}")]
     OutputRouting(String),
     /// This build does not target macOS.
@@ -142,7 +92,7 @@ pub enum CoreAudioError {
 }
 
 #[cfg(not(target_os = "macos"))]
-/// Non-macOS placeholder that keeps workspace checks portable.
+/// See docs/adr/0015-device-session.md.
 #[derive(Debug)]
 pub struct Runtime;
 

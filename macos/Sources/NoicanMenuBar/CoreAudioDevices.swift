@@ -52,38 +52,16 @@ enum AudioDeviceCatalog {
         return identifiers.compactMap(deviceInfo)
     }
 
-    /// Device-UID prefix of the Noican-branded driver (trailing dot
-    /// included). The driver build (lightsound/noican-driver) derives its
-    /// device UID "com.lightsound.noican.mic_UID" (driver 0.2.0, one
-    /// channel) from this prefix, as it did the 0.1.0 driver's
-    /// "com.lightsound.noican.2ch_UID"; both are recognized, so old and
-    /// new drivers can be swapped under one app build. Matching is
-    /// case-insensitive by lowercasing first.
     private static let noicanDriverUIDPrefix = "com.lightsound.noican."
 
-    /// True for a loopback device Noican can route into: stock BlackHole
-    /// 2ch (the Phase 0 device) or the Noican-branded driver. It registers
-    /// input channels too, but selecting it as the microphone would only
-    /// feed the loopback back into itself, so pickers must exclude it.
-    ///
-    /// Keep in sync with the Rust preview-monitor policy
-    /// (`classify_monitor_target` in crates/noican-coreaudio/src/monitor.rs),
-    /// which matches the same UIDs and additionally rejects any
-    /// virtual/aggregate transport.
     static func isNoicanVirtualDevice(_ device: AudioDeviceInfo) -> Bool {
         device.uid == "BlackHole2ch_UID" || isNoicanDriverDevice(device)
     }
 
-    /// True only for the Noican-branded driver, not for stock BlackHole.
     private static func isNoicanDriverDevice(_ device: AudioDeviceInfo) -> Bool {
         device.uid.lowercased().hasPrefix(noicanDriverUIDPrefix)
     }
 
-    /// True for devices that make sense as the physical microphone. Virtual
-    /// devices (JoyCast, other loopbacks — they report the `virt` transport
-    /// type) and aggregates are excluded: routing another virtual mic into
-    /// Noican would double-process or loop audio, and fixed-rate virtual
-    /// subdevices also make the private aggregate reject the 48 kHz setup.
     static func isSelectableInput(_ device: AudioDeviceInfo) -> Bool {
         device.inputChannels > 0
             && device.transportType != kAudioDeviceTransportTypeVirtual
@@ -91,12 +69,6 @@ enum AudioDeviceCatalog {
             && !isNoicanVirtualDevice(device)
     }
 
-    /// The loopback output the engine feeds. When the Noican driver and
-    /// stock BlackHole 2ch are both installed, the Noican driver wins:
-    /// it is the device this project brands, signs, and tests against,
-    /// while stock BlackHole may be shared with (and reconfigured by)
-    /// other software. Previously the pick fell to device-enumeration
-    /// order, which is undefined (docs/driver.md, "Coexistence").
     static func virtualOutput(in devices: [AudioDeviceInfo]) -> AudioDeviceInfo? {
         let loopbacks = devices.filter { device in
             device.outputChannels > 0 && isNoicanVirtualDevice(device)
@@ -127,7 +99,6 @@ enum AudioDeviceCatalog {
         )
     }
 
-    /// Current nominal sample rate of a device, or nil when unreadable.
     static func nominalSampleRate(_ device: AudioObjectID) -> Double? {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyNominalSampleRate,
@@ -144,17 +115,10 @@ enum AudioDeviceCatalog {
         return rate
     }
 
-    /// Whether the device advertises support for `rate`. Returns true when
-    /// the supported-rate list is unreadable (let the actual set decide).
     static func supportsSampleRate(_ device: AudioObjectID, _ rate: Double) -> Bool {
         advertisesSampleRate(device, rate) ?? true
     }
 
-    /// Tri-state form of `supportsSampleRate`: whether the device's
-    /// advertised rate list contains `rate`, or nil when the list is
-    /// unreadable. Callers that have another source of truth (the
-    /// reducer's device snapshot) use the tri-state to fall back to it
-    /// instead of failing open onto the wrong transport path.
     static func advertisesSampleRate(_ device: AudioObjectID, _ rate: Double) -> Bool? {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyAvailableNominalSampleRates,
@@ -184,8 +148,6 @@ enum AudioDeviceCatalog {
         }
     }
 
-    /// Requests a nominal sample rate; the change lands asynchronously, so
-    /// callers must poll [`nominalSampleRate`] for the result.
     static func requestSampleRate(_ device: AudioObjectID, _ rate: Double) -> OSStatus {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyNominalSampleRate,
@@ -228,9 +190,6 @@ enum AudioDeviceCatalog {
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-        // A properly typed, explicitly allocated landing slot: passing
-        // `&value` of an `Optional<CFString>` local forms a raw pointer to a
-        // non-trivial Swift-managed value, which the compiler warns about.
         let value = UnsafeMutablePointer<CFString?>.allocate(capacity: 1)
         value.initialize(to: nil)
         defer {
@@ -255,25 +214,14 @@ enum AudioDeviceCatalog {
         return string as String
     }
 
-    /// Live output channel count of a device, or nil when its stream
-    /// configuration is unreadable. Read at aggregate-composition time
-    /// rather than taken from the device snapshot: the count can depend
-    /// on the sample rate (ADAT/S-MUX interfaces carry 8 channels at
-    /// 48 kHz, 4 at 96 kHz, 2 at 192 kHz), and the snapshot predates the
-    /// switch to 48 kHz that composition performs first.
     static func liveOutputChannelCount(_ device: AudioDeviceID) -> UInt32? {
         readStreamConfiguration(device, scope: kAudioObjectPropertyScopeOutput)?.channels
     }
 
-    /// Live input channel count of a device, or nil when unreadable
-    /// (start-time diagnostics).
     static func liveInputChannelCount(_ device: AudioDeviceID) -> UInt32? {
         readStreamConfiguration(device, scope: kAudioObjectPropertyScopeInput)?.channels
     }
 
-    /// Number of output streams a device exposes, or nil when unreadable.
-    /// An aggregate carries one stream per subdevice output; logged at
-    /// start so the AUHAL-reported channel count can be held against it.
     static func liveOutputStreamCount(_ device: AudioDeviceID) -> UInt32? {
         readStreamConfiguration(device, scope: kAudioObjectPropertyScopeOutput)?.streams
     }
@@ -285,8 +233,6 @@ enum AudioDeviceCatalog {
         readStreamConfiguration(device, scope: scope)?.channels ?? 0
     }
 
-    /// The stream configuration of one direction: how many streams the
-    /// device exposes there and their channels summed.
     private static func readStreamConfiguration(
         _ device: AudioDeviceID,
         scope: AudioObjectPropertyScope

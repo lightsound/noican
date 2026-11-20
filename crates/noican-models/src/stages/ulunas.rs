@@ -1,11 +1,4 @@
-//! UL-UNAS 16 kHz streaming stage.
-//!
-//! The graph consumes one complex STFT frame (`mix [1, 257, 1, 2]`) and
-//! returns the enhanced complex frame plus three opaque cache blobs. The
-//! STFT/iSTFT is computed outside the graph (verified against the repo's
-//! `ulunas_stream.py`, which reproduces the shipped enhanced sample to
-//! 1.3e-4): `n_fft` = 512, hop = 256, periodic Hann analysis and synthesis
-//! windows, overlap-add divided by the overlapped squared-window sum.
+//! See docs/adr/0008-model-runtime.md.
 
 use std::borrow::Cow;
 use std::path::Path;
@@ -27,8 +20,6 @@ pub struct UlunasStage {
     id: String,
     session: Session,
     window: Vec<f32>,
-    /// Steady-state OLA denominator per hop sample:
-    /// `w²[i] + w²[i + hop]`.
     wsum: Vec<f32>,
     fft: FftPair,
     analysis: Vec<f32>,
@@ -98,7 +89,6 @@ impl FrameProcessor for UlunasStage {
     }
 
     fn process_frame(&mut self, input: &[f32], output: &mut [f32]) -> Result<(), StageError> {
-        // Slide the analysis window and append the new hop.
         self.analysis.copy_within(HOP.., 0);
         self.analysis[N_FFT - HOP..].copy_from_slice(input);
 
@@ -137,7 +127,6 @@ impl FrameProcessor for UlunasStage {
         spec.copy_from_slice(enhanced);
         self.states.update_from_outputs(&outputs)?;
 
-        // Inverse FFT + synthesis window + normalized overlap-add.
         self.fft.inverse_interleaved(&spec, &mut self.frame)?;
         self.spec = spec;
         for (acc, (y, w)) in self.ola.iter_mut().zip(self.frame.iter().zip(&self.window)) {

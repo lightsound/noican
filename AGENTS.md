@@ -49,7 +49,8 @@ This repository has no `README.md` by owner decision: it is developed only by ag
 
 - Architecture, roadmap, and phase status: `docs/tech-research.md` (§12).
 - Quality gates: `.github/workflows/ci.yml` is the source of truth; the policy behind it is `docs/tech-research.md` §12 "Cross-cutting: quality gates".
-- Crate responsibilities: the `//!` docs at the top of each crate's `lib.rs` or `main.rs`; workspace members are listed in `Cargo.toml`.
+- Architecture decisions and code rationale: `docs/adr/` (one file per topic). Code comments in `crates/` and `macos/` are banned in principle and ratcheted by `scripts/comment-ratchet.py` in CI (baseline: `scripts/comment-baseline.json`); where a doc comment must exist (Rust `missing_docs`), a decision record is replaced by a pointer to the governing ADR (keeping any `# Errors` / `# Panics` / `# Safety` section clippy requires), and the few remaining forced docs are carried by the baseline. To re-run the comment audit, use `.agents/skills/delete-comment/SKILL.md`.
+- Crate responsibilities: `docs/tech-research.md` (§12) and the `//!` docs at the top of each crate's `lib.rs` or `main.rs`, which point to the governing ADR; workspace members are listed in `Cargo.toml`.
 - CLI (`noican models` / `fetch` / `process`) and supported models: `docs/models.md`; `noican eval`: `docs/hush-48k-eval.md`; accepted input formats: `crates/noican-cli/src/audio.rs`.
 - macOS app build, prerequisites, and hardware acceptance: `docs/hardware-test/setup.md` and `docs/macos-hardware-test.md`; each run is recorded under `docs/acceptance/`. Acceptance records are dated evidence about the build they name, not current facts — never cite one for the present state of the code.
 - Driver: `docs/driver.md`. License activation: `docs/licensing.md`. Release checklist: `docs/release.md`.

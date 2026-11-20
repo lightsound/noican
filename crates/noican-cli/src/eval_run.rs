@@ -1,7 +1,3 @@
-//! The `noican eval` command: builds the SIR mixtures, runs every
-//! candidate stage on them, prints the metric table and writes the
-//! listening set (see [`crate::eval`] for the metric definitions).
-
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -12,29 +8,18 @@ use crate::audio;
 use crate::eval::{self, Metrics};
 use crate::process;
 
-/// Command-line inputs of one evaluation run.
 #[derive(Debug)]
 pub(crate) struct EvalRequest {
-    /// Clean recording(s) of the user's own voice, concatenated in order.
     pub(crate) targets: Vec<PathBuf>,
-    /// Recording(s) of the interfering speaker, concatenated in order.
     pub(crate) interferers: Vec<PathBuf>,
-    /// Signal-to-interference ratios (dB) of the overlap segment.
     pub(crate) sirs_db: Vec<f64>,
-    /// RMS level (dBFS) to normalize the voice to; `None` keeps the
-    /// recorded level.
     pub(crate) target_level_dbfs: Option<f64>,
-    /// Requested segment length in seconds (clamped to the material).
     pub(crate) segment_seconds: f64,
-    /// Model ids to evaluate.
     pub(crate) model_ids: Vec<String>,
-    /// Output directory.
     pub(crate) out_dir: PathBuf,
-    /// Seed for lettering the blind listening set.
     pub(crate) seed: u64,
 }
 
-/// One row of the result table.
 #[derive(Debug, Clone)]
 struct Row {
     model_id: String,
@@ -45,12 +30,8 @@ struct Row {
     block_p99_ms: f64,
 }
 
-/// Below this high-band share a recording cannot exercise the high-band
-/// metrics (a 16 kHz capture such as Bluetooth HFP sits near −100 dB).
 const HIGH_BAND_SHARE_WARN_DB: f64 = -60.0;
 
-/// Shortest segment the metrics are meaningful for (one second: the
-/// region guard plus enough speech for a stable RMS).
 const MIN_SEGMENT: usize = ENGINE_SAMPLE_RATE as usize;
 
 fn seconds(samples: usize) -> f64 {
@@ -71,7 +52,6 @@ fn ns_to_ms(ns: u128) -> f64 {
     ms
 }
 
-/// Directory name for one SIR, e.g. `sir+06`, `sir-06`.
 fn sir_dir_name(sir_db: f64) -> String {
     #[expect(
         clippy::cast_possible_truncation,
@@ -81,9 +61,6 @@ fn sir_dir_name(sir_db: f64) -> String {
     format!("sir{rounded:+03}")
 }
 
-/// Rejects SIR lists whose directory names collide (the name rounds to
-/// whole dB, so `6` and `6.4` would silently overwrite each other's
-/// mixtures and blind set) and non-finite values.
 fn validate_sirs(sirs_db: &[f64]) -> anyhow::Result<()> {
     if sirs_db.is_empty() {
         anyhow::bail!("--sir needs at least one value");
@@ -105,11 +82,6 @@ fn validate_sirs(sirs_db: &[f64]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// A warning line when `samples` exceed full scale: every written WAV is
-/// clamped to ±1.0 on the way to 16-bit, so the listening set would be
-/// clipped while the metrics (computed on the unclamped floats) stay
-/// clean. Nothing is rescaled here — Hush's behaviour depends on the
-/// absolute level, so the level the user chose must reach the model.
 fn clipping_warning(label: &str, samples: &[f32]) -> Option<String> {
     let peak = samples.iter().fold(0.0_f32, |m, s| m.max(s.abs()));
     (peak > 1.0).then(|| {
@@ -122,7 +94,6 @@ fn clipping_warning(label: &str, samples: &[f32]) -> Option<String> {
     })
 }
 
-/// Loads, trims and concatenates the recordings at `paths`.
 fn load_material(paths: &[PathBuf]) -> anyhow::Result<Vec<f32>> {
     let mut samples = Vec::new();
     for path in paths {
@@ -147,16 +118,12 @@ fn describe_material(label: &str, samples: &[f32], progress: &mut impl FnMut(&st
     }
 }
 
-/// The trimmed (and optionally level-normalized) voice and interferer
-/// tracks plus the segment length they support.
 struct Material {
     target: Vec<f32>,
     interferer: Vec<f32>,
     segment_len: usize,
 }
 
-/// Loads both recordings, applies the target normalization, and derives
-/// the segment length; reports the material facts through `progress`.
 fn prepare_material(
     request: &EvalRequest,
     progress: &mut impl FnMut(&str),
@@ -208,14 +175,6 @@ fn prepare_material(
     })
 }
 
-/// Runs the evaluation. `make_stage` maps a model id to a fresh stage;
-/// `progress` receives human-readable lines (the table is emitted through
-/// it too, so the binary decides where output goes).
-///
-/// # Errors
-///
-/// Fails on unreadable material, material too short for one second per
-/// segment, stage construction/processing errors, or I/O errors.
 pub(crate) fn run(
     request: &EvalRequest,
     mut make_stage: impl FnMut(&str) -> anyhow::Result<Box<dyn Stage>>,
@@ -307,8 +266,6 @@ pub(crate) fn run(
     Ok(())
 }
 
-/// Copies each model output under a letter chosen by [`eval::blind_order`]
-/// and appends the answer lines to `key_lines`.
 fn write_blind_set(
     sir_dir: &Path,
     model_ids: &[String],
@@ -344,7 +301,6 @@ fn write_blind_set(
     Ok(())
 }
 
-/// The metric table, one line per (model, SIR).
 fn render_table(rows: &[Row]) -> Vec<String> {
     let mut lines = vec![
         String::new(),
@@ -388,7 +344,6 @@ fn render_table(rows: &[Row]) -> Vec<String> {
     lines
 }
 
-/// The same rows as CSV (header + one line per row).
 fn render_csv(rows: &[Row]) -> String {
     let mut csv = String::from(
         "model,sir_db,high_band_retention_db,own_voice_level_db,own_voice_si_sdr_db,both_si_sdr_db,\
@@ -396,7 +351,6 @@ fn render_csv(rows: &[Row]) -> String {
     );
     for row in rows {
         let m = &row.metrics;
-        // Writing to a String cannot fail.
         let _ = writeln!(
             csv,
             "{},{},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.3},{:.3}",
@@ -449,7 +403,6 @@ mod tests {
         assert!(warning.contains("+3.5 dBFS"), "{warning}");
     }
 
-    /// A fresh directory under the system temp dir, removed on drop.
     struct TempDir(PathBuf);
 
     impl TempDir {
@@ -468,7 +421,6 @@ mod tests {
 
     impl Drop for TempDir {
         fn drop(&mut self) {
-            // Best effort: a leftover temp dir is not a test failure.
             drop(std::fs::remove_dir_all(&self.0));
         }
     }
@@ -482,8 +434,6 @@ mod tests {
                     reason = "sample indices fit f32 for a few seconds"
                 )]
                 let t = n as f32 / 48_000.0;
-                // A tone plus a little deterministic noise so trimming
-                // and the band metrics have something to work with.
                 state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
                 #[expect(
                     clippy::cast_precision_loss,
@@ -498,10 +448,6 @@ mod tests {
             .collect()
     }
 
-    /// The whole command path with synthetic material and a passthrough
-    /// stage: files land where the docs say, one row per (model, SIR),
-    /// and every `blind-key.txt` line names a file whose samples equal
-    /// the model output it claims to be.
     #[test]
     fn run_writes_mixtures_rows_and_a_consistent_blind_key() {
         let tmp = TempDir::new("run");
@@ -533,7 +479,6 @@ mod tests {
         )
         .expect("run succeeds");
 
-        // Segment length clamps to the material (5 s → 1.5 s requested).
         assert!(
             lines.iter().any(|l| l.starts_with("segments: 0–1.5 s")),
             "{lines:#?}"
@@ -556,8 +501,6 @@ mod tests {
         let csv = std::fs::read_to_string(out_dir.join("metrics.csv")).expect("csv");
         assert_eq!(csv.lines().count(), 1 + 2 * 2, "{csv}");
 
-        // The passthrough row is the anchor: HF keep 0, level 0, SI-SDR
-        // 100, residual 0.
         let anchor = csv
             .lines()
             .find(|l| l.starts_with("passthrough,6,"))
@@ -587,15 +530,12 @@ mod tests {
             ["passthrough", "passthrough", "twice", "twice"]
         );
 
-        // The "twice" stage doubles a 0.3-amplitude mixture past full
-        // scale at SIR −6 dB, which the run must report.
         assert!(
             lines.iter().any(|l| l.contains("twice: WARNING")),
             "no clipping warning in {lines:#?}"
         );
     }
 
-    /// A stage that doubles the signal (level +6 dB, no delay).
     struct Twice;
 
     impl Stage for Twice {

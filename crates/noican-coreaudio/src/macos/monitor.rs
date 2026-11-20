@@ -1,10 +1,4 @@
-//! Control-plane half of the preview monitor: resolving and vetting the
-//! playback target, and owning the output-only monitor AUHAL's lifecycle.
-//!
-//! The policy (which targets are refused) and the worker half (the
-//! [`MonitorTee`]) live in the platform-independent [`crate::monitor`]
-//! module so they stay unit-tested on every CI target; this module only
-//! contains what needs Core Audio.
+//! See docs/adr/0005-preview-monitor.md.
 
 use std::ffi::{c_char, c_void};
 use std::ptr;
@@ -70,51 +64,25 @@ unsafe extern "C" {
     fn CFRelease(cf: *const c_void);
 }
 
-/// Render context of the output-only monitor AUHAL. Owned by the monitor
-/// callback while preview runs; reclaimed (with its ring consumer) when
-/// preview stops so a later enable can reuse the preallocated ring.
 struct MonitorContext {
     output: Consumer<f32>,
-    /// Whether enough samples are buffered to play. Cleared on underrun so
-    /// playback resumes only after [`MONITOR_PRIME_SAMPLES`] accumulate,
-    /// turning clock drift into bounded silence gaps instead of crackle.
     primed: bool,
 }
 
-/// Raw pointers of a running monitor AUHAL, stored as integers so the
-/// runtime stays `Send`. They are only dereferenced on the control thread
-/// that owns the runtime, after callbacks have been stopped.
 #[derive(Debug)]
 struct MonitorHandle {
     unit: usize,
     context: usize,
-    /// Device the AUHAL was opened on (the vetted default output at
-    /// enable time). Exposed to the control plane so it can watch *this*
-    /// device for losing its safety — the default output may move on
-    /// while the monitor stays here.
     device: AudioDeviceId,
 }
 
-/// Control-plane owner of the preview monitor. Invariants held here:
-/// exactly one of `consumer` (parked while off) and `handle` (lent to the
-/// running monitor AUHAL) is populated, and a feedback trip disarms the
-/// tee (the shared [`MonitorState`] cell reads `Tripped`) while leaving
-/// the AUHAL up until the next toggle.
 #[derive(Debug)]
 pub(super) struct MonitorControl {
-    /// The shared [`MonitorState`] cell: this control half moves it
-    /// between `Off` and `Playing`; the worker's [`MonitorTee`] gates on
-    /// it and moves it to `Tripped`. Also read lock-free by the FFI
-    /// layer, which owns the `Arc` (`noican_engine_monitor_state`).
     state: Arc<AtomicI32>,
     consumer: Option<Consumer<f32>>,
     handle: Option<MonitorHandle>,
 }
 
-/// Creates the two halves of the preview monitor around one preallocated
-/// ring: the control half for [`super::Runtime`] and the worker half for
-/// the inference thread. Resets any stale value left in `state` to
-/// [`MonitorState::Off`].
 pub(super) fn monitor_pair(state: Arc<AtomicI32>) -> (MonitorControl, MonitorTee) {
     state.store(MonitorState::Off.as_raw(), Ordering::Release);
     let (producer, consumer) = RingBuffer::new(MONITOR_RING_CAPACITY);
@@ -130,20 +98,8 @@ pub(super) fn monitor_pair(state: Arc<AtomicI32>) -> (MonitorControl, MonitorTee
 }
 
 impl MonitorControl {
-    /// Starts (or re-arms) the monitor on the vetted system default
-    /// output.
-    ///
-    /// # Errors
-    ///
-    /// Returns a refusal from [`classify_monitor_target`] for unsafe
-    /// targets, and other [`CoreAudioError`] values when the monitor
-    /// AUHAL cannot start; the ring consumer is reclaimed on every error
-    /// path so a later enable can retry.
     pub(super) fn enable(&mut self) -> Result<(), CoreAudioError> {
         if self.handle.is_some() {
-            // The monitor AUHAL is still up (a feedback trip only disarms
-            // the tee); re-arm it — which also clears the trip, since
-            // `Playing` overwrites `Tripped` in the one shared cell.
             self.state
                 .store(MonitorState::Playing.as_raw(), Ordering::Release);
             return Ok(());
@@ -152,8 +108,6 @@ impl MonitorControl {
         let mut consumer = self.consumer.take().ok_or_else(|| {
             CoreAudioError::Monitor("the monitor ring consumer is unavailable".to_owned())
         })?;
-        // Discard anything left over from a previous preview session so
-        // re-enabling never replays stale audio.
         while consumer.pop().is_ok() {}
         match start_monitor_unit(device, consumer) {
             Ok((unit, context)) => {
@@ -167,20 +121,13 @@ impl MonitorControl {
                 Ok(())
             }
             Err((error, consumer)) => {
-                // The AUHAL never came up, so the cell already reads
-                // `Off`; park the consumer for a retry.
                 self.consumer = Some(consumer);
                 Err(error)
             }
         }
     }
 
-    /// Stops the monitor AUHAL (if up) and parks the ring consumer for
-    /// the next enable. Idempotent.
     pub(super) fn disable(&mut self) {
-        // Move the cell to `Off` first (also clearing a pending trip) so
-        // the worker stops feeding the ring before the monitor AUHAL
-        // goes away.
         self.state
             .store(MonitorState::Off.as_raw(), Ordering::Release);
         if let Some(handle) = self.handle.take() {
@@ -188,28 +135,18 @@ impl MonitorControl {
             stop_output_unit(unit);
             dispose_unit(unit);
             unsafe {
-                // Callbacks have stopped; reclaim the ring consumer so a
-                // later enable reuses the preallocated ring.
                 let context = Box::from_raw(handle.context as *mut MonitorContext);
                 self.consumer = Some(context.output);
             }
         }
     }
 
-    /// Device the running monitor AUHAL plays on (resolved and vetted at
-    /// enable time), or `None` while the monitor is down.
     pub(super) fn active_device(&self) -> Option<AudioDeviceId> {
         self.handle.as_ref().map(|handle| handle.device)
     }
 }
 
-/// Checks whether the current system default output may receive the
-/// preview, without creating or changing any audio object.
-///
-/// A pure inspection (a few Core Audio property reads against the HAL's
-/// in-process cache), cheap enough for the UI to call before every
-/// enable and whenever the default output changes — so an unsafe target
-/// can be surfaced *before* the user tries to preview into it.
+/// See docs/adr/0005-preview-monitor.md.
 ///
 /// # Errors
 ///
@@ -221,23 +158,7 @@ pub fn check_monitor_target() -> Result<(), CoreAudioError> {
     monitor_target_device().map(|_device| ())
 }
 
-/// Checks whether a *specific* output device may (still) receive the
-/// preview, without creating or changing any audio object.
-///
-/// The same [`classify_monitor_target`] vetting as
-/// [`check_monitor_target`], but against a caller-chosen device instead
-/// of the current default output. The control plane runs it against the
-/// device the running monitor actually plays on (see
-/// [`super::Runtime::monitor_device`]): after enable time the default
-/// output can move on while the monitor stays put, and — worse — a
-/// built-in device can flip its data source from the headphone jack to
-/// the internal speakers (`'hdpn'` → `'ispk'`) without any device-list
-/// or default-output notification. Re-classifying the monitor's own
-/// device is what catches that.
-///
-/// A vanished device is *not* reported here: its properties read as
-/// unclassifiable, which fails open by policy. Device loss is visible in
-/// the device list and is the caller's check.
+/// See docs/adr/0005-preview-monitor.md.
 ///
 /// # Errors
 ///
@@ -247,17 +168,12 @@ pub fn check_monitor_device(device: AudioDeviceId) -> Result<(), CoreAudioError>
     classify_device(device)
 }
 
-/// Resolves the system default output device and applies
-/// [`classify_monitor_target`] to refuse loopbacks, aggregates, and the
-/// built-in internal speakers.
 fn monitor_target_device() -> Result<AudioDeviceId, CoreAudioError> {
     let device = default_output_device()?;
     classify_device(device)?;
     Ok(device)
 }
 
-/// Reads `device`'s transport type, output data source, and UID, and
-/// applies the [`classify_monitor_target`] policy to them.
 fn classify_device(device: AudioDeviceId) -> Result<(), CoreAudioError> {
     let transport = device_u32_property(
         device,
@@ -302,8 +218,6 @@ fn default_output_device() -> Result<AudioDeviceId, CoreAudioError> {
     Ok(device)
 }
 
-/// One `u32` device property (transport type, data source, ...), or
-/// `None` when unreadable.
 fn device_u32_property(device: AudioDeviceId, selector: u32, scope: u32) -> Option<u32> {
     let address = AudioObjectPropertyAddress {
         selector,
@@ -325,8 +239,6 @@ fn device_u32_property(device: AudioDeviceId, selector: u32, scope: u32) -> Opti
     (status == NO_ERR).then_some(value)
 }
 
-/// UID of a device, or an empty string when unreadable. Runs on the
-/// control thread only (allocates; `CFString` round-trip).
 fn device_uid(device: AudioDeviceId) -> String {
     let address = AudioObjectPropertyAddress {
         selector: AUDIO_DEVICE_PROPERTY_DEVICE_UID,
@@ -373,10 +285,6 @@ fn device_uid(device: AudioDeviceId) -> String {
     String::from_utf8_lossy(&buffer[..length]).into_owned()
 }
 
-/// Creates, configures, and starts the output-only monitor AUHAL on
-/// `device`, handing `consumer` to its render callback. On failure the
-/// consumer is returned so the preallocated ring survives for a retry;
-/// the partially configured unit is released by its RAII guard.
 fn start_monitor_unit(
     device: AudioDeviceId,
     consumer: Consumer<f32>,
@@ -405,17 +313,12 @@ fn start_monitor_unit(
     match attach {
         Ok(()) => Ok((unit.into_raw(), context)),
         Err(error) => {
-            // The unit never started, so no callback observed the context;
-            // reclaim it to recover the ring consumer.
             let context = unsafe { Box::from_raw(context) };
             Err((error, context.output))
         }
     }
 }
 
-/// Output-only AUHAL on the monitor device: input disabled, mono 48 kHz
-/// engine samples rendered as interleaved stereo (AUHAL's converter
-/// handles the device's own rate and format).
 fn configure_monitor_auhal(unit: AudioUnit, device: AudioDeviceId) -> Result<(), CoreAudioError> {
     set_io_enabled(
         unit,
@@ -433,11 +336,6 @@ fn configure_monitor_auhal(unit: AudioUnit, device: AudioDeviceId) -> Result<(),
     )
 }
 
-/// Render callback of the output-only monitor AUHAL. Real-time rules
-/// (docs/tech-research.md §9): it only moves `f32` samples from the
-/// preallocated monitor ring into the device buffer — no allocation, no
-/// locks, no syscalls. Ring underrun renders silence and re-arms priming;
-/// it never blocks and never touches the meeting-facing path.
 unsafe extern "C" fn monitor_render_callback(
     context: *mut c_void,
     _action_flags: *mut AudioUnitRenderActionFlags,
@@ -457,8 +355,6 @@ unsafe extern "C" fn monitor_render_callback(
         context.primed = true;
     }
     let MonitorContext { output, primed } = context;
-    // The engine is mono; every device channel gets the same sample. The
-    // monitor counts no underruns: re-priming is its whole response.
     fill_dual_mono(samples, channels, || {
         if !*primed {
             return None;

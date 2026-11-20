@@ -2,23 +2,15 @@
 
 use crate::error::StageError;
 
-/// The fixed sample rate (Hz) at which the engine exchanges audio with
-/// stages. Models running at other rates are wrapped by
-/// [`crate::framed::FramedStage`], which resamples internally.
+/// See docs/adr/0012-app-state-reducer.md.
 pub const ENGINE_SAMPLE_RATE: u32 = 48_000;
 
-/// A streaming mono audio processor operating at [`ENGINE_SAMPLE_RATE`].
-///
-/// Implementations must be suitable for use on a dedicated inference thread:
-/// `process_block` may allocate internally (it does not run on the audio I/O
-/// callback; see docs/tech-research.md §9), but should avoid unbounded work.
+/// See docs/adr/0007-dsp-stages.md.
 pub trait Stage: Send {
     /// Stable identifier of the underlying model/configuration.
     fn id(&self) -> &str;
 
-    /// Process one block. `output` must be the same length as `input` and is
-    /// fully overwritten. The stage may impose internal latency: the first
-    /// samples it emits are zeros until its pipeline fills.
+    /// See docs/adr/0007-dsp-stages.md.
     ///
     /// # Errors
     ///
@@ -26,43 +18,33 @@ pub trait Stage: Send {
     /// or [`StageError::Inference`] when the backend fails.
     fn process_block(&mut self, input: &[f32], output: &mut [f32]) -> Result<(), StageError>;
 
-    /// Total internal latency in samples at [`ENGINE_SAMPLE_RATE`]
-    /// (resampling + frame buffering; excludes the model's own algorithmic
-    /// lookahead unless the implementation accounts for it).
+    /// See docs/adr/0002-engine-diagnostics.md.
     fn latency_samples(&self) -> usize;
 
     /// Drop all internal state (buffers, model recurrent state).
     fn reset(&mut self);
 }
 
-/// A fixed-frame mono processor at its native sample rate.
-///
-/// Model implementations implement this; [`crate::framed::FramedStage`]
-/// adapts it to the [`Stage`] interface, absorbing rate and frame-size
-/// differences.
+/// See docs/adr/0007-dsp-stages.md.
 pub trait FrameProcessor: Send {
     /// Stable identifier of the underlying model/configuration.
     fn id(&self) -> &str;
 
-    /// Native sample rate (Hz). Must divide [`ENGINE_SAMPLE_RATE`].
+    /// See docs/adr/0012-app-state-reducer.md.
     fn sample_rate(&self) -> u32;
 
     /// Samples consumed and produced per `process_frame` call, at
     /// [`Self::sample_rate`].
     fn frame_len(&self) -> usize;
 
-    /// Process exactly one frame: `input.len() == output.len() ==`
-    /// [`Self::frame_len`].
+    /// See docs/adr/0007-dsp-stages.md.
     ///
     /// # Errors
     ///
     /// Returns [`StageError::Inference`] when the backend fails.
     fn process_frame(&mut self, input: &[f32], output: &mut [f32]) -> Result<(), StageError>;
 
-    /// Additional algorithmic delay of the model itself, in samples at
-    /// [`Self::sample_rate`] (e.g. STFT window minus hop for overlap-add
-    /// models, or lookahead frames). Used only for latency reporting and
-    /// offline alignment; defaults to zero.
+    /// See docs/adr/0002-engine-diagnostics.md.
     fn output_delay(&self) -> usize {
         0
     }

@@ -114,6 +114,16 @@ jobs:
           tool: cargo-machete
       - run: cargo machete
 
+  comments:
+    name: comment ratchet (no new comments)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: python3 scripts/comment-ratchet.py
+
   actionlint:
     name: jactionlint (workflow lint)
     runs-on: ubuntu-26.04
