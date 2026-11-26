@@ -1,0 +1,24 @@
+# Dependabot maintains the SHA pins in the workflow files (it updates the
+# commit SHA and the trailing version comment together). Cargo is
+# deliberately NOT enabled here: crates are updated in reviewed rounds so
+# the lockfile diff is read as a whole, and this repo's publish-age
+# cooldown lives in .cargo/config.toml, which Dependabot's resolver does
+# not read. (Dependabot security updates are a repository setting, not
+# configured by this file.)
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Tokyo"
+    # Third-party action code gets an extra margin on top of the pin: a
+    # new release is only proposed once it is a week old.
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns:
+          - "*"
