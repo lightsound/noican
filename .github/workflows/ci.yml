@@ -31,13 +31,13 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # No step pushes or fetches from origin after checkout (same on every
           # job below), so the GITHUB_TOKEN does not need to stay in the
           # workspace git config.
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           toolchain: 1.100.0
           components: rustfmt
@@ -48,14 +48,14 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           toolchain: 1.100.0
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
   docs:
@@ -65,13 +65,13 @@ jobs:
     env:
       RUSTDOCFLAGS: -D warnings
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           toolchain: 1.100.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo doc --workspace --no-deps --all-features --locked
 
   test:
@@ -79,13 +79,13 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           toolchain: 1.100.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo test --workspace --all-features --locked
 
   deny:
@@ -93,10 +93,10 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: EmbarkStudios/cargo-deny-action@81891abc19297b21343b15ef67dc61e4aea74fda # v2.1.4
         with:
           command: check
           rust-version: 1.100.0
@@ -106,10 +106,10 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@893d6ee8d714b6c7dfe2bcd94e5759e9a7958a7e # v2.90.10
         with:
           tool: cargo-machete
       - run: cargo machete
@@ -119,7 +119,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - run: python3 scripts/comment-ratchet.py
@@ -129,7 +129,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       # jactionlint is the only workflow linter that parses the
@@ -149,7 +149,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The driver submodule (lightsound/noican-driver) and its nested
           # BlackHole submodule are only needed to build the virtual
@@ -157,12 +157,12 @@ jobs:
           submodules: recursive
           # Both submodules are public, so no token needs to persist.
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           toolchain: 1.100.0
           targets: aarch64-apple-darwin
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: macos-arm64
       - name: Build and ad-hoc sign the virtual driver (BlackHole fork)
@@ -200,17 +200,17 @@ jobs:
       # package's Package.resolved, and a workspace-wide `**` glob would
       # walk target/ and the driver's dist/, which the background
       # xcodebuild is writing to while these keys are evaluated.
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: macos/NoicanState/.build
           key: ${{ runner.os }}-swiftpm-state-${{ steps.swift-toolchain.outputs.hash }}-${{ hashFiles('macos/NoicanState/Package.swift', 'macos/NoicanState/**/*.swift', 'macos/NoicanState/Package.resolved', '!macos/NoicanState/.build/**') }}
           restore-keys: ${{ runner.os }}-swiftpm-state-${{ steps.swift-toolchain.outputs.hash }}-
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: macos/NoicanLicensing/.build
           key: ${{ runner.os }}-swiftpm-licensing-${{ steps.swift-toolchain.outputs.hash }}-${{ hashFiles('macos/NoicanLicensing/Package.swift', 'macos/NoicanLicensing/**/*.swift', 'macos/NoicanLicensing/Package.resolved', '!macos/NoicanLicensing/.build/**') }}
           restore-keys: ${{ runner.os }}-swiftpm-licensing-${{ steps.swift-toolchain.outputs.hash }}-
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: macos/.build
           key: ${{ runner.os }}-swiftpm-app-${{ steps.swift-toolchain.outputs.hash }}-${{ hashFiles('macos/Package.swift', 'macos/**/*.swift', 'macos/Sources/CNoican/**', 'macos/Package.resolved', '!macos/**/.build/**') }}
@@ -248,11 +248,11 @@ jobs:
           strings external/noican-driver/dist/Noican.driver/Contents/MacOS/Noican \
             | grep -E '^com\.lightsound\.noican\..+_UID$'
       - parallel:
-          - uses: actions/upload-artifact@v7
+          - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
             with:
               name: noican-macos-arm64
               path: dist/Noican.app
-          - uses: actions/upload-artifact@v7
+          - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
             with:
               name: noican-driver-universal-adhoc
               path: external/noican-driver/dist/Noican.driver
