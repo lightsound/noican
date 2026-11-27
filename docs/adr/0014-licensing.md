@@ -372,6 +372,19 @@ use Polar's Current version; the decoding below reads only the
 handful of fields every version has carried, and anything it cannot
 read is `.unavailable` (grace period), never a rejection.
 
+## polar-config-case-folding
+
+Decided 2026-11-27; recorded here because code comments are banned.
+
+`PolarConfiguration` lower-cases the organization and benefit IDs
+after trimming them. `isComplete` parses them with
+`UUID(uuidString:)`, which accepts either case, while the benefit
+check compares strings against the lower-case UUIDs Polar returns:
+an ID pasted in upper case configured the build as gated and then
+refused every key as belonging to another product. Folding once at
+construction keeps every later use — request bodies and
+comparisons — on one spelling.
+
 ## polar-config-gating
 
 Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift` lines 48–51.

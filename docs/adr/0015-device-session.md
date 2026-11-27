@@ -410,6 +410,28 @@ Source: `crates/noican-coreaudio/src/lib.rs` lines 145–145.
 
 Non-macOS placeholder that keeps workspace checks portable.
 
+## private-aggregate-uid-namespace
+
+Decided 2026-11-27; recorded here because code comments are banned.
+
+The app's private aggregate device takes its UID from
+`com.lightsound.noican-aggregate.`, outside the driver's
+`com.lightsound.noican.` namespace, and
+`AudioDeviceCatalog.virtualOutput(in:)` skips aggregate devices.
+The aggregate used to be named
+`com.lightsound.noican.aggregate.<UUID>`. It is listed among the
+creating process's devices and has output channels, so it matched
+the driver's prefix, and while the engine ran on the aggregate
+transport the selector could return the aggregate itself as the
+virtual output: always next to stock BlackHole (which loses to any
+prefix match), by enumeration order next to the Noican driver. A
+restart then built on the aggregate the stop had just destroyed
+and failed after two seconds with "did not switch to 48 kHz", the
+level check read the wrong device, and a removed driver went
+unnoticed. Either change alone closes this; the UID removes the
+collision at its source, and the selector no longer depends on how
+the app names what it creates.
+
 ## sample-rate-fail-open
 
 Source: `macos/Sources/NoicanMenuBar/CoreAudioDevices.swift` lines 147–148.

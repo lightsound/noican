@@ -554,6 +554,19 @@ Source: `macos/Sources/NoicanMenuBar/AppState.swift` lines 133–134.
 The mode control is intent: the reducer never moves it on its own
 and re-tapping the selected segment retries an unfulfilled mode.
 
+## model-pick-without-session
+
+Decided 2026-11-27; recorded here because code comments are banned.
+
+Picking another model while the mode is On or Preview and no
+session is live (the last start failed, or a runtime stop tore the
+engine down) starts the engine with that model, as picking another
+microphone does. `EngineTransition.switchingModel` therefore always
+carries the session it switches; a switch without one is not
+representable. Before this the pick sent `AppEffect.switchModel` to
+a stopped engine, which could only answer "engine is not running"
+under the Model picker.
+
 ## no-persistent-headphone-warning
 
 Source: `macos/Sources/NoicanMenuBar/MenuView.swift` lines 175–183.

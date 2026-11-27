@@ -114,8 +114,11 @@ extension AppReducer {
         else {
             return (state, [])
         }
+        guard let session = state.liveSession else {
+            return startTransition(state, monitor: state.mode == .preview, revertInputUID: nil)
+        }
         state.machine = .busy(
-            .switchingModel(to: id, session: state.liveSession),
+            .switchingModel(to: id, session: session),
             rendering: state.phase
         )
         return (state, [.switchModel(to: id)])
@@ -255,14 +258,11 @@ extension AppReducer {
         var state = state
         guard let error else {
             var newSession = session
-                ?? EngineSession(modelID: target, inputUID: state.selectedInputUID)
             newSession.modelID = target
             state.machine = .settled(.running(newSession))
             return (state, [])
         }
-        if let session {
-            state.selectedModelID = session.modelID
-        }
+        state.selectedModelID = session.modelID
         state.messages.modelError = error
         state.machine = .settled(rendering)
         return (state, [])

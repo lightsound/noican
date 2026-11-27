@@ -33,7 +33,7 @@ public struct StartAttempt: Hashable, Sendable {
 public enum EngineTransition: Hashable, Sendable {
     case starting(StartAttempt)
     case settingMonitor(enabled: Bool, session: EngineSession)
-    case switchingModel(to: String, session: EngineSession?)
+    case switchingModel(to: String, session: EngineSession)
 }
 
 public enum EngineMachine: Hashable, Sendable {

@@ -71,7 +71,9 @@ enum AudioDeviceCatalog {
 
     static func virtualOutput(in devices: [AudioDeviceInfo]) -> AudioDeviceInfo? {
         let loopbacks = devices.filter { device in
-            device.outputChannels > 0 && isNoicanVirtualDevice(device)
+            device.outputChannels > 0
+                && device.transportType != kAudioDeviceTransportTypeAggregate
+                && isNoicanVirtualDevice(device)
         }
         return loopbacks.first(where: isNoicanDriverDevice) ?? loopbacks.first
     }
