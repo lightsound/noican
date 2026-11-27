@@ -652,10 +652,11 @@ impl Runtime {
         self.running
     }
 
-    /// Whether a callback or inference call has failed.
+    /// Whether a callback or inference call has failed or the worker has exited.
     #[must_use]
     pub fn is_faulted(&self) -> bool {
         self.shared.faulted.load(Ordering::Acquire)
+            || self.worker.as_ref().is_some_and(JoinHandle::is_finished)
     }
 
     /// See docs/adr/0003-coreaudio-transport.md.

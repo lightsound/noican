@@ -129,6 +129,22 @@ Bounds the unit's callback size to [`MAX_CALLBACK_FRAMES`] so the
 preallocated capture landing buffer always suffices (the callback
 never allocates; see [`crate::callback`]).
 
+## capture-non-finite-samples
+
+Decided 2026-11-27; recorded here because code comments are banned.
+
+`CaptureFeed::push` queues 0.0 in place of a NaN or infinite sample.
+One non-finite sample is enough to poison the recurrent state of
+dfn3, dpdfnet2, dpdfnet8, hush and hush-48k for the rest of the
+session: every later output sample is NaN, no stage reports an
+error, and the fault flag stays clear, so the virtual microphone
+carries NaN under a green status. The capture feed is the one
+place every captured sample of either transport passes before any
+stateful DSP (the split transport's resampler included), so the
+check lives there rather than in each stage. It costs one
+comparison per sample on the callback thread and neither allocates
+nor blocks. Files the CLI reads do not pass through it.
+
 ## capture-ring-overrun-accounting
 
 Source: `crates/noican-coreaudio/src/callback.rs` lines 110–117.

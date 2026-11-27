@@ -299,6 +299,21 @@ Source: `crates/noican-coreaudio/src/lib.rs` lines 73–74.
 Samples per engine block driven by the inference worker (10 ms at the
 48 kHz engine rate; matches the CLI comparison block size).
 
+## worker-exit-is-a-fault
+
+Decided 2026-11-27; recorded here because code comments are banned.
+
+`Runtime::is_faulted` also reports a fault when the inference worker
+thread has ended while the runtime still holds its join handle. The
+worker returns only after `Runtime::stop` requests shutdown, and
+`stop` takes the handle before it returns, so a finished handle
+seen here means the thread unwound from a panic inside a stage. The
+fault is derived from the handle rather than set by catching the
+unwind: that needs no cooperation from the dying thread and covers
+every way it can end.
+Without it the callbacks kept running and the frame heartbeat kept
+advancing, so the app showed "Running" over permanent silence.
+
 ## worker-realtime-promotion
 
 Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 449–454.

@@ -166,11 +166,10 @@ impl FrameProcessor for DpdfnetStage {
         {
             *dst = x * w;
         }
-        let mut spec = std::mem::take(&mut self.spec);
-        self.fft.forward_interleaved(&self.frame, &mut spec)?;
+        self.fft.forward_interleaved(&self.frame, &mut self.spec)?;
 
         let bins = self.fft.bins();
-        let spec_tensor = Tensor::from_array(([1, 1, bins, 2], spec.clone()))
+        let spec_tensor = Tensor::from_array(([1, 1, bins, 2], self.spec.clone()))
             .map_err(|e| inference_error("building spec tensor", &e))?;
         let state_tensor = Tensor::from_array(([self.state.len()], self.state.clone()))
             .map_err(|e| inference_error("building state tensor", &e))?;
@@ -188,13 +187,13 @@ impl FrameProcessor for DpdfnetStage {
             .ok_or_else(|| StageError::Inference("spec_e missing".to_owned()))?
             .try_extract_tensor::<f32>()
             .map_err(|e| inference_error("extracting spec_e", &e))?;
-        if enhanced.len() != spec.len() {
+        if enhanced.len() != self.spec.len() {
             return Err(StageError::BufferLen {
-                expected: spec.len(),
+                expected: self.spec.len(),
                 got: enhanced.len(),
             });
         }
-        spec.copy_from_slice(enhanced);
+        self.spec.copy_from_slice(enhanced);
 
         let (_, next_state) = outputs
             .get("state_out")
@@ -209,8 +208,7 @@ impl FrameProcessor for DpdfnetStage {
         }
         self.state.copy_from_slice(next_state);
 
-        self.fft.inverse_interleaved(&spec, &mut self.frame)?;
-        self.spec = spec;
+        self.fft.inverse_interleaved(&self.spec, &mut self.frame)?;
         for (acc, (y, w)) in self.ola.iter_mut().zip(self.frame.iter().zip(&self.window)) {
             *acc += y * w;
         }

@@ -91,6 +91,7 @@ impl CaptureFeed {
     /// See docs/adr/0003-coreaudio-transport.md.
     pub fn push(&mut self, samples: &[f32]) {
         for &sample in samples {
+            let sample = if sample.is_finite() { sample } else { 0.0 };
             if self.ring.push(sample).is_err() {
                 self.overruns.fetch_add(1, Ordering::Relaxed);
             }
@@ -237,6 +238,17 @@ mod tests {
         assert_eq!(overruns.load(Ordering::Relaxed), 2, "two samples overflow");
         let queued: Vec<f32> = std::iter::from_fn(|| consumer.pop().ok()).collect();
         assert_samples(&queued, &[0.1, 0.2, 0.3, 0.4]);
+    }
+
+    #[test]
+    fn capture_feed_silences_non_finite_samples() {
+        let (producer, mut consumer) = RingBuffer::new(8);
+        let overruns = Arc::new(AtomicU64::new(0));
+        let mut feed = CaptureFeed::new(producer, Arc::clone(&overruns));
+        feed.push(&[0.5, f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.25]);
+        let queued: Vec<f32> = std::iter::from_fn(|| consumer.pop().ok()).collect();
+        assert_samples(&queued, &[0.5, 0.0, 0.0, 0.0, -0.25]);
+        assert_eq!(overruns.load(Ordering::Relaxed), 0);
     }
 
     #[test]

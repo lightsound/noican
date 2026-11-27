@@ -150,9 +150,16 @@ impl SwitchingEngine {
             Transition::FadeOut { mut remaining } => {
                 if let Some(prepared) = &mut self.pending {
                     self.warmup_output.resize(input.len(), 0.0);
-                    prepared
+                    let warmed = prepared
                         .stage
-                        .process_block(input, &mut self.warmup_output[..input.len()])?;
+                        .process_block(input, &mut self.warmup_output[..input.len()]);
+                    if let Err(error) = warmed {
+                        self.pending = None;
+                        self.transition = Transition::FadeIn {
+                            completed: remaining,
+                        };
+                        return Err(error);
+                    }
                 }
                 for sample in output.iter_mut() {
                     *sample *= ratio(remaining, self.fade_samples);
@@ -226,6 +233,32 @@ mod tests {
 
         fn latency_samples(&self) -> usize {
             self.latency
+        }
+
+        fn reset(&mut self) {}
+    }
+
+    #[derive(Debug)]
+    struct FailsAfter {
+        healthy_blocks: usize,
+    }
+
+    impl Stage for FailsAfter {
+        fn id(&self) -> &'static str {
+            "fails"
+        }
+
+        fn process_block(&mut self, _input: &[f32], output: &mut [f32]) -> Result<(), StageError> {
+            if self.healthy_blocks == 0 {
+                return Err(StageError::Inference("warm-up failed".to_owned()));
+            }
+            self.healthy_blocks -= 1;
+            output.fill(0.0);
+            Ok(())
+        }
+
+        fn latency_samples(&self) -> usize {
+            0
         }
 
         fn reset(&mut self) {}
@@ -399,5 +432,69 @@ mod tests {
                 pair[1]
             );
         }
+    }
+
+    #[test]
+    fn a_replacement_that_fails_while_warming_is_abandoned() {
+        let (publisher, mut engine) =
+            SwitchingEngine::new(boxed("a", 1.0), 32, 8, IntensityControl::default())
+                .expect("engine builds");
+        let input = [0.0_f32; 8];
+        let mut output = [0.0_f32; 8];
+        engine.process_block(&input, &mut output).expect("stable");
+
+        let superseded = publisher.publish(Box::new(FailsAfter { healthy_blocks: 0 }));
+        assert!(superseded.is_none());
+        assert!(matches!(
+            engine.process_block(&input, &mut output),
+            Err(StageError::Inference(_))
+        ));
+
+        engine
+            .process_block(&input, &mut output)
+            .expect("recovered");
+        assert!(output.iter().all(|s| (*s - 1.0).abs() < 1e-6));
+        assert_eq!(engine.active_id(), "a");
+        assert_eq!(engine.active_generation(), 0);
+
+        let superseded = publisher.publish(boxed("b", -1.0));
+        assert!(superseded.is_none());
+        for _ in 0..12 {
+            engine.process_block(&input, &mut output).expect("block");
+        }
+        assert_eq!(engine.active_id(), "b");
+        assert!(output.iter().all(|s| (*s - -1.0).abs() < 1e-6));
+    }
+
+    #[test]
+    fn a_failure_midway_through_the_fade_out_ramps_the_audible_stage_back() {
+        let fade = 32;
+        let (publisher, mut engine) =
+            SwitchingEngine::new(boxed("a", 1.0), fade, 8, IntensityControl::default())
+                .expect("engine builds");
+        let superseded = publisher.publish(Box::new(FailsAfter { healthy_blocks: 2 }));
+        assert!(superseded.is_none());
+        let input = [0.0_f32; 8];
+        let mut delivered = Vec::new();
+        let mut failures = 0;
+        for _ in 0..10 {
+            let mut output = [0.0_f32; 8];
+            match engine.process_block(&input, &mut output) {
+                Ok(()) => delivered.extend_from_slice(&output),
+                Err(_) => failures += 1,
+            }
+        }
+        assert_eq!(failures, 1);
+        assert_eq!(engine.active_id(), "a");
+        assert!((delivered[15] - 17.0 / 32.0).abs() < 1e-6);
+        for pair in delivered.windows(2) {
+            assert!(
+                (pair[1] - pair[0]).abs() <= 1.0 / 32.0 + 1e-6,
+                "discontinuity {} -> {}",
+                pair[0],
+                pair[1]
+            );
+        }
+        assert!(delivered.last().is_some_and(|s| (*s - 1.0).abs() < 1e-6));
     }
 }
