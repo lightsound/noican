@@ -36,6 +36,7 @@ let package = Package(
                 .linkedLibrary("c++"),
                 .linkedFramework("Accelerate"),
                 .linkedFramework("AudioToolbox"),
+                .linkedFramework("AVFoundation"),
                 .linkedFramework("AudioUnit"),
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("CoreFoundation"),

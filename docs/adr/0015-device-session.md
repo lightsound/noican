@@ -287,6 +287,21 @@ appear immediately (the device list follows hot-plug), and the
 microphone can be switched while running — the engine rebuilds its
 transport around the new device with the same model and mode.
 
+## microphone-permission-preflight
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+Every engine start first asks AVFoundation for the microphone
+authorization: an undetermined status raises the system prompt and
+waits for the answer, and a denied or restricted one fails the start
+with a message that names the System Settings pane. Core Audio does
+not report a denied permission; it delivers zeros, so the engine
+started, the frame heartbeat advanced, and the app showed "Running"
+over a silent virtual microphone. The check sits in the shell's
+start effect rather than in the reducer because the status is read
+from the system at that moment and the prompt is asynchronous; the
+reducer sees the outcome as an ordinary failed start.
+
 ## microphone-rate-support
 
 Source: `macos/NoicanState/Sources/NoicanState/AppReducer.swift` lines 696–703.

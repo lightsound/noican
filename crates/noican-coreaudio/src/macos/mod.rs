@@ -21,6 +21,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::callback::{
     CaptureFeed, MAX_CALLBACK_FRAMES, OutputFeed, capture_byte_size, render_geometry,
+    shed_capture_backlog,
 };
 use crate::monitor::{MonitorTee, fourcc};
 use crate::observe::{StreamLevels, WorkerBlockStats};
@@ -1200,6 +1201,13 @@ fn processing_loop(mut worker: WorkerLinks, workgroup: usize) {
     let mut output_block = [0.0_f32; WORKER_BLOCK_SAMPLES];
     let mut position = 0;
     while !worker.shared.shutdown.load(Ordering::Acquire) {
+        if position == 0 {
+            shed_capture_backlog(
+                &mut worker.input,
+                WORKER_BLOCK_SAMPLES,
+                &worker.shared.input_overruns,
+            );
+        }
         match worker.input.pop() {
             Ok(sample) => {
                 input_block[position] = sample;

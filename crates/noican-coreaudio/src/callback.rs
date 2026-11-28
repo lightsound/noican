@@ -99,6 +99,28 @@ impl CaptureFeed {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+const MAX_CAPTURE_BACKLOG: usize = MAX_CALLBACK_FRAMES + 2 * crate::WORKER_BLOCK_SAMPLES;
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn shed_capture_backlog(
+    ring: &mut Consumer<f32>,
+    keep: usize,
+    dropped: &AtomicU64,
+) -> usize {
+    let queued = ring.slots();
+    if queued <= MAX_CAPTURE_BACKLOG {
+        return 0;
+    }
+    let stale = queued - keep.min(queued);
+    let Ok(chunk) = ring.read_chunk(stale) else {
+        return 0;
+    };
+    chunk.commit_all();
+    dropped.fetch_add(u64::try_from(stale).unwrap_or(u64::MAX), Ordering::Relaxed);
+    stale
+}
+
 /// See docs/adr/0002-engine-diagnostics.md.
 #[derive(Debug)]
 pub struct OutputFeed {
@@ -249,6 +271,36 @@ mod tests {
         let queued: Vec<f32> = std::iter::from_fn(|| consumer.pop().ok()).collect();
         assert_samples(&queued, &[0.5, 0.0, 0.0, 0.0, -0.25]);
         assert_eq!(overruns.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn a_backlog_within_the_limit_is_left_alone() {
+        let (mut producer, mut consumer) = RingBuffer::new(MAX_CAPTURE_BACKLOG * 2);
+        let dropped = AtomicU64::new(0);
+        for _ in 0..MAX_CAPTURE_BACKLOG {
+            producer.push(0.5_f32).expect("ring has room");
+        }
+        assert_eq!(shed_capture_backlog(&mut consumer, 480, &dropped), 0);
+        assert_eq!(consumer.slots(), MAX_CAPTURE_BACKLOG);
+        assert_eq!(dropped.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn a_backlog_past_the_limit_keeps_only_the_newest_samples() {
+        let (mut producer, mut consumer) = RingBuffer::new(MAX_CAPTURE_BACKLOG * 2);
+        let dropped = AtomicU64::new(0);
+        let total = MAX_CAPTURE_BACKLOG + 1_000;
+        for index in 0..total {
+            let marker = if index < total - 480 { 0.0_f32 } else { 1.0 };
+            producer.push(marker).expect("ring has room");
+        }
+        assert_eq!(
+            shed_capture_backlog(&mut consumer, 480, &dropped),
+            total - 480
+        );
+        assert_eq!(dropped.load(Ordering::Relaxed), (total - 480) as u64);
+        let kept: Vec<f32> = std::iter::from_fn(|| consumer.pop().ok()).collect();
+        assert_samples(&kept, &[1.0; 480]);
     }
 
     #[test]

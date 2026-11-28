@@ -138,6 +138,10 @@ final class AppState: ObservableObject {
         let modelID = attempt.modelID
         let snapshotCapture = model.inputDevices.first { $0.uid == attempt.inputUID }?.capture
         Task.detached {
+            guard await MicrophoneAccess.isGranted() else {
+                await self.finishStart(captureRate: nil, error: MicrophoneAccess.deniedMessage)
+                return
+            }
             var captureRate: Double?
             let result = Result {
                 if Self.shouldUseAggregate(for: input.id, snapshot: snapshotCapture) {
