@@ -81,7 +81,11 @@ every crash, with no name another run would overwrite. The lock is
 taken per model, after its dependencies were fetched and released,
 so two fetches can never hold locks in opposite orders. The file is
 empty and stays in the directory; `is_fetched` only looks at the
-pinned file names.
+pinned file names. A model whose files are all present and match
+their digests is reported without taking the lock or creating
+anything, so a complete models directory keeps working when it is
+read-only; only a fetch that has something to download or repair
+locks, and it checks every file again once it holds the lock.
 
 ## fetch-offline-test-fixture
 
@@ -363,7 +367,9 @@ Source: `crates/noican-models/tests/model_integration.rs`, `fetched_models_dir`.
 Decided 2026-11-28; recorded here because code comments are banned.
 
 A test that needs model weights fails when they are not on disk,
-with the directory it looked in and the fetch command. These tests
+with the directory it looked in and the fetch command for that
+directory (`--models-dir`, since the test may read another one than
+the CLI's default). These tests
 are `#[ignore]`d, so they only run when someone asks for them with
 `--ignored`; returning early there reported "ok" for a model that
 never ran, and a missing download looked like a passing model. The
@@ -648,7 +654,9 @@ Commit-pinned permalink (the repo has no releases).
 
 Source: `crates/noican-models/tests/model_integration.rs`, `run_model`.
 
-Treated as a skip: weights are intentionally not part of the repo.
+Weights are intentionally not part of the repo. Until 2026-11-28 a
+test without them was treated as a skip; it now fails, see
+`missing-weights-fail-opt-in-tests`.
 
 ## registry-dispatch-completeness
 

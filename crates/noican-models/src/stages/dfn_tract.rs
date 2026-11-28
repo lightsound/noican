@@ -315,8 +315,8 @@ mod tests {
         let spec = crate::manifest::ModelSpec::find("hush").expect("hush is in the registry");
         assert!(
             crate::fetch::is_fetched(&models_dir, spec),
-            "hush: weights not fetched under {} (run: noican fetch hush)",
-            models_dir.display()
+            "hush: weights not fetched under {dir} (run: noican --models-dir {dir} fetch hush)",
+            dir = models_dir.display()
         );
         let tarball = crate::fetch::model_dir(&models_dir, spec).join(spec.files[0].name);
         let mut gained = DfTractStage::hush("hush", &tarball).expect("stage should load");

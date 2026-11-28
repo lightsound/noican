@@ -36,18 +36,42 @@ pub(crate) fn run_stage_aligned_timed(
     Ok((output, block_times_ns))
 }
 
-pub(crate) fn ensure_distinct_outputs(inputs: &[PathBuf]) -> anyhow::Result<()> {
-    let mut seen: HashMap<String, &Path> = HashMap::new();
+#[cfg(unix)]
+type DirectoryIdentity = (u64, u64);
+
+#[cfg(unix)]
+fn directory_identity(dir: &Path) -> std::io::Result<DirectoryIdentity> {
+    use std::os::unix::fs::MetadataExt as _;
+    let metadata = std::fs::metadata(dir)?;
+    Ok((metadata.dev(), metadata.ino()))
+}
+
+#[cfg(not(unix))]
+type DirectoryIdentity = PathBuf;
+
+#[cfg(not(unix))]
+fn directory_identity(dir: &Path) -> std::io::Result<DirectoryIdentity> {
+    dir.canonicalize()
+}
+
+pub(crate) fn ensure_distinct_outputs(inputs: &[PathBuf], out_dir: &Path) -> anyhow::Result<()> {
+    let mut seen: HashMap<DirectoryIdentity, &Path> = HashMap::new();
     for input in inputs {
         let stem = input
             .file_stem()
             .and_then(|s| s.to_str())
             .context("input file has no valid stem")?;
-        if let Some(earlier) = seen.insert(stem.to_lowercase(), input) {
+        let file_dir = out_dir.join(stem);
+        std::fs::create_dir_all(&file_dir)
+            .with_context(|| format!("cannot create {}", file_dir.display()))?;
+        let identity = directory_identity(&file_dir)
+            .with_context(|| format!("cannot inspect {}", file_dir.display()))?;
+        if let Some(earlier) = seen.insert(identity, input) {
             anyhow::bail!(
-                "{} and {} would both write to <out-dir>/{stem}; rename one or process them with different --out-dir values",
+                "{} and {} would both write to {}; rename one or process them with different --out-dir values",
                 earlier.display(),
-                input.display()
+                input.display(),
+                file_dir.display()
             );
         }
     }
@@ -93,26 +117,43 @@ pub(crate) fn process_file(
 mod tests {
     use super::*;
 
-    #[test]
-    fn inputs_with_distinct_stems_are_accepted() {
-        let inputs = [PathBuf::from("a/one.wav"), PathBuf::from("a/two.wav")];
-        assert!(ensure_distinct_outputs(&inputs).is_ok());
+    fn scratch_dir(line: u32) -> PathBuf {
+        std::env::temp_dir().join(format!("noican-process-test-{}-{line}", std::process::id()))
     }
 
     #[test]
-    fn inputs_that_share_a_stem_are_refused_before_any_work() {
-        for pair in [
-            ["a/take.wav", "b/take.wav"],
-            ["take.wav", "take.flac"],
-            ["Take.wav", "take.wav"],
-        ] {
+    fn inputs_with_distinct_stems_are_accepted() {
+        let out_dir = scratch_dir(line!());
+        let inputs = [PathBuf::from("a/one.wav"), PathBuf::from("a/two.wav")];
+        ensure_distinct_outputs(&inputs, &out_dir).expect("distinct stems");
+        assert!(out_dir.join("one").is_dir() && out_dir.join("two").is_dir());
+        std::fs::remove_dir_all(&out_dir).expect("cleanup");
+    }
+
+    #[test]
+    fn inputs_that_resolve_to_one_directory_are_refused_before_any_work() {
+        let out_dir = scratch_dir(line!());
+        for pair in [["a/take.wav", "b/take.wav"], ["take.wav", "take.flac"]] {
             let inputs = pair.map(PathBuf::from);
-            let error = ensure_distinct_outputs(&inputs).expect_err("shared stem");
+            let error = ensure_distinct_outputs(&inputs, &out_dir).expect_err("shared directory");
             let message = error.to_string();
             assert!(
                 message.contains(pair[0]) && message.contains(pair[1]),
                 "{message}"
             );
         }
+        std::fs::remove_dir_all(&out_dir).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn two_names_for_one_directory_are_refused() {
+        let out_dir = scratch_dir(line!());
+        std::fs::create_dir_all(out_dir.join("take")).expect("temp dir");
+        std::os::unix::fs::symlink(out_dir.join("take"), out_dir.join("Take")).expect("alias");
+        let inputs = [PathBuf::from("take.wav"), PathBuf::from("Take.wav")];
+        let error = ensure_distinct_outputs(&inputs, &out_dir).expect_err("one directory");
+        assert!(error.to_string().contains("Take.wav"), "{error}");
+        std::fs::remove_dir_all(&out_dir).expect("cleanup");
     }
 }

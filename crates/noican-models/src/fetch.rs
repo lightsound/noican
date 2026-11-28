@@ -159,6 +159,16 @@ fn fetch_model_dyn(
         return Ok(());
     }
     let dir = model_dir(models_dir, model);
+    if is_intact(&dir, model)? {
+        for file in model.files {
+            progress(FetchEvent {
+                model: model.id,
+                file: file.name,
+                step: FetchStep::Present,
+            });
+        }
+        return Ok(());
+    }
     std::fs::create_dir_all(&dir).map_err(|source| FetchError::Io {
         path: dir.clone(),
         source,
@@ -210,6 +220,21 @@ fn fetch_model_dyn(
         report(FetchStep::Finished(len));
     }
     Ok(())
+}
+
+fn is_intact(dir: &Path, model: &ModelSpec) -> Result<bool, FetchError> {
+    for file in model.files {
+        let dest = dir.join(file.name);
+        if !dest.is_file() {
+            return Ok(false);
+        }
+        if let Some(expected) = file.sha256
+            && sha256_file(&dest)? != expected
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 const LOCK_FILE: &str = ".fetch.lock";
@@ -419,6 +444,10 @@ mod tests {
         })
         .expect("a matching digest needs no download");
         assert_eq!(steps, [FetchStep::Present]);
+        assert!(
+            !dir.join(LOCK_FILE).exists(),
+            "a complete model is used without writing to its directory"
+        );
 
         std::fs::write(&dest, b"wrong bytes").expect("write");
         steps.clear();

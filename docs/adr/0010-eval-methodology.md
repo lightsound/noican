@@ -357,8 +357,13 @@ stem (see `batch-output-layout`), so `a/take.wav` and `b/take.wav`,
 or `take.wav` and `take.flac`, wrote into one directory and the
 later input replaced the earlier one's results without a word. The
 command now refuses such a list before it processes anything, naming
-both inputs. Stems are compared without regard to case, because the
-default macOS volume would merge `Take` and `take` as well. Renaming
+both inputs. Whether two stems collide is the filesystem's decision,
+so the check asks it: it creates each output directory and compares
+their identities (device and inode), which covers a volume that
+ignores case (`Take` and `take`) or Unicode normalization (a
+precomposed and a decomposed accent) without the check modelling
+either rule, and refuses nothing on a volume that keeps them apart.
+The directories of a refused list stay behind, empty. Renaming
 the colliding directories automatically was rejected: the layout is
 documented, and a name that depends on what else was on the command
 line cannot be predicted by the scripts that read the output. This

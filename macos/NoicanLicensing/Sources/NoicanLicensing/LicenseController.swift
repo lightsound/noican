@@ -58,6 +58,9 @@ public final class LicenseController {
         state = LicenseState(status: .unlicensed)
         needsReload = true
         reloadIfNeeded()
+        if backend != nil, device == nil {
+            state.notice = Self.unidentifiedDeviceNotice
+        }
     }
 
     private func reloadIfNeeded() {
