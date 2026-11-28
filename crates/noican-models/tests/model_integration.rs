@@ -49,7 +49,7 @@ fn fetched_models_dir(id: &str) -> PathBuf {
     let spec = ModelSpec::find(id).expect("registered");
     assert!(
         noican_models::fetch::is_fetched(&dir, spec),
-        "{id}: weights not fetched under {dir} (run: noican --models-dir {dir} fetch {id})",
+        "{id}: weights not fetched under {dir} (run: noican --models-dir '{dir}' fetch {id})",
         dir = dir.display()
     );
     dir
