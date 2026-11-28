@@ -22,7 +22,10 @@ script can resolve:
   (the ADRs themselves included), `.agents/`, or `scripts/` must name an
   existing file, and an existing section when it carries a `#<section>`.
 - A reference is read to the end of its token, so a misspelt file name or
-  section is reported as malformed or missing rather than skipped.
+  section is reported as malformed or missing rather than skipped. A
+  trailing `.` or `:` is sentence punctuation only when whitespace or the
+  end of the line follows; inside a Markdown link destination or a quoted
+  span it is part of the reference, and wrong.
 - A Rust type is defined where its `struct`, `enum`, `union` or `trait`
   is. An `impl` block makes its methods addressable (`Type::method`) but
   does not define `Type`.
@@ -49,7 +52,7 @@ PROSE_PATHS = ("AGENTS.md", "docs", ".agents", "scripts")
 PROSE_EXTS = (".md", ".py", ".sh")
 SKIP_DIRS = {".git", "target", ".build"}
 
-ADR_CANDIDATE = re.compile(r"docs/adr/([^\s`)\"',;]*)")
+ADR_CANDIDATE = re.compile(r"docs/adr/([^\s`)>\"',;]*)")
 ADR_TARGET = re.compile(r"(\d{4}-[a-z0-9-]+\.md)(?:#([a-z0-9-]+))?")
 ADR_PLACEHOLDER = "NNNN-"
 SELF = "scripts/adr-links.py"
@@ -225,7 +228,9 @@ def check_mentions(line, where, sections, errors, require_section):
     """Validate every `docs/adr/...` reference on the line; return how many it holds."""
     found = 0
     for candidate in ADR_CANDIDATE.finditer(line):
-        token = candidate.group(1).rstrip(".:")
+        token = candidate.group(1)
+        if candidate.end() == len(line) or line[candidate.end()].isspace():
+            token = token.rstrip(".:")
         if not token or token.startswith(ADR_PLACEHOLDER):
             continue
         found += 1
