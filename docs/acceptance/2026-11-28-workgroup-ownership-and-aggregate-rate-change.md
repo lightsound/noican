@@ -310,7 +310,7 @@ Second pass, with the video stopped:
 - **Observed:** at each change `coreaudiod` stops and restarts the
   aggregate's IO (five times in a row for 96000); the logged gap
   between stop and start was 30 to 40 ms for the microphone changes
-  and 84 to 93 ms for the virtual-output change (B3). The gaps are
+  and 93 ms for the virtual-output change (B3). The gaps are
   log timestamps, not a measurement of how long audio was
   interrupted. For a change away from 48000 it also logs that it
   allocates sample rate conversion. **Inferred:** Core Audio converts the out-of-rate
@@ -332,8 +332,11 @@ Second pass, with the video stopped:
   the aggregate transport did not leave the app in a state the user
   could not notice or could not recover from. The missing observer is
   real, but its recorded cost here was that counter increase and a
-  restart of the aggregate's IO at the moment of the change; the
-  operator reported no interruption.
+  restart of the aggregate's IO at the moment of the change. The
+  operator's answers describe the state after each change (status,
+  bars, red text) and, in Preview, pitch and sound quality; they were
+  not asked about the moment of the change, so whether the restart
+  was audible is unverified.
 - **Not settled:** the SRC line is a statement about Core Audio's
   default ("sample rate conversion no longer enables drift correction
   by default"), not about this session. Read
