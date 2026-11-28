@@ -338,6 +338,8 @@ mod tests {
             sha256: Some("7afc240a360b1f66b2da6dbe941071513fd89c0f4d5e2961231c10c3c4b054ea"),
         }],
         depends_on: &[],
+        traits: crate::traits::ModelTraits::PASSTHROUGH,
+        build: |_, _| Ok(Box::new(noican_core::Passthrough)),
     };
 
     #[test]

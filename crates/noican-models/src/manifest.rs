@@ -1,5 +1,19 @@
 //! See docs/adr/0009-model-catalog-fetch.md#model-weight-pinning.
 
+use std::path::{Path, PathBuf};
+
+use noican_core::{FrameProcessor, FramedStage, Stage, StageError};
+
+use crate::factory::MAX_BLOCK_LEN;
+use crate::fetch::model_dir;
+use crate::stages::dfn_tract::DfTractStage;
+use crate::stages::dpdfnet::DpdfnetStage;
+use crate::stages::hush_wideband::HushWidebandStage;
+use crate::stages::ulunas::UlunasStage;
+use crate::traits::ModelTraits;
+
+pub(crate) type StageBuilder = fn(&ModelSpec, &Path) -> Result<Box<dyn Stage>, StageError>;
+
 /// Broad role of a model in the pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelFamily {
@@ -37,6 +51,8 @@ pub struct ModelSpec {
     pub files: &'static [FileSpec],
     /// See docs/adr/0009-model-catalog-fetch.md#model-depends-on.
     pub depends_on: &'static [&'static str],
+    pub(crate) traits: ModelTraits,
+    pub(crate) build: StageBuilder,
 }
 
 impl ModelSpec {
@@ -50,6 +66,32 @@ impl ModelSpec {
     pub fn dependencies(&self) -> impl Iterator<Item = &'static Self> {
         self.depends_on.iter().filter_map(|id| Self::find(id))
     }
+
+    fn file_path(&self, models_dir: &Path, index: usize) -> PathBuf {
+        model_dir(models_dir, self).join(self.files[index].name)
+    }
+
+    fn dependency_file_path(
+        &self,
+        models_dir: &Path,
+        dependency: &str,
+        index: usize,
+    ) -> Result<PathBuf, StageError> {
+        let dep = self
+            .dependencies()
+            .find(|dep| dep.id == dependency)
+            .ok_or_else(|| {
+                StageError::Unsupported(format!(
+                    "{} does not depend on {dependency} (registry inconsistency)",
+                    self.id
+                ))
+            })?;
+        Ok(dep.file_path(models_dir, index))
+    }
+}
+
+fn framed<P: FrameProcessor + 'static>(processor: P) -> Result<Box<dyn Stage>, StageError> {
+    Ok(Box::new(FramedStage::new(processor, MAX_BLOCK_LEN)?))
 }
 
 /// All models known to this build.
@@ -66,6 +108,12 @@ pub static ALL_MODELS: &[ModelSpec] = &[
             sha256: Some("0b399f8a58dc4d70d8cd97541f5c39869406145193b957d00a03b66070944928"),
         }],
         depends_on: &[],
+        traits: ModelTraits::rated(
+            [4, 4, 2, 2],
+            "strong cleanup",
+            "48 kHz native, ~60 ms delay, ~2.6M parameters.",
+        ),
+        build: |spec, dir| framed(DpdfnetStage::new(spec.id, &spec.file_path(dir, 0))?),
     },
     ModelSpec {
         id: "dpdfnet8",
@@ -79,6 +127,13 @@ pub static ALL_MODELS: &[ModelSpec] = &[
             sha256: Some("7b3afbb260a08fe9af3d16e3bda992971be1e7e951d1dee7c2d235f5c43f5631"),
         }],
         depends_on: &[],
+        traits: ModelTraits::rated(
+            [5, 4, 2, 2],
+            "strongest cleanup",
+            "48 kHz native, ~60 ms delay, ~3.7M parameters. \
+             Suppresses keyboard/trackpad clicks.",
+        ),
+        build: |spec, dir| framed(DpdfnetStage::new(spec.id, &spec.file_path(dir, 0))?),
     },
     ModelSpec {
         id: "dfn3",
@@ -88,6 +143,13 @@ pub static ALL_MODELS: &[ModelSpec] = &[
         license: "MIT OR Apache-2.0",
         files: &[],
         depends_on: &[],
+        traits: ModelTraits::rated(
+            [5, 4, 3, 3],
+            "strong cleanup, moderate delay",
+            "48 kHz native, ~40 ms delay, ~2.1M parameters. \
+             Suppresses keyboard/trackpad clicks.",
+        ),
+        build: |spec, _| framed(DfTractStage::deepfilternet3(spec.id)?),
     },
     ModelSpec {
         id: "dfn3-ll",
@@ -101,6 +163,18 @@ pub static ALL_MODELS: &[ModelSpec] = &[
             sha256: Some("5998e58e8ba0e09bb76986ef97b84afa065a571ef282d4a1222f341e3251cf3a"),
         }],
         depends_on: &[],
+        traits: ModelTraits::rated(
+            [4, 4, 5, 2],
+            "strong cleanup, low delay",
+            "48 kHz native, ~20 ms delay, ~9.7M parameters. \
+             DeepFilterNet3 variant without lookahead.",
+        ),
+        build: |spec, dir| {
+            framed(DfTractStage::deepfilternet3_ll(
+                spec.id,
+                &spec.file_path(dir, 0),
+            )?)
+        },
     },
     ModelSpec {
         id: "ul-unas",
@@ -114,6 +188,13 @@ pub static ALL_MODELS: &[ModelSpec] = &[
             sha256: Some("f2e804d54d6a88f4f82f44d86c9f1cf646db2509bfca935cfbfc5fcd8cbfac3b"),
         }],
         depends_on: &[],
+        traits: ModelTraits::rated(
+            [3, 2, 4, 5],
+            "light, phone-quality voice",
+            "16 kHz model (telephony-band voice), ~35 ms delay, \
+             ~0.2M parameters.",
+        ),
+        build: |spec, dir| framed(UlunasStage::new(spec.id, &spec.file_path(dir, 0))?),
     },
     ModelSpec {
         id: "hush",
@@ -127,6 +208,14 @@ pub static ALL_MODELS: &[ModelSpec] = &[
             sha256: Some("45632ccaa82b71bb743d6caa7c78e983fe2f2790a3af7f6ec48e6ed7ba085df6"),
         }],
         depends_on: &[],
+        traits: ModelTraits::rated(
+            [4, 2, 5, 3],
+            "mutes background voices",
+            "16 kHz model (telephony-band voice), ~23 ms delay, \
+             ~2.2M parameters. Also suppresses other people talking \
+             nearby and keyboard/trackpad clicks.",
+        ),
+        build: |spec, dir| framed(DfTractStage::hush(spec.id, &spec.file_path(dir, 0))?),
     },
     ModelSpec {
         id: "hush-48k",
@@ -136,6 +225,18 @@ pub static ALL_MODELS: &[ModelSpec] = &[
         license: "Apache-2.0",
         files: &[],
         depends_on: &["hush"],
+        traits: ModelTraits::rated(
+            [4, 4, 5, 3],
+            "mutes background voices, full-band voice",
+            "48 kHz output: Hush's suppression with your voice's upper \
+             band kept (gated by Hush itself), ~23 ms delay, ~2.2M \
+             parameters. Also suppresses other people talking nearby \
+             and keyboard/trackpad clicks.",
+        ),
+        build: |spec, dir| {
+            let tarball = spec.dependency_file_path(dir, "hush", 0)?;
+            framed(HushWidebandStage::new(spec.id, &tarball)?)
+        },
     },
 ];
 

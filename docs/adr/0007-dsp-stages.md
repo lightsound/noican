@@ -126,7 +126,7 @@ step. Bounded sample-to-sample deltas prove the fade masks it.
 
 ## composite-stage-dependencies
 
-Source: `crates/noican-models/src/factory.rs`, `dependency_file_path`.
+Source: `crates/noican-models/src/manifest.rs`, `ModelSpec::dependency_file_path`.
 
 Path of file `index` of the registry entry `spec` depends on
 ([`ModelSpec::depends_on`], one level), for composite stages that

@@ -29,6 +29,6 @@
  "crates/noican-models/src/stages/hush_wideband.rs": 9,
  "crates/noican-models/src/stages/mod.rs": 1,
  "crates/noican-models/src/stages/ulunas.rs": 8,
- "crates/noican-models/src/traits.rs": 9,
+ "crates/noican-models/src/traits.rs": 8,
  "crates/noican-models/tests/model_integration.rs": 1
 }

@@ -172,6 +172,36 @@ Source: `crates/noican-models/src/manifest.rs`, `ALL_MODELS`.
 Runs the `hush` weights inside a 48 kHz band-split wrapper (see
 `stages::hush_wideband`); no files of its own.
 
+## model-descriptor-single-table
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+Everything the build knows about a model is one `ModelSpec` entry of
+`ALL_MODELS`: identity, files and digests, the picker profile
+(`traits`), and the function that builds its stage (`build`). Before
+this the same models were listed three times and joined by id string
+at run time: the registry in `manifest.rs`, a `PROFILES` table in
+`traits.rs`, and a `match` on the id in `factory::create_stage`.
+An entry missing from one of the three compiled, and was caught only
+by a unit test (a missing profile) or by a "registry inconsistency"
+error at load time (a missing stage). As fields, both are required by
+the compiler, so the unrated-profile fallback and the
+no-implementation branch no longer exist. Adding a model is one
+entry.
+
+The two fields are `pub(crate)`: other crates read a profile through
+`CatalogEntry::traits` and build a stage through `create_stage`,
+which verifies the weights first, so the builder cannot be reached
+around the digest check. The table stays in one file rather than
+next to each stage because the download URLs and digests are
+reviewed together (see `model-weight-pinning`), and because several
+entries share one stage implementation.
+
+The bypass is not an entry: it has no rate, licence, family, or
+files, and the CLI lists and fetches `ALL_MODELS` as "the
+downloadable models". `catalog` prepends it with
+`ModelTraits::PASSTHROUGH`.
+
 ## model-digest-verification
 
 Source: `crates/noican-models/src/fetch.rs`, `FetchError::Missing`.
@@ -333,13 +363,8 @@ How natural the voice stays (native rate: 48 kHz high, 16 kHz low).
 
 Source: `crates/noican-models/src/traits.rs`, `ModelTraits::rated`.
 
-Compact profile constructor for the [`PROFILES`] table; ratings in
-removal / quality / responsiveness / efficiency order.
-
-Source: `crates/noican-models/src/traits.rs`, `ModelTraits::for_id`.
-
-The profile for a catalog id. Unknown ids (which the catalog never
-produces) fall back to an unrated profile rather than panicking.
+Compact profile constructor for the entries of `ALL_MODELS`; ratings
+in removal / quality / responsiveness / efficiency order.
 
 ## model-picker-revert-path
 
@@ -504,13 +529,16 @@ Treated as a skip: weights are intentionally not part of the repo.
 
 ## registry-dispatch-completeness
 
-Source: `crates/noican-models/src/factory.rs`, `tests::every_registry_entry_has_a_stage_implementation`.
+Source: `crates/noican-models/src/factory.rs`, `tests::every_model_with_weights_refuses_to_build_without_them`.
 
 Every registry entry reaches the picker and the CLI defaults
-unfiltered, so each must dispatch to a stage: without weights the
-only acceptable failure is the missing file, never the
-no-implementation fallthrough. Embedded models (no files, no
-dependencies) are skipped because they would build for real.
+unfiltered, so each must dispatch to a stage. Since 2026-11-28 the
+compiler guarantees that (`ModelSpec::build` is a required field;
+see `model-descriptor-single-table`), so the test pins what is left:
+without weights the only acceptable outcome is the missing-file
+error from the digest check, never a stage. Embedded models (no
+files, no dependencies) are skipped because they would build for
+real.
 
 ## registry-driven-model-catalog
 
