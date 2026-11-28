@@ -7,6 +7,32 @@ The original wording is preserved under each topic; the file and
 symbol each comment was attached to are noted above its text and
 checked by `scripts/adr-links.py`.
 
+## audio-workgroup-ownership
+
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `AudioWorkgroup`.
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+`AudioUnitGetProperty(kAudioOutputUnitProperty_OSWorkgroup)` hands
+the caller a reference it owns. The SDK header says so
+(`AudioUnitProperties.h`, macOS SDK 27.2: "AudioUnitGetProperty
+returns a +1 reference, which the client is responsible for
+releasing when it is finished with it"), and a measurement on
+2026-11-28 agreed: every read raised the object's retain count by
+one, and 100,000 reads each paired with `os_release` left the count
+where it started without a crash. Apple's web documentation and
+sample code do not state the rule, and until this date the
+reference was never released, so every engine start leaked one.
+
+The reference is held by `AudioWorkgroup`, which releases it when
+dropped. The value moves into the worker thread, which drops it
+after leaving the workgroup, so the object outlives the membership
+whatever happens to the AUHAL instance or its device meanwhile. An
+owner type rather than a release in `WorkgroupGuard`: the paths
+where the worker is never spawned, or setup fails between the read
+and the spawn, release the reference as well, with no call to
+remember.
+
 ## buffer-presizing-contract
 
 Source: `crates/noican-models/src/factory.rs`, `MAX_BLOCK_LEN`.
