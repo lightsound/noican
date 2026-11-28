@@ -12,7 +12,7 @@ use std::{
     sync::Mutex,
 };
 
-use noican_engine::{Engine, EngineError, Health, MonitorState, default_models_dir};
+use noican_engine::{Engine, EngineError, Health, ModelState, MonitorState, default_models_dir};
 use noican_models::CatalogEntry;
 
 const SUCCESS: i32 = 0;
@@ -93,6 +93,29 @@ pub struct NoicanModelRatings {
     voice_quality: u8,
     responsiveness: u8,
     efficiency: u8,
+}
+
+/// See docs/adr/0009-model-catalog-fetch.md#model-preparation-status.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoicanModelState {
+    /// Weights are not on disk.
+    Missing = 0,
+    /// A download is in progress.
+    Fetching = 1,
+    /// Weights are on disk, or the model needs none.
+    Ready = 2,
+    /// The last preparation found a digest mismatch it could not repair.
+    Corrupt = 3,
+}
+
+/// See docs/adr/0009-model-catalog-fetch.md#model-preparation-status.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NoicanModelStatus {
+    state: NoicanModelState,
+    received_bytes: u64,
+    total_bytes: u64,
 }
 
 /// See docs/adr/0011-ffi-boundary.md#ffi-handle-lifecycle.
@@ -270,6 +293,39 @@ pub unsafe extern "C" fn noican_engine_levels(handle: *const c_void) -> NoicanLe
             MonitorState::Playing => NoicanMonitorState::Playing,
             MonitorState::Tripped => NoicanMonitorState::Tripped,
         },
+    }
+}
+
+/// See docs/adr/0009-model-catalog-fetch.md#model-preparation-status.
+///
+/// # Safety
+///
+/// `handle` must be null or a live engine handle, and `model_id` null or
+/// a valid NUL-terminated string for the duration of this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn noican_engine_model_status(
+    handle: *const c_void,
+    model_id: *const c_char,
+) -> NoicanModelStatus {
+    let status = unsafe { engine_handle(handle) }
+        .zip(unsafe { model_id_str(model_id) }.ok())
+        .map(|(handle, model)| handle.engine.model_status(model));
+    let Some(status) = status else {
+        return NoicanModelStatus {
+            state: NoicanModelState::Missing,
+            received_bytes: 0,
+            total_bytes: 0,
+        };
+    };
+    NoicanModelStatus {
+        state: match status.state {
+            ModelState::Missing => NoicanModelState::Missing,
+            ModelState::Fetching => NoicanModelState::Fetching,
+            ModelState::Ready => NoicanModelState::Ready,
+            ModelState::Corrupt => NoicanModelState::Corrupt,
+        },
+        received_bytes: status.received_bytes,
+        total_bytes: status.total_bytes,
     }
 }
 
@@ -683,6 +739,28 @@ mod tests {
         assert_silent(unsafe { noican_engine_levels(handle) });
         unsafe { noican_engine_stop(handle) };
         assert_eq!(unsafe { noican_engine_health(handle) }, STOPPED);
+        unsafe { noican_engine_destroy(handle) };
+    }
+
+    #[test]
+    fn model_status_is_null_safe_and_reads_the_catalog() {
+        let state = |handle, model: Option<&CStr>| {
+            unsafe { noican_engine_model_status(handle, model.map_or(ptr::null(), CStr::as_ptr)) }
+                .state
+        };
+        assert_eq!(
+            state(ptr::null(), Some(c"bypass")),
+            NoicanModelState::Missing
+        );
+        let handle = unsafe { noican_engine_create(ptr::null()) };
+        assert!(!handle.is_null());
+        assert_eq!(state(handle, None), NoicanModelState::Missing);
+        assert_eq!(
+            state(handle, Some(c"no-such-model")),
+            NoicanModelState::Missing
+        );
+        let passthrough = std::ffi::CString::new(PASSTHROUGH_ID).expect("no interior NUL");
+        assert_eq!(state(handle, Some(&passthrough)), NoicanModelState::Ready);
         unsafe { noican_engine_destroy(handle) };
     }
 

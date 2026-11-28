@@ -15,6 +15,7 @@ final class AppState: ObservableObject {
     @Published private(set) var model: AppModel
     @Published private(set) var inputLevel: Float = 0
     @Published private(set) var outputLevel: Float = 0
+    @Published private(set) var downloadText: String?
 
     let models = RustEngine.models()
 
@@ -363,11 +364,27 @@ extension AppState {
         var ticks = 0
         while !Task.isCancelled {
             refreshLevels()
+            refreshDownload()
             ticks += 1
             if ticks.isMultiple(of: 20) {
                 refreshPreviewAvailability()
             }
             try? await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    private func refreshDownload() {
+        var text: String?
+        if model.isBusy, let engine {
+            let status = engine.modelStatus(model.selectedModelID)
+            if status.state == NOICAN_MODEL_STATE_FETCHING {
+                text = status.total_bytes > 0
+                    ? "Downloading model… \(min(100, status.received_bytes * 100 / status.total_bytes))%"
+                    : "Downloading model…"
+            }
+        }
+        if downloadText != text {
+            downloadText = text
         }
     }
 

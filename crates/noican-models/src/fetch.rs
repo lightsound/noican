@@ -57,6 +57,32 @@ pub enum FetchError {
     },
 }
 
+/// See docs/adr/0009-model-catalog-fetch.md#fetch-progress-events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FetchEvent<'a> {
+    /// Id of the model that owns the file.
+    pub model: &'a str,
+    /// Name of the file inside the model's directory.
+    pub file: &'a str,
+    /// What happened to the file.
+    pub step: FetchStep,
+}
+
+/// See docs/adr/0009-model-catalog-fetch.md#fetch-progress-events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FetchStep {
+    /// The file is on disk and matches its pinned digest.
+    Present,
+    /// The file is on disk but fails its digest; a download follows.
+    Repairing,
+    /// A download is about to be requested.
+    Started,
+    /// A download advanced: bytes so far, and the announced size if any.
+    Received(u64, Option<u64>),
+    /// A download of this many bytes finished and matched its digest.
+    Finished(u64),
+}
+
 /// Returns the directory holding `model`'s files under `models_dir`.
 #[must_use]
 pub fn model_dir(models_dir: &Path, model: &ModelSpec) -> PathBuf {
@@ -116,7 +142,7 @@ fn verify_model_dyn(models_dir: &Path, model: &ModelSpec) -> Result<(), FetchErr
 pub fn fetch_model(
     models_dir: &Path,
     model: &ModelSpec,
-    mut progress: impl FnMut(&str),
+    mut progress: impl FnMut(FetchEvent<'_>),
 ) -> Result<(), FetchError> {
     fetch_model_dyn(models_dir, model, &mut progress)
 }
@@ -124,7 +150,7 @@ pub fn fetch_model(
 fn fetch_model_dyn(
     models_dir: &Path,
     model: &ModelSpec,
-    progress: &mut dyn FnMut(&str),
+    progress: &mut dyn FnMut(FetchEvent<'_>),
 ) -> Result<(), FetchError> {
     for dep in model.dependencies() {
         fetch_model_dyn(models_dir, dep, progress)?;
@@ -138,6 +164,13 @@ fn fetch_model_dyn(
         source,
     })?;
     for file in model.files {
+        let mut report = |step| {
+            progress(FetchEvent {
+                model: model.id,
+                file: file.name,
+                step,
+            });
+        };
         let dest = dir.join(file.name);
         if dest.is_file() {
             let verified = match file.sha256 {
@@ -145,17 +178,14 @@ fn fetch_model_dyn(
                 None => true,
             };
             if verified {
-                progress(&format!("{}/{}: already present", model.id, file.name));
+                report(FetchStep::Present);
                 continue;
             }
-            progress(&format!(
-                "{}/{}: checksum mismatch, re-downloading",
-                model.id, file.name
-            ));
+            report(FetchStep::Repairing);
         }
-        progress(&format!("{}/{}: downloading…", model.id, file.name));
+        report(FetchStep::Started);
         let tmp = dest.with_extension("part");
-        let (got, len) = match download_to(file.url, &tmp) {
+        let (got, len) = match download_to(file.url, &tmp, &mut report) {
             Ok(result) => result,
             Err(error) => {
                 std::fs::remove_file(&tmp).ok();
@@ -176,7 +206,7 @@ fn fetch_model_dyn(
             path: dest.clone(),
             source,
         })?;
-        progress(&format!("{}/{}: done ({len} bytes)", model.id, file.name));
+        report(FetchStep::Finished(len));
     }
     Ok(())
 }
@@ -202,7 +232,11 @@ fn download_agent() -> &'static ureq::Agent {
 
 const MAX_DOWNLOAD_BYTES: u64 = 1 << 30;
 
-fn download_to(url: &str, tmp: &Path) -> Result<(String, u64), FetchError> {
+fn download_to(
+    url: &str,
+    tmp: &Path,
+    report: &mut dyn FnMut(FetchStep),
+) -> Result<(String, u64), FetchError> {
     let wrap = |source: ureq::Error| FetchError::Http {
         url: url.to_owned(),
         source: Box::new(source),
@@ -214,8 +248,11 @@ fn download_to(url: &str, tmp: &Path) -> Result<(String, u64), FetchError> {
         request = request.header("Authorization", &format!("Bearer {token}"));
     }
     let mut response = request.call().map_err(wrap)?;
+    let total = response.body().content_length();
     let mut reader = response.body_mut().as_reader();
-    copy_body(url, &mut reader, tmp, MAX_DOWNLOAD_BYTES)
+    copy_body(url, &mut reader, tmp, MAX_DOWNLOAD_BYTES, &mut |bytes| {
+        report(FetchStep::Received(bytes, total));
+    })
 }
 
 fn copy_body(
@@ -223,6 +260,7 @@ fn copy_body(
     reader: &mut impl Read,
     tmp: &Path,
     limit: u64,
+    received: &mut dyn FnMut(u64),
 ) -> Result<(String, u64), FetchError> {
     let wrap = |source: ureq::Error| FetchError::Http {
         url: url.to_owned(),
@@ -256,6 +294,7 @@ fn copy_body(
                 path: tmp.to_owned(),
                 source,
             })?;
+        received(len);
     }
     writer.flush().map_err(|source| FetchError::Io {
         path: tmp.to_owned(),
@@ -354,27 +393,22 @@ mod tests {
         let dest = dir.join("weights.bin");
 
         std::fs::write(&dest, b"correct weights").expect("write");
-        let mut lines = Vec::new();
-        fetch_model(&models_dir, &VERIFY_SPEC, |line| {
-            lines.push(line.to_owned());
+        let mut steps = Vec::new();
+        fetch_model(&models_dir, &VERIFY_SPEC, |event| {
+            assert_eq!((event.model, event.file), ("verify-test", "weights.bin"));
+            steps.push(event.step);
         })
         .expect("a matching digest needs no download");
-        assert_eq!(lines, ["verify-test/weights.bin: already present"]);
+        assert_eq!(steps, [FetchStep::Present]);
 
         std::fs::write(&dest, b"wrong bytes").expect("write");
-        lines.clear();
-        let error = fetch_model(&models_dir, &VERIFY_SPEC, |line| {
-            lines.push(line.to_owned());
+        steps.clear();
+        let error = fetch_model(&models_dir, &VERIFY_SPEC, |event| {
+            steps.push(event.step);
         })
         .expect_err("the unroutable URL must fail after detection");
         assert!(matches!(error, FetchError::Http { .. }));
-        assert_eq!(
-            lines,
-            [
-                "verify-test/weights.bin: checksum mismatch, re-downloading",
-                "verify-test/weights.bin: downloading…",
-            ]
-        );
+        assert_eq!(steps, [FetchStep::Repairing, FetchStep::Started]);
         assert_eq!(std::fs::read(&dest).expect("read"), b"wrong bytes");
         assert!(!dest.with_extension("part").exists());
         std::fs::remove_dir_all(&models_dir).expect("cleanup");
@@ -440,8 +474,14 @@ mod tests {
         ));
         let body = vec![7_u8; 2048];
         let mut reader = std::io::Cursor::new(body.clone());
-        let error = copy_body("http://test.invalid/big", &mut reader, &tmp, 1024)
-            .expect_err("over the cap");
+        let error = copy_body(
+            "http://test.invalid/big",
+            &mut reader,
+            &tmp,
+            1024,
+            &mut |_| {},
+        )
+        .expect_err("over the cap");
         assert!(
             matches!(
                 error,
@@ -451,9 +491,19 @@ mod tests {
         );
 
         let mut reader = std::io::Cursor::new(body);
-        let (digest, len) = copy_body("http://test.invalid/ok", &mut reader, &tmp, 2048)
-            .expect("at the cap passes");
+        let mut reported = Vec::new();
+        let (digest, len) = copy_body(
+            "http://test.invalid/ok",
+            &mut reader,
+            &tmp,
+            2048,
+            &mut |bytes| {
+                reported.push(bytes);
+            },
+        )
+        .expect("at the cap passes");
         assert_eq!(len, 2048);
+        assert_eq!(reported, [2048]);
         let mut hasher = Sha256::new();
         hasher.update(vec![7_u8; 2048]);
         assert_eq!(digest, hex_digest(hasher));

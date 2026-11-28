@@ -85,6 +85,12 @@ final class RustEngine: @unchecked Sendable {
         noican_engine_levels(handle)
     }
 
+    func modelStatus(_ model: String) -> NoicanModelStatus {
+        model.withCString { id in
+            noican_engine_model_status(handle, id)
+        }
+    }
+
     static var monitorTargetError: String? {
         copyString { buffer, capacity in
             noican_monitor_target_error(buffer, capacity)

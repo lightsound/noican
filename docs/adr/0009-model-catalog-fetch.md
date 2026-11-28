@@ -67,6 +67,34 @@ A spec whose file needs no network: the pinned digest is the
 SHA-256 of `b"correct weights"`, and the URL is unroutable, so
 any real download attempt fails instantly and offline.
 
+## fetch-progress-events
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+Source: `crates/noican-models/src/fetch.rs`, `FetchEvent`.
+Source: `crates/noican-models/src/fetch.rs`, `FetchStep`.
+
+`fetch_model` reports what it does as typed events instead of
+finished English lines. An event names the model and the file and
+carries one step: the file was already present and verified, it is
+present but fails its digest and will be downloaded again, a
+download is about to be requested, a download advanced (bytes so
+far and the size the server announced, if any), or a download
+finished and matched its digest.
+
+The lines were enough for `noican fetch`, which only prints them,
+but a caller that wants to show progress could not read a byte
+count out of a sentence. The CLI now formats the same lines from
+the events and ignores the byte steps; the engine turns the byte
+steps into the progress of
+docs/adr/0009-model-catalog-fetch.md#model-preparation-status.
+
+The size is not pinned in the registry next to the digest. It would
+be one more value per file to keep true by hand, and it is only
+used for a progress display; the server's `Content-Length` is good
+enough for that, and a missing one shows as progress without a
+percentage.
+
 ## fetch-verification-tests
 
 Source: `crates/noican-models/src/fetch.rs`, `tests::fetch_verifies_present_files_against_the_pinned_digest`.
@@ -376,6 +404,56 @@ re-enter the apply path (they would wipe the failure
 message they accompany). Hover any row for the model's
 profile card.
 
+## model-preparation-status
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+Source: `crates/noican-engine/src/lib.rs`, `Engine::prepare_model`.
+Source: `crates/noican-engine/src/lib.rs`, `Engine::model_status`.
+Source: `crates/noican-engine/src/lib.rs`, `ModelState`.
+Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_model_status`.
+Source: `macos/Sources/NoicanMenuBar/AppState.swift`, `AppState.refreshDownload`.
+
+Getting a model's weights onto disk is its own step,
+`Engine::prepare_model`, and its state can be read at any time with
+`Engine::model_status`. Before this the download happened inside
+the start and model-switch calls with nothing observable from
+outside: on a first run the app showed a spinner for as long as the
+download took and could not say why.
+
+A model is in one of four states. `Missing`: its files are not on
+disk. `Fetching`: a download for it is running, with the bytes
+received and the announced size of the current file. `Ready`: its
+files are on disk, or it needs none (bypass, the bundled model).
+`Corrupt`: the last preparation ended in a digest mismatch that a
+fresh download did not repair; it stays until a preparation
+succeeds.
+
+`Ready` means present, not verified. Verifying hashes every file,
+which is too slow for a status read; the digests are checked when
+the model is prepared and again when its stage is built
+(docs/adr/0009-model-catalog-fetch.md#model-digest-verification).
+
+Starting and switching still prepare the model themselves, by
+calling the same step first, so the app's control flow is unchanged
+and no caller can start a session on unprepared weights. The split
+is in the engine's API, not in the app's state machine: the app
+does not gain a "preparing" phase, it reads the status while it is
+busy and shows "Downloading model… NN%" in place of the status
+text. Moving the wait itself into the reducer is left for when the
+app wants to download a model before the user turns the engine on.
+
+`noican_engine_model_status` is the only addition to the C ABI.
+`prepare_model` is not exported because the app has no call site
+for it yet. A null handle, a null id, and an unknown id all read as
+`Missing` with zero bytes.
+
+The progress slot is per engine, not per model: one download is
+expected at a time, because the app serialises control calls behind
+its busy flag. Two overlapping preparations would both write the
+same byte counters; the states would still be right, the percentage
+would not.
+
 ## model-selection-behaviour
 
 Source: `macos/NoicanState/Sources/NoicanState/AppReducer.swift`, `AppReducer.modelSelected`.
@@ -586,7 +664,7 @@ not re-instantiate the generic closure parameter).
 
 ## weight-digest-verification
 
-Source: `crates/noican-engine/src/lib.rs`, `prepare_stage`.
+Source: `crates/noican-engine/src/lib.rs`, `Engine::prepare_model`.
 
 Registry stages may need weights; the bypass (not in the registry's
 ModelSpec list) needs nothing. fetch_model runs unconditionally,

@@ -1,11 +1,12 @@
 //! See docs/adr/0011-ffi-boundary.md#engine-crate.
 
 use std::{
+    collections::BTreeSet,
     panic::{AssertUnwindSafe, catch_unwind},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
-        Arc, Mutex, MutexGuard,
-        atomic::{AtomicI32, Ordering},
+        Arc, Mutex, MutexGuard, PoisonError,
+        atomic::{AtomicI32, AtomicU64, Ordering},
     },
 };
 
@@ -14,7 +15,10 @@ use noican_core::{IntensityControl, Stage, StageError, StagePublisher, Switching
 use noican_coreaudio::{
     CoreAudioError, Runtime, StreamLevels, VirtualOutputChannels, WORKER_BLOCK_SAMPLES,
 };
-use noican_models::{ModelSpec, fetch::FetchError};
+use noican_models::{
+    ModelSpec,
+    fetch::{FetchError, FetchEvent, FetchStep},
+};
 use thiserror::Error;
 
 pub use noican_coreaudio::monitor::MonitorState;
@@ -99,6 +103,108 @@ pub struct Levels {
     pub monitor: MonitorState,
 }
 
+/// See docs/adr/0009-model-catalog-fetch.md#model-preparation-status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelState {
+    /// Weights are not on disk; preparing the model downloads them.
+    Missing,
+    /// A download is in progress.
+    Fetching,
+    /// Weights are on disk, or the model needs none.
+    Ready,
+    /// The last preparation found a digest mismatch it could not repair.
+    Corrupt,
+}
+
+/// See docs/adr/0009-model-catalog-fetch.md#model-preparation-status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelStatus {
+    /// Where the model's weights stand.
+    pub state: ModelState,
+    /// Bytes of the current file received so far, while fetching.
+    pub received_bytes: u64,
+    /// Announced size of the current file while fetching; 0 when unknown.
+    pub total_bytes: u64,
+}
+
+#[derive(Default)]
+struct Preparation {
+    log: Mutex<PreparationLog>,
+    received: AtomicU64,
+    total: AtomicU64,
+}
+
+#[derive(Default)]
+struct PreparationLog {
+    fetching: Option<String>,
+    corrupt: BTreeSet<String>,
+}
+
+impl Preparation {
+    fn log(&self) -> MutexGuard<'_, PreparationLog> {
+        self.log.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn observe(&self, model: &str, event: FetchEvent<'_>) {
+        match event.step {
+            FetchStep::Started => {
+                self.received.store(0, Ordering::Relaxed);
+                self.total.store(0, Ordering::Relaxed);
+                self.log().fetching = Some(model.to_owned());
+            }
+            FetchStep::Received(bytes, total) => {
+                self.received.store(bytes, Ordering::Relaxed);
+                self.total.store(total.unwrap_or(0), Ordering::Relaxed);
+            }
+            FetchStep::Present | FetchStep::Repairing | FetchStep::Finished(_) => {}
+        }
+    }
+
+    fn conclude(&self, model: &str, outcome: &Result<(), FetchError>) {
+        let mut log = self.log();
+        if log.fetching.as_deref() == Some(model) {
+            log.fetching = None;
+        }
+        match outcome {
+            Ok(()) => {
+                log.corrupt.remove(model);
+            }
+            Err(FetchError::Checksum { .. }) => {
+                log.corrupt.insert(model.to_owned());
+            }
+            Err(_) => {}
+        }
+    }
+
+    fn status(&self, model: &str, fetched: bool) -> ModelStatus {
+        let log = self.log();
+        let state = if log.fetching.as_deref() == Some(model) {
+            ModelState::Fetching
+        } else if log.corrupt.contains(model) {
+            ModelState::Corrupt
+        } else if fetched {
+            ModelState::Ready
+        } else {
+            ModelState::Missing
+        };
+        drop(log);
+        let fetching = state == ModelState::Fetching;
+        ModelStatus {
+            state,
+            received_bytes: if fetching {
+                self.received.load(Ordering::Relaxed)
+            } else {
+                0
+            },
+            total_bytes: if fetching {
+                self.total.load(Ordering::Relaxed)
+            } else {
+                0
+            },
+        }
+    }
+}
+
 struct ControlState {
     runtime: Option<Runtime>,
     publisher: Option<StagePublisher>,
@@ -112,6 +218,7 @@ pub struct Engine {
     levels: Arc<StreamLevels>,
     monitor_state: Arc<AtomicI32>,
     intensity: IntensityControl,
+    preparation: Preparation,
 }
 
 impl std::fmt::Debug for Engine {
@@ -149,7 +256,34 @@ impl Engine {
             levels: Arc::new(StreamLevels::new()),
             monitor_state: Arc::new(AtomicI32::new(MonitorState::Off.as_raw())),
             intensity: IntensityControl::default(),
+            preparation: Preparation::default(),
         }
+    }
+
+    /// See docs/adr/0009-model-catalog-fetch.md#model-preparation-status.
+    #[must_use]
+    pub fn model_status(&self, model: &str) -> ModelStatus {
+        let fetched = require_known_model(model).is_ok()
+            && ModelSpec::find(model)
+                .is_none_or(|spec| noican_models::fetch::is_fetched(&self.models_dir, spec));
+        self.preparation.status(model, fetched)
+    }
+
+    /// See docs/adr/0009-model-catalog-fetch.md#model-preparation-status.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] for an unknown id or a failed download.
+    pub fn prepare_model(&self, model: &str) -> Result<(), EngineError> {
+        require_known_model(model)?;
+        let Some(spec) = ModelSpec::find(model) else {
+            return Ok(());
+        };
+        let outcome = noican_models::fetch::fetch_model(&self.models_dir, spec, |event| {
+            self.preparation.observe(model, event);
+        });
+        self.preparation.conclude(model, &outcome);
+        outcome.map_err(|error| EngineError::Fetch(model.to_owned(), error))
     }
 
     /// See docs/adr/0004-aggregate-output-routing.md#aggregate-channel-routing.
@@ -208,6 +342,12 @@ impl Engine {
         })
     }
 
+    fn prepare_stage(&self, model: &str) -> Result<Box<dyn Stage>, EngineError> {
+        self.prepare_model(model)?;
+        noican_models::create_stage(model, &self.models_dir)
+            .map_err(|error| EngineError::Load(model.to_owned(), error))
+    }
+
     fn start_with(
         &self,
         model: &str,
@@ -231,7 +371,7 @@ impl Engine {
         let monitor_state = Arc::clone(&self.monitor_state);
         let intensity = self.intensity.clone();
         let (publisher, mut runtime) = guard_panics(model, || {
-            let stage = prepare_stage(&self.models_dir, model)?;
+            let stage = self.prepare_stage(model)?;
             let (publisher, engine) =
                 SwitchingEngine::new(stage, SWITCH_FADE_SAMPLES, WORKER_BLOCK_SAMPLES, intensity)?;
             let runtime = start_runtime(engine, levels, monitor_state)?;
@@ -281,7 +421,7 @@ impl Engine {
             let publisher = control.publisher.clone().ok_or(EngineError::NotRunning)?;
             (publisher, control.epoch)
         };
-        let stage = guard_panics(model, || prepare_stage(&self.models_dir, model))?;
+        let stage = guard_panics(model, || self.prepare_stage(model))?;
         let control = self.control()?;
         if control.epoch != epoch {
             return Err(EngineError::StoppedWhileLoading);
@@ -434,15 +574,6 @@ fn guard_panics<T>(
     })
 }
 
-fn prepare_stage(models_dir: &Path, model: &str) -> Result<Box<dyn Stage>, EngineError> {
-    if let Some(spec) = ModelSpec::find(model) {
-        noican_models::fetch::fetch_model(models_dir, spec, |_line| {})
-            .map_err(|error| EngineError::Fetch(model.to_owned(), error))?;
-    }
-    noican_models::create_stage(model, models_dir)
-        .map_err(|error| EngineError::Load(model.to_owned(), error))
-}
-
 #[cfg(test)]
 mod tests {
     use noican_models::PASSTHROUGH_ID;
@@ -461,6 +592,100 @@ mod tests {
         ));
         assert!(require_known_model("dfn3").is_ok());
         assert!(require_known_model(PASSTHROUGH_ID).is_ok());
+    }
+
+    #[test]
+    fn model_status_follows_the_files_on_disk() {
+        let models_dir = std::env::temp_dir().join(format!(
+            "noican-engine-status-test-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let engine = Engine::new(models_dir.clone());
+        let spec = ModelSpec::find("dfn3-ll").expect("dfn3-ll is in the registry");
+        let status = |model| engine.model_status(model).state;
+
+        assert_eq!(status(PASSTHROUGH_ID), ModelState::Ready);
+        assert_eq!(status("dfn3-ll"), ModelState::Missing);
+        assert_eq!(status("dfn3"), ModelState::Ready);
+        assert_eq!(status("nope"), ModelState::Missing);
+        assert!(matches!(
+            engine.prepare_model("nope"),
+            Err(EngineError::UnknownModel(id)) if id == "nope"
+        ));
+        assert!(engine.prepare_model(PASSTHROUGH_ID).is_ok());
+
+        let dir = noican_models::fetch::model_dir(&models_dir, spec);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        for file in spec.files {
+            std::fs::write(dir.join(file.name), b"placeholder").expect("write");
+        }
+        assert_eq!(status("dfn3-ll"), ModelState::Ready);
+        std::fs::remove_dir_all(&models_dir).expect("cleanup");
+    }
+
+    #[test]
+    fn a_download_is_reported_with_its_progress_until_it_concludes() {
+        let preparation = Preparation::default();
+        let event = |step| FetchEvent {
+            model: "dependency",
+            file: "weights.bin",
+            step,
+        };
+
+        preparation.observe("model", event(FetchStep::Present));
+        assert_eq!(preparation.status("model", true).state, ModelState::Ready);
+
+        preparation.observe("model", event(FetchStep::Started));
+        preparation.observe("model", event(FetchStep::Received(40, Some(100))));
+        assert_eq!(
+            preparation.status("model", false),
+            ModelStatus {
+                state: ModelState::Fetching,
+                received_bytes: 40,
+                total_bytes: 100,
+            }
+        );
+        assert_eq!(
+            preparation.status("other", false).state,
+            ModelState::Missing
+        );
+
+        preparation.conclude("model", &Ok(()));
+        assert_eq!(
+            preparation.status("model", true),
+            ModelStatus {
+                state: ModelState::Ready,
+                received_bytes: 0,
+                total_bytes: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn an_unrepaired_digest_mismatch_marks_the_model_corrupt_until_a_fetch_succeeds() {
+        let preparation = Preparation::default();
+        let mismatch = Err(FetchError::Checksum {
+            file: "weights.bin".to_owned(),
+            expected: "aa".to_owned(),
+            got: "bb".to_owned(),
+        });
+        let missing = Err(FetchError::Missing {
+            file: "weights.bin".to_owned(),
+        });
+
+        preparation.conclude("model", &missing);
+        assert_eq!(
+            preparation.status("model", false).state,
+            ModelState::Missing
+        );
+
+        preparation.conclude("model", &mismatch);
+        assert_eq!(preparation.status("model", true).state, ModelState::Corrupt);
+        assert_eq!(preparation.status("other", true).state, ModelState::Ready);
+
+        preparation.conclude("model", &Ok(()));
+        assert_eq!(preparation.status("model", true).state, ModelState::Ready);
     }
 
     #[test]

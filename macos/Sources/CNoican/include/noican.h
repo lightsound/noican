@@ -14,6 +14,13 @@ typedef enum NoicanMonitorState {
   NOICAN_MONITOR_STATE_TRIPPED = 2,
 } NoicanMonitorState;
 
+typedef enum NoicanModelState {
+  NOICAN_MODEL_STATE_MISSING = 0,
+  NOICAN_MODEL_STATE_FETCHING = 1,
+  NOICAN_MODEL_STATE_READY = 2,
+  NOICAN_MODEL_STATE_CORRUPT = 3,
+} NoicanModelState;
+
 typedef struct NoicanHealth {
   bool running;
   bool faulted;
@@ -32,6 +39,12 @@ typedef struct NoicanLevels {
   float output;
   enum NoicanMonitorState monitor;
 } NoicanLevels;
+
+typedef struct NoicanModelStatus {
+  enum NoicanModelState state;
+  uint64_t received_bytes;
+  uint64_t total_bytes;
+} NoicanModelStatus;
 
 typedef struct NoicanModelRatings {
   uint8_t noise_removal;
@@ -67,6 +80,8 @@ int32_t noican_engine_set_model(void *handle, const char *model_id);
 struct NoicanHealth noican_engine_health(const void *handle);
 
 struct NoicanLevels noican_engine_levels(const void *handle);
+
+struct NoicanModelStatus noican_engine_model_status(const void *handle, const char *model_id);
 
 int32_t noican_engine_set_monitor(void *handle, int32_t enabled);
 

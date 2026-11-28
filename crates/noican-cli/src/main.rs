@@ -14,6 +14,7 @@ mod process;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use noican_models::fetch::{FetchEvent, FetchStep};
 use noican_models::{ALL_MODELS, ModelSpec, PASSTHROUGH_ID};
 
 #[derive(Parser)]
@@ -176,8 +177,17 @@ fn fetch(models_dir: &std::path::Path, ids: &[String]) -> anyhow::Result<()> {
     };
     let mut failures = Vec::new();
     for model in targets {
-        if let Err(e) = noican_models::fetch::fetch_model(models_dir, model, |line| {
-            println!("{line}");
+        if let Err(e) = noican_models::fetch::fetch_model(models_dir, model, |event| {
+            let FetchEvent { model, file, step } = event;
+            match step {
+                FetchStep::Present => println!("{model}/{file}: already present"),
+                FetchStep::Repairing => {
+                    println!("{model}/{file}: checksum mismatch, re-downloading");
+                }
+                FetchStep::Started => println!("{model}/{file}: downloading…"),
+                FetchStep::Received(..) => {}
+                FetchStep::Finished(bytes) => println!("{model}/{file}: done ({bytes} bytes)"),
+            }
         }) {
             eprintln!("{}: FAILED — {e}", model.id);
             failures.push(model.id);
