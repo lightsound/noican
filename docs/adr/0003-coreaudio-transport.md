@@ -97,6 +97,29 @@ Channel count of the output element's stream format on `scope`:
 carries), [`AUDIO_UNIT_SCOPE_INPUT`] the client side (the render
 format this transport set, as AUHAL holds it).
 
+## capture-backlog-shedding
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+On the aggregate transport capture and render run in one callback
+at one rate, so whatever the worker falls behind by never drains:
+after a stall it works through the queued input and the same amount
+sits in the output ring for good. Measured with the real feeds, the
+microphone delay went from 14.7 ms to 208 ms after one 200 ms stall
+and was unchanged a minute later. The worker therefore checks the
+capture ring at each block boundary and, once more than
+`MAX_CAPTURE_BACKLOG` samples wait (the largest callback plus two
+worker blocks, about 105 ms), discards all but the newest block.
+The listener already heard silence for the stalled span, so the
+discarded audio is the part that could only have arrived late.
+Shorter stalls are left alone on purpose: shedding them would turn
+a delay nobody notices into an audible gap, so the delay can still
+grow to the limit but no further, and a long stall resets it.
+Discarded samples are added to the input-overrun counter, which
+already means "captured audio that never reached the models". The
+split transport needs none of this; its drift servo pulls the
+output ring back to its target.
+
 ## capture-error-contract
 
 Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 365–376.
@@ -128,6 +151,22 @@ Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 1026–1028.
 Bounds the unit's callback size to [`MAX_CALLBACK_FRAMES`] so the
 preallocated capture landing buffer always suffices (the callback
 never allocates; see [`crate::callback`]).
+
+## capture-non-finite-samples
+
+Decided 2026-11-27; recorded here because code comments are banned.
+
+`CaptureFeed::push` queues 0.0 in place of a NaN or infinite sample.
+One non-finite sample is enough to poison the recurrent state of
+dfn3, dpdfnet2, dpdfnet8, hush and hush-48k for the rest of the
+session: every later output sample is NaN, no stage reports an
+error, and the fault flag stays clear, so the virtual microphone
+carries NaN under a green status. The capture feed is the one
+place every captured sample of either transport passes before any
+stateful DSP (the split transport's resampler included), so the
+check lives there rather than in each stage. It costs one
+comparison per sample on the callback thread and neither allocates
+nor blocks. Files the CLI reads do not pass through it.
 
 ## capture-ring-overrun-accounting
 

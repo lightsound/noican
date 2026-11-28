@@ -412,6 +412,18 @@ struct ModelTests {
         #expect(effects.isEmpty)
     }
 
+    @Test("Picking another model after a failed start retries into the selected mode")
+    func pickAfterFailureRestarts() {
+        let failed = drive(readyModel(), [tap(.on), .startCompleted(error: "weights download failed")])
+        let (state, effects) = step(failed, .modelSelected("dpdfnet2"))
+        let attempt = StartAttempt(modelID: "dpdfnet2", inputUID: builtInMic.uid, monitor: false)
+        #expect(effects == [.stopEngine, .startEngine(attempt)], "a stopped engine is started, never switched")
+        #expect(state.mode == .on)
+        #expect(state.messages.modelError == nil)
+        let recovered = drive(state, [.startCompleted(error: nil)])
+        #expect(recovered.liveRunningSession?.modelID == "dpdfnet2")
+    }
+
     @Test("Teardown clears a model-switch message (it describes the torn-down engine)")
     func teardownClearsModelError() {
         let withModelError = drive(runningModel(), [

@@ -7,6 +7,23 @@ The original wording is preserved under each topic; the source
 location of each comment at the time of the move (commit 397e3df)
 is noted above its text.
 
+## abandoned-replacement-stage
+
+Decided 2026-11-27; recorded here because code comments are banned.
+
+A replacement stage that fails while it is warmed during the
+fade-out is dropped, and the audible stage ramps back from the gain
+the fade had reached (`FadeIn` resumes at the `FadeOut` position, so
+the recovery is as click-free as the switch). The failing block
+still returns the stage's error, so the worker emits one silent
+block and flags the fault as for any inference error, and the stage
+the listener was hearing keeps running until the user acts on the
+fault. Before this the early return left the transition in
+`FadeOut` with the broken stage still pending: every later block
+failed, the output stayed silent, and — because a published stage
+is only taken from the queue in `Stable` — no later publication
+could replace it.
+
 ## click-free-stage-switching
 
 Source: `crates/noican-core/src/switch.rs` lines 1–17.
@@ -437,6 +454,22 @@ Band-limit the test signal the same way the 16 kHz path does,
 so the high band the wideband stage would add is ~zero. At
 0.03× (≈ −38 dBFS) it sits under the leveler's target, so the
 two stages feed the core the same samples.
+
+## hush-level-restoration-test-signal
+
+Decided 2026-11-27; recorded here because code comments are banned.
+
+`hot_input_is_trimmed_for_the_core_and_restored_at_the_output`
+checks the leveler's trim on a steady tone pair and the restored
+output level on a synthetic speech-like signal: a gliding pitch
+with 48 harmonics under three moving formants, modulated at a
+syllabic 3.7 Hz. Hush is a speech enhancer and removes the steady
+tone pair as noise (−20 dBFS in, about −50 dBFS out), so that
+signal's output level says nothing about restoration and the
+original assertion could not pass with the real weights. The
+speech-like signal comes out within 1 dB of its input level
+(−20.0 dBFS in, −20.9 dBFS out on x86-64 Linux) against an
+asserted bound of the makeup gain plus 3 dB.
 
 ## hush-makeup-gain
 

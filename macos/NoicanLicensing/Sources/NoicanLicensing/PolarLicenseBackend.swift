@@ -30,8 +30,8 @@ public struct PolarConfiguration: Hashable, Sendable {
 
     public init(server: Server, organizationID: String, benefitID: String, organizationSlug: String? = nil) {
         self.server = server
-        self.organizationID = organizationID.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.benefitID = benefitID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.organizationID = organizationID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        self.benefitID = benefitID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         self.organizationSlug = organizationSlug
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .flatMap { $0.isEmpty ? nil : $0 }

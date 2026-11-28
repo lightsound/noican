@@ -99,11 +99,10 @@ impl FrameProcessor for UlunasStage {
         {
             *dst = x * w;
         }
-        let mut spec = std::mem::take(&mut self.spec);
-        self.fft.forward_interleaved(&self.frame, &mut spec)?;
+        self.fft.forward_interleaved(&self.frame, &mut self.spec)?;
 
         let bins = self.fft.bins();
-        let mix = Tensor::from_array(([1, bins, 1, 2], spec.clone()))
+        let mix = Tensor::from_array(([1, bins, 1, 2], self.spec.clone()))
             .map_err(|e| inference_error("building mix tensor", &e))?;
         let mut inputs: Vec<(Cow<'static, str>, SessionInputValue<'static>)> =
             vec![(Cow::Borrowed("mix"), mix.into())];
@@ -118,17 +117,16 @@ impl FrameProcessor for UlunasStage {
             .ok_or_else(|| StageError::Inference("enh missing".to_owned()))?
             .try_extract_tensor::<f32>()
             .map_err(|e| inference_error("extracting enh", &e))?;
-        if enhanced.len() != spec.len() {
+        if enhanced.len() != self.spec.len() {
             return Err(StageError::BufferLen {
-                expected: spec.len(),
+                expected: self.spec.len(),
                 got: enhanced.len(),
             });
         }
-        spec.copy_from_slice(enhanced);
+        self.spec.copy_from_slice(enhanced);
         self.states.update_from_outputs(&outputs)?;
 
-        self.fft.inverse_interleaved(&spec, &mut self.frame)?;
-        self.spec = spec;
+        self.fft.inverse_interleaved(&self.spec, &mut self.frame)?;
         for (acc, (y, w)) in self.ola.iter_mut().zip(self.frame.iter().zip(&self.window)) {
             *acc += y * w;
         }

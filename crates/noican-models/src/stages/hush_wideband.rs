@@ -239,6 +239,40 @@ mod tests {
             .collect()
     }
 
+    fn speech_like_signal(frames: usize) -> Vec<f32> {
+        const FORMANTS: [(f32, f32); 3] = [(700.0, 130.0), (1_220.0, 170.0), (2_600.0, 250.0)];
+        let tau = std::f32::consts::TAU;
+        let mut phase = 0.0_f32;
+        (0..frames * FRAME)
+            .map(|n| {
+                #[expect(
+                    clippy::cast_precision_loss,
+                    reason = "sample indices fit f32 for a short test signal"
+                )]
+                let t = n as f32 / 48_000.0;
+                let pitch = 130.0 * 0.12f32.mul_add((tau * 0.7 * t).sin(), 1.0);
+                phase = (phase + tau * pitch / 48_000.0) % tau;
+                let voiced: f32 = (1..=48_u8)
+                    .map(|harmonic| {
+                        let harmonic = f32::from(harmonic);
+                        let envelope: f32 = FORMANTS
+                            .iter()
+                            .map(|(centre, width)| {
+                                let sweep = (tau * 1.3).mul_add(t, *centre).sin();
+                                let centre = centre * 0.25f32.mul_add(sweep, 1.0);
+                                let offset = harmonic.mul_add(pitch, -centre) / width;
+                                1.0 / offset.mul_add(offset, 1.0)
+                            })
+                            .sum();
+                        envelope / harmonic.sqrt() * (harmonic * phase).sin()
+                    })
+                    .sum();
+                let syllable = 0.5 * (1.0 - (tau * 3.7 * t).cos());
+                voiced * syllable.powf(1.5)
+            })
+            .collect()
+    }
+
     fn run_identity(input: &[f32], core_delay_low: usize, gain: f32) -> (Vec<f32>, usize) {
         let mut rec = BandRecombiner::new(core_delay_low * FACTOR);
         let mut core_fifo: VecDeque<f32> = std::iter::repeat_n(0.0, core_delay_low).collect();
@@ -600,23 +634,26 @@ mod tests {
             "trim {trim} dB for input at {in_level} dBFS"
         );
 
+        let unscaled = speech_like_signal(600);
+        let to_hot = db_to_linear(-20.0 - rms_dbfs(&unscaled));
+        let speech: Vec<f32> = unscaled.iter().map(|s| s * to_hot).collect();
         let mut framed = FramedStage::new(
             HushWidebandStage::new("hush-48k", &tarball).expect("stage should load"),
             crate::factory::MAX_BLOCK_LEN,
         )
         .expect("48 kHz divides the engine rate");
         assert_eq!(framed.latency_samples(), 1080);
-        let mut output = vec![0.0_f32; input.len()];
-        for (i, o) in input.chunks(FRAME).zip(output.chunks_mut(FRAME)) {
+        let mut output = vec![0.0_f32; speech.len()];
+        for (i, o) in speech.chunks(FRAME).zip(output.chunks_mut(FRAME)) {
             framed
                 .process_block(i, o)
                 .expect("processing should succeed");
         }
-        let tail = &output[300 * FRAME..];
-        let out_level = rms_dbfs(tail);
+        let speech_level = rms_dbfs(&speech[300 * FRAME..]);
+        let out_level = rms_dbfs(&output[300 * FRAME..]);
         assert!(
-            (out_level - rms_dbfs(&input[300 * FRAME..])).abs() < HUSH_MAKEUP_GAIN_DB + 3.0,
-            "output at {out_level} dBFS for input at {in_level} dBFS"
+            (out_level - speech_level).abs() < HUSH_MAKEUP_GAIN_DB + 3.0,
+            "output at {out_level} dBFS for speech-like input at {speech_level} dBFS"
         );
     }
 

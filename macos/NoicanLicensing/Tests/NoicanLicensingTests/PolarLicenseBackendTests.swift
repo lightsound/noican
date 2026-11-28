@@ -142,6 +142,24 @@ struct PolarRequestTests {
         #expect(configuration.isComplete)
         #expect(PolarConfiguration(server: .production, organizationID: " \(organizationID)\n", benefitID: benefitID).isComplete)
     }
+
+    @Test("IDs pasted in upper case are folded to the lower-case form Polar answers with")
+    func upperCaseIDsAreFolded() async throws {
+        let shouted = PolarConfiguration(
+            server: .production,
+            organizationID: organizationID.uppercased(),
+            benefitID: benefitID.uppercased()
+        )
+        #expect(shouted.isComplete)
+        #expect(shouted.organizationID == organizationID)
+        #expect(shouted.benefitID == benefitID)
+        let transport = FakeTransport(.http(200, activationJSON()))
+        let folded = PolarLicenseBackend(configuration: shouted, transport: transport, userAgent: "Noican")
+        let grant = try await folded.activate(key: "KEY-1", device: thisMac)
+        #expect(grant.activationID == "b6724bc8-7ad9-4ca0-b143-7c896fcbb6fe")
+        let request = try #require(transport.requests.first)
+        #expect(request.jsonBody["organization_id"] as? String == organizationID)
+    }
 }
 
 @Suite("Polar backend: responses")

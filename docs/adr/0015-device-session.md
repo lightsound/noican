@@ -287,6 +287,21 @@ appear immediately (the device list follows hot-plug), and the
 microphone can be switched while running — the engine rebuilds its
 transport around the new device with the same model and mode.
 
+## microphone-permission-preflight
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+Every engine start first asks AVFoundation for the microphone
+authorization: an undetermined status raises the system prompt and
+waits for the answer, and a denied or restricted one fails the start
+with a message that names the System Settings pane. Core Audio does
+not report a denied permission; it delivers zeros, so the engine
+started, the frame heartbeat advanced, and the app showed "Running"
+over a silent virtual microphone. The check sits in the shell's
+start effect rather than in the reducer because the status is read
+from the system at that moment and the prompt is asynchronous; the
+reducer sees the outcome as an ordinary failed start.
+
 ## microphone-rate-support
 
 Source: `macos/NoicanState/Sources/NoicanState/AppReducer.swift` lines 696–703.
@@ -409,6 +424,28 @@ case-insensitive by lowercasing first.
 Source: `crates/noican-coreaudio/src/lib.rs` lines 145–145.
 
 Non-macOS placeholder that keeps workspace checks portable.
+
+## private-aggregate-uid-namespace
+
+Decided 2026-11-27; recorded here because code comments are banned.
+
+The app's private aggregate device takes its UID from
+`com.lightsound.noican-aggregate.`, outside the driver's
+`com.lightsound.noican.` namespace, and
+`AudioDeviceCatalog.virtualOutput(in:)` skips aggregate devices.
+The aggregate used to be named
+`com.lightsound.noican.aggregate.<UUID>`. It is listed among the
+creating process's devices and has output channels, so it matched
+the driver's prefix, and while the engine ran on the aggregate
+transport the selector could return the aggregate itself as the
+virtual output: always next to stock BlackHole (which loses to any
+prefix match), by enumeration order next to the Noican driver. A
+restart then built on the aggregate the stop had just destroyed
+and failed after two seconds with "did not switch to 48 kHz", the
+level check read the wrong device, and a removed driver went
+unnoticed. Either change alone closes this; the UID removes the
+collision at its source, and the selector no longer depends on how
+the app names what it creates.
 
 ## sample-rate-fail-open
 
