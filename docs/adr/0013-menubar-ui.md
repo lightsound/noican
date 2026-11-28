@@ -303,10 +303,23 @@ menu live in `StatusBarController`, which shows the menu in a native
 `NSPopover`: content-size changes resize anchored to the status item
 (downward only), with the system's own menu chrome and dismissal.
 
-Source: `macos/Sources/NoicanMenuBar/NoicanMenuBarApp.swift`, `NoicanMenuBarApp.body`.
+Source: `macos/Sources/NoicanMenuBar/NoicanMenuBarApp.swift`, `NoicanMenuBarApp.main`.
 
-The menu lives in the AppKit panel; SwiftUI still requires a
-Scene, and an empty Settings scene contributes no UI.
+The entry point is a plain `NSApplication` run loop, not a SwiftUI
+`App`. A SwiftUI `App` must declare a Scene, and the placeholder that
+used to satisfy it, an empty `Settings` scene, is a real window: the
+framework's Settings… command (⌘,) opens it whenever the menu is
+open. A blank "Noican Settings" window was also reported at launch;
+window restoration of a previously opened one is the likely path, but
+it was not reproduced. With no Scene there is no window to open, by
+any path.
+
+Source: `macos/Sources/NoicanMenuBar/NoicanMenuBarApp.swift`, `NoicanMenuBarApp.mainMenu`.
+
+Without a SwiftUI `App` nothing installs a main menu, and the menu bar
+of an `LSUIElement` app is never shown, but its key equivalents are
+what make ⌘X/⌘C/⌘V/⌘A/⌘Z work in the license-key field. The menu is
+built by hand with exactly those items and Quit, and no Settings item.
 
 Source: `macos/Sources/NoicanMenuBar/StatusBarController.swift`, `StatusBarController`.
 

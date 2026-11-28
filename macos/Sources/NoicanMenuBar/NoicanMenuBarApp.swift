@@ -1,13 +1,40 @@
 import AppKit
 import NoicanState
-import SwiftUI
 
 @main
-struct NoicanMenuBarApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+@MainActor
+enum NoicanMenuBarApp {
+    private static let delegate = AppDelegate()
 
-    var body: some Scene {
-        Settings {}
+    static func main() {
+        let app = NSApplication.shared
+        app.delegate = delegate
+        app.mainMenu = mainMenu()
+        app.run()
+    }
+
+    private static func mainMenu() -> NSMenu {
+        let appMenu = NSMenu()
+        appMenu.addItem(
+            withTitle: "Quit Noican",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let menu = NSMenu()
+        for submenu in [appMenu, editMenu] {
+            let item = NSMenuItem()
+            item.submenu = submenu
+            menu.addItem(item)
+        }
+        return menu
     }
 }
 
