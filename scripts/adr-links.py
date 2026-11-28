@@ -27,11 +27,14 @@ script can resolve:
   or a quoted string the token runs to the closing mark and is taken
   literally; in running prose it ends at whitespace and may be followed by
   closing punctuation.
-- A Markdown or HTML link into `docs/adr/` is rejected. Whether a rendered
-  link reaches its section depends on Markdown's destination grammar
-  (escapes, titles, line breaks, reference definitions), which this script
-  does not parse, and a relative link that works from `docs/` does not
-  contain the root path at all. Name the record in plain text instead.
+- A link into `docs/adr/` is rejected: an inline or reference Markdown
+  link, an HTML anchor, or a URL. Whether a rendered link reaches its
+  section depends on Markdown's destination grammar (escapes, titles, line
+  breaks, autolinks), which this script does not parse, and a relative
+  link that works from `docs/` does not contain the root path at all. Name
+  the record in plain text instead. Because nothing is parsed, the rule
+  also applies inside code fences; an example of link syntax uses the
+  `NNNN-<topic>` placeholder, which is never checked.
 - A Rust type is defined where its `struct`, `enum`, `union` or `trait`
   is. An `impl` block makes its methods addressable (`Type::method`) but
   does not define `Type`.
@@ -61,9 +64,11 @@ SKIP_DIRS = {".git", "target", ".build"}
 ADR_PREFIX = "docs/adr/"
 ADR_CLOSERS = {"`": "`", '"': '"', "'": "'"}
 ADR_LINK = re.compile(
-    r"\]\(\s*<?[^\s<>()]*docs/adr/"
-    r"|^ {0,3}\[[^\]\n]+\]:\s*<?\S*docs/adr/"
-    r"|\bhref\s*=\s*[\"']?[^\s\"'<>]*docs/adr/",
+    r"(?:\]\(\s*<?[^\s<>()]*"
+    r"|^ {0,3}\[[^\]\n]+\]:\s*<?\S*"
+    r"|\bhref\s*=\s*[\"']?[^\s\"'<>]*"
+    r"|://[^\s<>()\"'`]*)"
+    r"docs/adr/(?!NNNN-)",
     re.M,
 )
 ADR_PATH_BREAKS = frozenset(" \t<>()`\"'")
