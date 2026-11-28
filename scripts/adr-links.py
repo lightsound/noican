@@ -18,9 +18,14 @@ script can resolve:
   function.
 - Section headings are unique across all ADRs, so a section name alone
   identifies a record.
-- Any other mention of `docs/adr/NNNN-<topic>.md` in `AGENTS.md`, `docs/`,
-  `.agents/`, or `scripts/` must name an existing file, and an existing
-  section when it carries a `#<section>`.
+- Any other mention of `docs/adr/NNNN-<topic>.md` in `AGENTS.md`, `docs/`
+  (the ADRs themselves included), `.agents/`, or `scripts/` must name an
+  existing file, and an existing section when it carries a `#<section>`.
+- A reference is read to the end of its token, so a misspelt file name or
+  section is reported as malformed or missing rather than skipped.
+- A Rust type is defined where its `struct`, `enum`, `union` or `trait`
+  is. An `impl` block makes its methods addressable (`Type::method`) but
+  does not define `Type`.
 
 Symbols are resolved from indentation and declaration keywords, which rustfmt
 and SwiftLint keep regular in this repository; no compiler is involved, so the
@@ -44,8 +49,10 @@ PROSE_PATHS = ("AGENTS.md", "docs", ".agents", "scripts")
 PROSE_EXTS = (".md", ".py", ".sh")
 SKIP_DIRS = {".git", "target", ".build"}
 
-ADR_MENTION = re.compile(r"docs/adr/(\d{4}-[a-z0-9-]+\.md)(?:#([a-z0-9-]+))?")
-ADR_PLACEHOLDER = re.compile(r"docs/adr/NNNN-")
+ADR_CANDIDATE = re.compile(r"docs/adr/([^\s`)\"',;]*)")
+ADR_TARGET = re.compile(r"(\d{4}-[a-z0-9-]+\.md)(?:#([a-z0-9-]+))?")
+ADR_PLACEHOLDER = "NNNN-"
+SELF = "scripts/adr-links.py"
 SOURCE_LINE = re.compile(r"^Source: `([^`]+)`(?:, `([^`]+)`)?\.$")
 
 RUST_DEF = re.compile(
@@ -166,8 +173,9 @@ def scan(lines, swift):
         host = stack[-1][1] if stack else None
         scope = separator.join(name for _, _, name in stack)
         defined = definitions(stripped, swift, host)
-        for _, name in defined:
-            symbols.add(separator.join(filter(None, (scope, name))))
+        for kind, name in defined:
+            if kind != "impl":
+                symbols.add(separator.join(filter(None, (scope, name))))
         if defined:
             kind, name = defined[0]
             owner.append(separator.join(filter(None, (scope, name))))
@@ -213,7 +221,26 @@ def load_sections(errors):
     return sections
 
 
-def check_mention(match, where, sections, errors, require_section):
+def check_mentions(line, where, sections, errors, require_section):
+    """Validate every `docs/adr/...` reference on the line; return how many it holds."""
+    found = 0
+    for candidate in ADR_CANDIDATE.finditer(line):
+        token = candidate.group(1).rstrip(".:")
+        if not token or token.startswith(ADR_PLACEHOLDER):
+            continue
+        found += 1
+        match = ADR_TARGET.fullmatch(token)
+        if match is None:
+            errors.append(
+                f"{where}: malformed ADR reference `docs/adr/{token}` "
+                "(want docs/adr/NNNN-<topic>.md or docs/adr/NNNN-<topic>.md#<section>)"
+            )
+            continue
+        check_target(match, where, sections, errors, require_section)
+    return found
+
+
+def check_target(match, where, sections, errors, require_section):
     name, section = match.group(1), match.group(2)
     if name not in sections:
         errors.append(f"{where}: docs/adr/{name} does not exist")
@@ -255,24 +282,17 @@ def check_pointers(sections, errors):
     for top in CODE_DIRS:
         for path in walk(top, CODE_EXTS):
             for number, line in enumerate(read_lines(path), 1):
-                for match in ADR_MENTION.finditer(line):
-                    checked += 1
-                    check_mention(match, f"{path}:{number}", sections, errors, require_section=True)
+                checked += check_mentions(line, f"{path}:{number}", sections, errors, require_section=True)
     return checked
 
 
 def check_prose(sections, errors):
     for top in PROSE_PATHS:
-        if top.startswith(ADR_DIR):
-            continue
         for path in walk(top, PROSE_EXTS):
-            if path.startswith(ADR_DIR + os.sep):
+            if path == SELF:
                 continue
             for number, line in enumerate(read_lines(path), 1):
-                if ADR_PLACEHOLDER.search(line):
-                    continue
-                for match in ADR_MENTION.finditer(line):
-                    check_mention(match, f"{path}:{number}", sections, errors, require_section=False)
+                check_mentions(line, f"{path}:{number}", sections, errors, require_section=False)
 
 
 def main():
