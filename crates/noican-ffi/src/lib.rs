@@ -1,4 +1,4 @@
-//! See docs/adr/0011-ffi-boundary.md.
+//! See docs/adr/0011-ffi-boundary.md#ffi-control-locking-and-epoch.
 
 #![expect(
     unsafe_code,
@@ -66,7 +66,7 @@ fn default_models_dir() -> PathBuf {
     PathBuf::from("models")
 }
 
-/// See docs/adr/0011-ffi-boundary.md.
+/// See docs/adr/0011-ffi-boundary.md#ffi-handle-lifecycle.
 ///
 /// # Safety
 ///
@@ -98,7 +98,7 @@ pub unsafe extern "C" fn noican_engine_create(models_directory: *const c_char) -
     Box::into_raw(handle).cast()
 }
 
-/// See docs/adr/0011-ffi-boundary.md.
+/// See docs/adr/0011-ffi-boundary.md#ffi-handle-lifecycle.
 ///
 /// # Safety
 ///
@@ -117,7 +117,7 @@ pub unsafe extern "C" fn noican_engine_destroy(handle: *mut c_void) {
     }
 }
 
-/// See docs/adr/0004-aggregate-output-routing.md.
+/// See docs/adr/0004-aggregate-output-routing.md#aggregate-channel-routing.
 ///
 /// # Safety
 ///
@@ -157,7 +157,7 @@ pub unsafe extern "C" fn noican_engine_start(
     })
 }
 
-/// See docs/adr/0003-coreaudio-transport.md.
+/// See docs/adr/0003-coreaudio-transport.md#split-transport-native-capture.
 ///
 /// # Safety
 ///
@@ -271,7 +271,7 @@ fn validate_capture_rate(rate: f64) -> Result<u32, String> {
     Ok(hertz)
 }
 
-/// See docs/adr/0011-ffi-boundary.md.
+/// See docs/adr/0011-ffi-boundary.md#ffi-handle-lifecycle.
 ///
 /// # Safety
 ///
@@ -295,7 +295,7 @@ pub unsafe extern "C" fn noican_engine_stop(handle: *mut c_void) {
     }
 }
 
-/// See docs/adr/0011-ffi-boundary.md.
+/// See docs/adr/0011-ffi-boundary.md#ffi-control-locking-and-epoch.
 ///
 /// # Safety
 ///
@@ -350,7 +350,7 @@ pub unsafe extern "C" fn noican_engine_is_running(handle: *const c_void) -> i32 
     i32::from(unsafe { with_runtime(handle, Runtime::is_running) }.unwrap_or(false))
 }
 
-/// See docs/adr/0012-app-state-reducer.md.
+/// See docs/adr/0012-app-state-reducer.md#engine-fault-semantics.
 ///
 /// # Safety
 ///
@@ -365,7 +365,7 @@ pub unsafe extern "C" fn noican_engine_is_faulted(handle: *const c_void) -> i32 
     })
 }
 
-/// See docs/adr/0005-preview-monitor.md.
+/// See docs/adr/0005-preview-monitor.md#preview-monitor-contract.
 ///
 /// # Safety
 ///
@@ -390,7 +390,7 @@ pub unsafe extern "C" fn noican_engine_set_monitor(handle: *mut c_void, enabled:
     }
 }
 
-/// See docs/adr/0005-preview-monitor.md.
+/// See docs/adr/0005-preview-monitor.md#preview-monitor-contract.
 ///
 /// # Safety
 ///
@@ -406,7 +406,7 @@ pub unsafe extern "C" fn noican_monitor_target_error(
     }
 }
 
-/// See docs/adr/0005-preview-monitor.md.
+/// See docs/adr/0005-preview-monitor.md#preview-monitor-contract.
 ///
 /// # Safety
 ///
@@ -423,7 +423,7 @@ pub unsafe extern "C" fn noican_monitor_device_error(
     }
 }
 
-/// See docs/adr/0005-preview-monitor.md.
+/// See docs/adr/0005-preview-monitor.md#preview-monitor-contract.
 ///
 /// # Safety
 ///
@@ -435,7 +435,7 @@ pub unsafe extern "C" fn noican_engine_monitor_device(handle: *const c_void) -> 
         .unwrap_or(0)
 }
 
-/// See docs/adr/0004-aggregate-output-routing.md.
+/// See docs/adr/0004-aggregate-output-routing.md#transport-routing-diagnostics.
 ///
 /// # Safety
 ///
@@ -460,7 +460,7 @@ pub unsafe extern "C" fn noican_engine_routing_description(
     copied.unwrap_or(0)
 }
 
-/// See docs/adr/0005-preview-monitor.md.
+/// See docs/adr/0005-preview-monitor.md#preview-monitor-contract.
 ///
 /// # Safety
 ///
@@ -473,7 +473,7 @@ pub unsafe extern "C" fn noican_engine_monitor_state(handle: *const c_void) -> i
     MonitorState::from_raw(handle.monitor_state.load(Ordering::Acquire)).as_raw()
 }
 
-/// See docs/adr/0002-engine-diagnostics.md.
+/// See docs/adr/0002-engine-diagnostics.md#engine-diagnostics.
 ///
 /// # Safety
 ///
@@ -483,7 +483,7 @@ pub unsafe extern "C" fn noican_engine_frames_processed(handle: *const c_void) -
     unsafe { with_runtime(handle, Runtime::frames_processed) }.unwrap_or(0)
 }
 
-/// See docs/adr/0002-engine-diagnostics.md.
+/// See docs/adr/0002-engine-diagnostics.md#engine-diagnostics.
 ///
 /// # Safety
 ///
@@ -493,7 +493,7 @@ pub unsafe extern "C" fn noican_engine_output_underruns(handle: *const c_void) -
     unsafe { with_runtime(handle, Runtime::output_underruns) }.unwrap_or(0)
 }
 
-/// See docs/adr/0002-engine-diagnostics.md.
+/// See docs/adr/0002-engine-diagnostics.md#engine-diagnostics.
 ///
 /// # Safety
 ///
@@ -503,7 +503,7 @@ pub unsafe extern "C" fn noican_engine_input_overruns(handle: *const c_void) -> 
     unsafe { with_runtime(handle, Runtime::input_overruns) }.unwrap_or(0)
 }
 
-/// See docs/adr/0002-engine-diagnostics.md.
+/// See docs/adr/0002-engine-diagnostics.md#engine-diagnostics.
 ///
 /// # Safety
 ///
@@ -513,7 +513,7 @@ pub unsafe extern "C" fn noican_engine_worker_blocks(handle: *const c_void) -> u
     unsafe { with_runtime(handle, Runtime::worker_blocks) }.unwrap_or(0)
 }
 
-/// See docs/adr/0002-engine-diagnostics.md.
+/// See docs/adr/0002-engine-diagnostics.md#engine-diagnostics.
 ///
 /// # Safety
 ///
@@ -535,7 +535,7 @@ pub unsafe extern "C" fn noican_engine_worker_block_max_ns(handle: *const c_void
     unsafe { with_runtime(handle, Runtime::worker_block_max_ns) }.unwrap_or(0)
 }
 
-/// See docs/adr/0002-engine-diagnostics.md.
+/// See docs/adr/0002-engine-diagnostics.md#engine-diagnostics.
 ///
 /// # Safety
 ///
@@ -545,7 +545,7 @@ pub unsafe extern "C" fn noican_engine_worker_realtime(handle: *const c_void) ->
     i32::from(unsafe { with_runtime(handle, Runtime::worker_realtime) }.unwrap_or(false))
 }
 
-/// See docs/adr/0002-engine-diagnostics.md.
+/// See docs/adr/0002-engine-diagnostics.md#engine-diagnostics.
 ///
 /// # Safety
 ///
@@ -555,7 +555,7 @@ pub unsafe extern "C" fn noican_engine_reset_debug_stats(handle: *mut c_void) {
     unsafe { with_runtime(handle, Runtime::reset_debug_stats) };
 }
 
-/// See docs/adr/0002-engine-diagnostics.md.
+/// See docs/adr/0002-engine-diagnostics.md#level-meters.
 ///
 /// # Safety
 ///
@@ -568,7 +568,7 @@ pub unsafe extern "C" fn noican_engine_input_level(handle: *const c_void) -> f32
     handle.levels.input()
 }
 
-/// See docs/adr/0002-engine-diagnostics.md.
+/// See docs/adr/0002-engine-diagnostics.md#level-meters.
 ///
 /// # Safety
 ///
@@ -581,7 +581,7 @@ pub unsafe extern "C" fn noican_engine_output_level(handle: *const c_void) -> f3
     handle.levels.output()
 }
 
-/// See docs/adr/0007-dsp-stages.md.
+/// See docs/adr/0007-dsp-stages.md#intensity-dry-wet-mix.
 ///
 /// # Safety
 ///
@@ -635,7 +635,7 @@ pub unsafe extern "C" fn noican_engine_last_error(
     unsafe { copy_string(&state.last_error, buffer, capacity) }
 }
 
-/// See docs/adr/0009-model-catalog-fetch.md.
+/// See docs/adr/0009-model-catalog-fetch.md#model-catalog-projection.
 #[unsafe(no_mangle)]
 pub extern "C" fn noican_model_count() -> usize {
     noican_models::catalog().count()
@@ -722,7 +722,7 @@ pub unsafe extern "C" fn noican_model_details(
     })
 }
 
-/// See docs/adr/0009-model-catalog-fetch.md.
+/// See docs/adr/0009-model-catalog-fetch.md#model-catalog-projection.
 #[unsafe(no_mangle)]
 pub extern "C" fn noican_model_rating(index: usize, trait_id: i32) -> i32 {
     let Some(entry) = catalog_entry(index) else {

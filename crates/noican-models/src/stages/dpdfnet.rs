@@ -1,4 +1,4 @@
-//! See docs/adr/0008-model-runtime.md.
+//! See docs/adr/0008-model-runtime.md#dpdfnet-stft-pipeline.
 
 use std::borrow::Cow;
 use std::path::Path;
@@ -51,7 +51,7 @@ pub struct DpdfnetStage {
 }
 
 impl DpdfnetStage {
-    /// See docs/adr/0008-model-runtime.md.
+    /// See docs/adr/0008-model-runtime.md#dpdfnet-stft-pipeline.
     ///
     /// # Errors
     ///

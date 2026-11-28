@@ -1,4 +1,4 @@
-//! See docs/adr/0009-model-catalog-fetch.md.
+//! See docs/adr/0009-model-catalog-fetch.md#model-integration-tests-opt-in.
 
 #![expect(
     clippy::print_stderr,

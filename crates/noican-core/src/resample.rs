@@ -1,4 +1,4 @@
-//! See docs/adr/0006-resampling.md.
+//! See docs/adr/0006-resampling.md#resampling-architecture.
 
 fn bessel_i0(x: f64) -> f64 {
     let mut sum = 1.0_f64;
@@ -51,7 +51,7 @@ const fn taps_for_factor(factor: usize) -> usize {
     40 * factor + 1
 }
 
-/// See docs/adr/0006-resampling.md.
+/// See docs/adr/0006-resampling.md#resampler-input-contracts.
 #[derive(Debug)]
 pub struct Decimator {
     factor: usize,
@@ -199,7 +199,7 @@ impl Interpolator {
     }
 }
 
-/// See docs/adr/0006-resampling.md.
+/// See docs/adr/0006-resampling.md#drift-correction-design.
 pub const MAX_DRIFT_PPM: f64 = 2000.0;
 
 const MIN_PHASES: usize = 128;
@@ -213,7 +213,7 @@ const fn gcd(mut a: usize, mut b: usize) -> usize {
     a
 }
 
-/// See docs/adr/0006-resampling.md.
+/// See docs/adr/0006-resampling.md#polyphase-resampler-design.
 #[derive(Debug)]
 pub struct PolyphaseResampler {
     up: usize,
@@ -228,7 +228,7 @@ pub struct PolyphaseResampler {
 }
 
 impl PolyphaseResampler {
-    /// See docs/adr/0006-resampling.md.
+    /// See docs/adr/0006-resampling.md#untrusted-rate-bounds.
     ///
     /// # Panics
     ///
@@ -303,13 +303,13 @@ impl PolyphaseResampler {
         )
     }
 
-    /// See docs/adr/0006-resampling.md.
+    /// See docs/adr/0006-resampling.md#integer-group-delay.
     #[must_use]
     pub const fn delay_output_samples(&self) -> usize {
         self.delay_output
     }
 
-    /// See docs/adr/0001-realtime-audio-rules.md.
+    /// See docs/adr/0001-realtime-audio-rules.md#realtime-allocation-ban.
     #[must_use]
     pub fn max_output_len(&self, input_len: usize) -> usize {
         #[expect(
@@ -324,7 +324,7 @@ impl PolyphaseResampler {
         nominal + 2
     }
 
-    /// See docs/adr/0006-resampling.md.
+    /// See docs/adr/0006-resampling.md#drift-correction-design.
     pub fn set_drift_ppm(&mut self, ppm: f64) {
         let ppm = if ppm.is_finite() {
             ppm.clamp(-MAX_DRIFT_PPM, MAX_DRIFT_PPM)
@@ -334,7 +334,7 @@ impl PolyphaseResampler {
         self.step = self.nominal_step / ppm.mul_add(1e-6, 1.0);
     }
 
-    /// See docs/adr/0006-resampling.md.
+    /// See docs/adr/0006-resampling.md#polyphase-streaming-contract.
     pub fn process(&mut self, input: &[f32], output: &mut Vec<f32>) {
         self.buf.extend_from_slice(input);
         let hist_len = self.phases[0].len() - 1;
@@ -368,7 +368,7 @@ impl PolyphaseResampler {
         self.pos -= (keep_from * self.num_phases).to_f64();
     }
 
-    /// See docs/adr/0006-resampling.md.
+    /// See docs/adr/0006-resampling.md#resampler-reset-semantics.
     pub fn reset(&mut self) {
         let hist_len = self.phases[0].len() - 1;
         self.buf.clear();

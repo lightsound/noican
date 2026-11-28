@@ -5,7 +5,7 @@ use realfft::num_complex::Complex32;
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 use std::sync::Arc;
 
-/// See docs/adr/0007-dsp-stages.md.
+/// See docs/adr/0007-dsp-stages.md#dsp-window-semantics.
 #[must_use]
 pub fn vorbis_window(len: usize) -> Vec<f32> {
     let half = f64::from(u32::try_from(len).unwrap_or(u32::MAX)) / 2.0;
@@ -23,7 +23,7 @@ pub fn vorbis_window(len: usize) -> Vec<f32> {
         .collect()
 }
 
-/// See docs/adr/0007-dsp-stages.md.
+/// See docs/adr/0007-dsp-stages.md#dsp-window-semantics.
 #[must_use]
 pub fn periodic_hann_window(len: usize) -> Vec<f32> {
     let n = f64::from(u32::try_from(len).unwrap_or(u32::MAX));
@@ -40,13 +40,13 @@ pub fn periodic_hann_window(len: usize) -> Vec<f32> {
         .collect()
 }
 
-/// See docs/adr/0007-dsp-stages.md.
+/// See docs/adr/0007-dsp-stages.md#dsp-window-semantics.
 #[must_use]
 pub fn sqrt_hann_window(len: usize) -> Vec<f32> {
     periodic_hann_window(len).iter().map(|w| w.sqrt()).collect()
 }
 
-/// See docs/adr/0007-dsp-stages.md.
+/// See docs/adr/0007-dsp-stages.md#fft-scaling-semantics.
 pub struct FftPair {
     n: usize,
     forward: Arc<dyn RealToComplex<f32>>,
@@ -91,7 +91,7 @@ impl FftPair {
         self.n / 2 + 1
     }
 
-    /// See docs/adr/0007-dsp-stages.md.
+    /// See docs/adr/0007-dsp-stages.md#fft-interleaved-layout.
     ///
     /// # Errors
     ///
@@ -116,7 +116,7 @@ impl FftPair {
         Ok(())
     }
 
-    /// See docs/adr/0007-dsp-stages.md.
+    /// See docs/adr/0007-dsp-stages.md#fft-interleaved-layout.
     ///
     /// # Errors
     ///

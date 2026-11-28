@@ -1,17 +1,17 @@
-//! See docs/adr/0006-resampling.md.
+//! See docs/adr/0006-resampling.md#native-rate-capture-and-drift.
 
 use crate::error::StageError;
 pub use crate::resample::MAX_DRIFT_PPM;
 use crate::resample::PolyphaseResampler;
 use crate::stage::ENGINE_SAMPLE_RATE;
 
-/// See docs/adr/0015-device-session.md.
+/// See docs/adr/0015-device-session.md#native-rate-bounds.
 pub const MIN_NATIVE_RATE: u32 = 8_000;
 
-/// See docs/adr/0015-device-session.md.
+/// See docs/adr/0015-device-session.md#native-rate-bounds.
 pub const MAX_NATIVE_RATE: u32 = 192_000;
 
-/// See docs/adr/0015-device-session.md.
+/// See docs/adr/0015-device-session.md#native-rate-bounds.
 pub const MAX_RATIO_TERM: usize = 1_024;
 
 /// Streaming converter from a microphone's native rate to the 48 kHz
@@ -27,7 +27,7 @@ pub struct InputResampler {
 }
 
 impl InputResampler {
-    /// See docs/adr/0015-device-session.md.
+    /// See docs/adr/0015-device-session.md#native-rate-bounds.
     ///
     /// # Errors
     ///
@@ -63,13 +63,13 @@ impl InputResampler {
         self.native_rate
     }
 
-    /// See docs/adr/0006-resampling.md.
+    /// See docs/adr/0006-resampling.md#resampler-ratio-units.
     #[must_use]
     pub const fn ratio(&self) -> (usize, usize) {
         self.resampler.ratio()
     }
 
-    /// See docs/adr/0006-resampling.md.
+    /// See docs/adr/0006-resampling.md#resampler-ratio-units.
     #[must_use]
     pub const fn to_engine_samples(&self, native_samples: usize) -> usize {
         let (up, down) = self.resampler.ratio();
@@ -83,23 +83,23 @@ impl InputResampler {
         self.resampler.delay_output_samples()
     }
 
-    /// See docs/adr/0006-resampling.md.
+    /// See docs/adr/0006-resampling.md#resampler-buffer-sizing.
     #[must_use]
     pub fn max_output_len(&self, input_len: usize) -> usize {
         self.resampler.max_output_len(input_len)
     }
 
-    /// See docs/adr/0006-resampling.md.
+    /// See docs/adr/0006-resampling.md#clock-drift-servo.
     pub fn set_drift_ppm(&mut self, ppm: f64) {
         self.resampler.set_drift_ppm(ppm);
     }
 
-    /// See docs/adr/0001-realtime-audio-rules.md.
+    /// See docs/adr/0001-realtime-audio-rules.md#realtime-allocation-ban.
     pub fn process(&mut self, input: &[f32], output: &mut Vec<f32>) {
         self.resampler.process(input, output);
     }
 
-    /// See docs/adr/0006-resampling.md.
+    /// See docs/adr/0006-resampling.md#input-resampler-reset.
     pub fn reset(&mut self) {
         self.resampler.reset();
     }
@@ -109,7 +109,7 @@ const SERVO_HORIZON_SAMPLES: f64 = 480_000.0;
 
 const SERVO_SMOOTHING: f64 = 0.02;
 
-/// See docs/adr/0006-resampling.md.
+/// See docs/adr/0006-resampling.md#clock-drift-servo.
 #[derive(Debug)]
 pub struct DriftServo {
     target: f64,
@@ -133,7 +133,7 @@ impl DriftServo {
         }
     }
 
-    /// See docs/adr/0006-resampling.md.
+    /// See docs/adr/0006-resampling.md#clock-drift-servo.
     pub fn update(&mut self, occupancy_samples: usize) -> f64 {
         #[expect(
             clippy::cast_precision_loss,

@@ -41,13 +41,13 @@ pub enum FetchError {
         /// Actual digest.
         got: String,
     },
-    /// See docs/adr/0009-model-catalog-fetch.md.
+    /// See docs/adr/0009-model-catalog-fetch.md#model-digest-verification.
     #[error("pinned file {file} is missing")]
     Missing {
-        /// See docs/adr/0009-model-catalog-fetch.md.
+        /// See docs/adr/0009-model-catalog-fetch.md#model-digest-verification.
         file: String,
     },
-    /// See docs/adr/0009-model-catalog-fetch.md.
+    /// See docs/adr/0009-model-catalog-fetch.md#download-size-cap.
     #[error("download of {url} exceeded the {limit}-byte limit for model weights")]
     TooLarge {
         /// URL that was being downloaded.
@@ -63,7 +63,7 @@ pub fn model_dir(models_dir: &Path, model: &ModelSpec) -> PathBuf {
     models_dir.join(model.id)
 }
 
-/// See docs/adr/0009-model-catalog-fetch.md.
+/// See docs/adr/0009-model-catalog-fetch.md#model-digest-verification.
 #[must_use]
 pub fn is_fetched(models_dir: &Path, model: &ModelSpec) -> bool {
     let dir = model_dir(models_dir, model);
@@ -71,7 +71,7 @@ pub fn is_fetched(models_dir: &Path, model: &ModelSpec) -> bool {
         && model.dependencies().all(|dep| is_fetched(models_dir, dep))
 }
 
-/// See docs/adr/0009-model-catalog-fetch.md.
+/// See docs/adr/0009-model-catalog-fetch.md#model-digest-verification.
 ///
 /// # Errors
 ///
@@ -108,7 +108,7 @@ fn verify_model_dyn(models_dir: &Path, model: &ModelSpec) -> Result<(), FetchErr
     Ok(())
 }
 
-/// See docs/adr/0009-model-catalog-fetch.md.
+/// See docs/adr/0009-model-catalog-fetch.md#model-digest-verification.
 ///
 /// # Errors
 ///

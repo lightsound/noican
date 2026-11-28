@@ -3,20 +3,20 @@
 Status: Accepted
 
 Moved from code comments on 2026-11-21 (the delete-comment pass).
-The original wording is preserved under each topic; the source
-location of each comment at the time of the move (commit 397e3df)
-is noted above its text.
+The original wording is preserved under each topic; the file and
+symbol each comment was attached to are noted above its text and
+checked by `scripts/adr-links.py`.
 
 ## clock-drift-servo
 
-Source: `crates/noican-core/src/capture.rs` lines 154–157.
+Source: `crates/noican-core/src/capture.rs`, `InputResampler::set_drift_ppm`.
 
 Applies a drift correction in parts per million (clamped to
 ±[`MAX_DRIFT_PPM`]; non-finite values read as zero). Positive
 values stretch the stream — more output samples per input sample —
 which raises the buffered occupancy downstream.
 
-Source: `crates/noican-core/src/capture.rs` lines 188–204.
+Source: `crates/noican-core/src/capture.rs`, `DriftServo`.
 
 Ring-occupancy servo steering the drift correction: the control half
 of the DIY clock-drift compensation (docs/tech-research.md §4.2).
@@ -36,20 +36,20 @@ occupancy error that sustains the correction) — bounded by
 `drift × horizon`, e.g. 48 samples (1 ms) at 100 ppm — which is
 harmless and keeps the loop trivially stable.
 
-Source: `crates/noican-core/src/capture.rs` lines 228–231.
+Source: `crates/noican-core/src/capture.rs`, `DriftServo::update`.
 
 Feeds one occupancy observation (total samples buffered between
 the capture and output clock domains, in engine-rate samples;
 expected once per engine block) and returns the drift correction
 in ppm to apply via [`InputResampler::set_drift_ppm`].
 
-Source: `crates/noican-core/src/capture.rs` lines 430–432.
+Source: `crates/noican-core/src/capture.rs`, `tests::servo_cancels_clock_drift_in_a_simulated_session`.
 
 The capture clock delivers (1 + drift) × nominal; the
 conversion applies (1 + correction); the output clock
 consumes exactly 480 samples per block.
 
-Source: `crates/noican-core/src/capture.rs` lines 467–478.
+Source: `crates/noican-core/src/capture.rs`, `tests::servo_holds_occupancy_through_the_rational_resampler`.
 
 The same closed loop through the *real* resampler at the rational
 44.1 kHz ratio, mirroring the split worker: a producer clock
@@ -66,39 +66,39 @@ gone from every term.
 
 ## clock-drift-servo-tuning
 
-Source: `crates/noican-core/src/capture.rs` lines 177–180.
+Source: `crates/noican-core/src/capture.rs`, `SERVO_HORIZON_SAMPLES`.
 
 First-order correction horizon in samples at the engine rate: an
 occupancy error is corrected with a time constant of
 `HORIZON / 48000` ≈ 10 s — far slower than Bluetooth burst jitter,
 fast enough to absorb worst-case drift long before the rings fill.
 
-Source: `crates/noican-core/src/capture.rs` lines 183–185.
+Source: `crates/noican-core/src/capture.rs`, `SERVO_SMOOTHING`.
 
 EMA coefficient applied per [`DriftServo::update`] call (one call per
 10 ms engine block → ≈0.5 s smoothing window), filtering Bluetooth
 burst-delivery noise out of the occupancy signal.
 
-Source: `crates/noican-core/src/capture.rs` lines 562–563.
+Source: `crates/noican-core/src/capture.rs`, `tests::servo_holds_occupancy_through_the_rational_resampler`.
 
 Proportional residual (drift × horizon ≈ 96 samples at
 200 ppm) plus one block of FIFO granularity.
 
 ## drift-compensation-servo
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 78–81.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `OUTPUT_PRIME_SAMPLES`.
 
 Silence pushed into the output ring before the units start: the
 initial cushion absorbing Bluetooth burst jitter, and the drift
 servo's occupancy target (50 ms at 48 kHz). This is added latency of
 the split path only; the aggregate path is untouched.
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 141–142.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `start`.
 
 Prime the output ring at the servo's occupancy target so playback
 starts with the jitter cushion in place.
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 407–410.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `split_processing_loop`.
 
 Drift servo: total samples buffered between the capture
 clock (producer) and the output clock (consumer), in
@@ -107,7 +107,7 @@ through the nominal ratio). A trend here *is* clock drift.
 
 ## drift-correction-design
 
-Source: `crates/noican-core/src/resample.rs` lines 230–235.
+Source: `crates/noican-core/src/resample.rs`, `MAX_DRIFT_PPM`.
 
 Largest drift correction a [`PolyphaseResampler`] applies, in parts
 per million.
@@ -116,7 +116,7 @@ per million.
 mismatches, small enough to be inaudible (≈3.5 cents), and bounds how
 fast a servo can slew the ratio while recovering a priming offset.
 
-Source: `crates/noican-core/src/resample.rs` lines 455–459.
+Source: `crates/noican-core/src/resample.rs`, `PolyphaseResampler::set_drift_ppm`.
 
 Applies a drift correction in parts per million (clamped to
 ±[`MAX_DRIFT_PPM`]; non-finite values read as zero). Positive
@@ -124,7 +124,7 @@ values stretch the stream — more output samples per input sample.
 At exactly zero the phase step is an integer and the conversion is
 the exact rational polyphase result.
 
-Source: `crates/noican-core/src/resample.rs` lines 784–790.
+Source: `crates/noican-core/src/resample.rs`, `tests::polyphase_tracks_a_fixed_drift_correction`.
 
 A fixed drift correction time-warps the output by exactly that
 ratio: the count follows `1 + ppm`, and the waveform tracks the
@@ -134,51 +134,51 @@ at the output rate would already droop measurably. (Measured:
 93.6 dB at 1 kHz and 94–97 dB at 15 kHz for both 0 and −500 ppm;
 the phase interpolation adds no visible error.)
 
-Source: `crates/noican-core/src/resample.rs` lines 818–819.
+Source: `crates/noican-core/src/resample.rs`, `tests::polyphase_tracks_a_fixed_drift_correction`.
 
 Output sample n sits at input time n / stretch; the
 filter delay is fixed in input time.
 
 ## input-resampler-reset
 
-Source: `crates/noican-core/src/capture.rs` lines 171–171.
+Source: `crates/noican-core/src/capture.rs`, `InputResampler::reset`.
 
 Clears filter history (the drift correction persists).
 
 ## integer-group-delay
 
-Source: `crates/noican-core/src/resample.rs` lines 70–71.
+Source: `crates/noican-core/src/resample.rs`, `taps_for_factor`.
 
 Number of taps used for a given integer factor. Odd so the group delay is
 an integer number of samples at the high rate.
 
-Source: `crates/noican-core/src/resample.rs` lines 362–363.
+Source: `crates/noican-core/src/resample.rs`, `PolyphaseResampler::new`.
 
 Group delay `(num_taps - 1) / 2 = step × delay` prototype
 samples is exactly `delay` output samples.
 
-Source: `crates/noican-core/src/resample.rs` lines 429–430.
+Source: `crates/noican-core/src/resample.rs`, `PolyphaseResampler::delay_output_samples`.
 
 Group delay in samples at the output rate — an integer by
 construction.
 
-Source: `crates/noican-core/src/resample.rs` lines 679–680.
+Source: `crates/noican-core/src/resample.rs`, `tests::polyphase_reduces_ratios_and_reports_integer_delays`.
 
 The ratio reduces exactly and the integer output delay follows
 `num_taps - 1 = 2 · step · delay`.
 
-Source: `crates/noican-core/src/resample.rs` lines 698–699.
+Source: `crates/noican-core/src/resample.rs`, `tests::polyphase_reduces_ratios_and_reports_integer_delays`.
 
 The integer factors keep the delays of the fixed-factor
 designs (`taps_for_factor`: 40 × factor + 1 taps).
 
-Source: `crates/noican-core/src/resample.rs` lines 708–708.
+Source: `crates/noican-core/src/resample.rs`, `tests::polyphase_reduces_ratios_and_reports_integer_delays`.
 
 44.1 → 48 kHz: 160 phases, step 147, delay ⌈20·160/147⌉ = 22.
 
 ## native-rate-capture-and-drift
 
-Source: `crates/noican-core/src/capture.rs` lines 1–38.
+Source: `crates/noican-core/src/capture.rs`.
 
 Native-rate capture support for non-48 kHz microphones (issue #7).
 
@@ -221,7 +221,7 @@ test below proves it end to end.
 
 ## phase-grid-resolution
 
-Source: `crates/noican-core/src/resample.rs` lines 238–249.
+Source: `crates/noican-core/src/resample.rs`, `MIN_PHASES`.
 
 Fewest polyphase branches per input sample a [`PolyphaseResampler`]
 builds. A small upsampling factor (×2, ×3) is oversampled to at least
@@ -238,21 +238,21 @@ of more phases is memory only (~40 taps × phases × 4 bytes).
 
 ## phase-position-rounding
 
-Source: `crates/noican-core/src/resample.rs` lines 517–520.
+Source: `crates/noican-core/src/resample.rs`, `PolyphaseResampler::locate`.
 
 Splits `pos` into the newest input sample the next output uses
 (`base`, an index into `buf`) and the fractional phase position in
 `0.0..num_phases`. Integer positions (zero drift) split exactly;
 the guards absorb a floor landing one off from f64 rounding.
 
-Source: `crates/noican-core/src/resample.rs` lines 530–531.
+Source: `crates/noican-core/src/resample.rs`, `PolyphaseResampler::locate`.
 
 f64 rounding can land the floor one off; the true position is
 never more than one phase-count away, so one correction suffices.
 
 ## polyphase-resampler-design
 
-Source: `crates/noican-core/src/resample.rs` lines 265–312.
+Source: `crates/noican-core/src/resample.rs`, `PolyphaseResampler`.
 
 Streaming arbitrary-ratio polyphase FIR resampler.
 
@@ -303,7 +303,7 @@ performs no allocation while each input chunk stays within
 costs two `phase_len`-tap dot products per output sample (one when
 the drift correction is zero).
 
-Source: `crates/noican-core/src/resample.rs` lines 358–360.
+Source: `crates/noican-core/src/resample.rs`, `PolyphaseResampler::new`.
 
 The prototype runs at `num_phases × input_rate`; its passband
 must stop below the lower of the two Nyquist frequencies:
@@ -311,23 +311,23 @@ must stop below the lower of the two Nyquist frequencies:
 
 ## polyphase-resampler-invariants
 
-Source: `crates/noican-core/src/resample.rs` lines 331–333.
+Source: `crates/noican-core/src/resample.rs`, `PolyphaseResampler::pos`.
 
 Position of the next output sample in phase units relative to
 `buf[0]`; always ≥ `(phase_len - 1) × num_phases` so every tap
 has a sample.
 
-Source: `crates/noican-core/src/resample.rs` lines 383–384.
+Source: `crates/noican-core/src/resample.rs`, `PolyphaseResampler::new`.
 
 Retained between calls: the FIR look-behind plus the one
 look-ahead sample the phase interpolation may need.
 
-Source: `crates/noican-core/src/resample.rs` lines 450–451.
+Source: `crates/noican-core/src/resample.rs`, `PolyphaseResampler::max_output_len`.
 
 Plus the look-ahead sample released from the previous call and
 one for the ceiling of the fractional phase.
 
-Source: `crates/noican-core/src/resample.rs` lines 501–503.
+Source: `crates/noican-core/src/resample.rs`, `PolyphaseResampler::process`.
 
 Drop the consumed prefix, keeping the FIR look-behind of the
 next output sample (which may lie past the buffered input when
@@ -335,7 +335,7 @@ downsampling — clamp to the buffer).
 
 ## polyphase-streaming-contract
 
-Source: `crates/noican-core/src/resample.rs` lines 469–472.
+Source: `crates/noican-core/src/resample.rs`, `PolyphaseResampler::process`.
 
 Consumes `input`, appending every output sample whose filter
 support is complete to `output` (one input sample of look-ahead
@@ -344,7 +344,7 @@ exactly [`PolyphaseResampler::delay_output_samples`]).
 
 ## resampler-buffer-sizing
 
-Source: `crates/noican-core/src/capture.rs` lines 146–148.
+Source: `crates/noican-core/src/capture.rs`, `InputResampler::max_output_len`.
 
 Upper bound on the samples one [`InputResampler::process`] call
 appends for `input_len` native samples (at the largest drift
@@ -352,20 +352,20 @@ correction); reserve output buffers to it.
 
 ## resampler-input-contracts
 
-Source: `crates/noican-core/src/resample.rs` lines 76–77.
+Source: `crates/noican-core/src/resample.rs`, `Decimator`.
 
 Streaming decimator by an integer factor (input at the high rate, output
 at the low rate). Inputs must be supplied in multiples of the factor.
 
 ## resampler-ratio-units
 
-Source: `crates/noican-core/src/capture.rs` lines 122–124.
+Source: `crates/noican-core/src/capture.rs`, `InputResampler::ratio`.
 
 Reduced conversion ratio `(up, down)`: `up` engine samples per
 `down` native samples at zero drift (160/147 for 44.1 kHz, 3/1 for
 16 kHz).
 
-Source: `crates/noican-core/src/capture.rs` lines 130–132.
+Source: `crates/noican-core/src/capture.rs`, `InputResampler::to_engine_samples`.
 
 Converts a count of native-rate samples to the engine-rate samples
 they will become (rounded to nearest), so a transport can express
@@ -373,13 +373,13 @@ its native-ring occupancy in the servo's units.
 
 ## resampler-reset-semantics
 
-Source: `crates/noican-core/src/resample.rs` lines 509–509.
+Source: `crates/noican-core/src/resample.rs`, `PolyphaseResampler::reset`.
 
 Clears filter history (the drift correction persists).
 
 ## resampling-architecture
 
-Source: `crates/noican-core/src/resample.rs` lines 1–15.
+Source: `crates/noican-core/src/resample.rs`.
 
 Streaming polyphase FIR resampling.
 
@@ -399,14 +399,14 @@ real-time inference thread).
 
 ## shared-filter-span
 
-Source: `crates/noican-core/src/resample.rs` lines 252–255.
+Source: `crates/noican-core/src/resample.rs`, `HALF_SPAN_LOW_RATE`.
 
 Half the filter span in samples at the *lower* of the two rates: the
 same 40-sample windowed-sinc span the integer-factor designs above
 use (`taps_for_factor`), which the model path has validated at
 > 50 dB round-trip SNR.
 
-Source: `crates/noican-core/src/resample.rs` lines 769–774.
+Source: `crates/noican-core/src/resample.rs`, `tests::polyphase_upsampling_keeps_the_top_of_the_band`.
 
 Upsampling 44.1 → 48 kHz keeps the passband flat well into the top
 octave: a 15 kHz sine (0.68 × the input Nyquist) comes out above
@@ -417,7 +417,7 @@ to the model path's 16 kHz decimator relative to its Nyquist.)
 
 ## untrusted-rate-bounds
 
-Source: `crates/noican-core/src/resample.rs` lines 339–351.
+Source: `crates/noican-core/src/resample.rs`, `PolyphaseResampler::new`.
 
 Creates a converter from `input_rate` to `output_rate` Hz,
 preallocating for input chunks of up to `max_input_len` samples

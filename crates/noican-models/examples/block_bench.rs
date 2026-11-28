@@ -1,4 +1,4 @@
-//! See docs/adr/0001-realtime-audio-rules.md.
+//! See docs/adr/0001-realtime-audio-rules.md#realtime-block-budget.
 
 #![expect(
     clippy::print_stdout,

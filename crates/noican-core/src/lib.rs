@@ -1,4 +1,4 @@
-//! See docs/adr/0007-dsp-stages.md.
+//! See docs/adr/0007-dsp-stages.md#core-engine-architecture.
 
 pub mod capture;
 pub mod error;

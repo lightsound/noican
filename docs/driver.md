@@ -87,7 +87,7 @@ a gitlink bump to a driver the app cannot recognize fails CI.
 
 The prefix is the driver's namespace, so the app never creates a device
 inside it: its private aggregate is named outside the prefix
-(docs/adr/0015-device-session.md, "private-aggregate-uid-namespace").
+(docs/adr/0015-device-session.md#private-aggregate-uid-namespace).
 
 Tell an installed bundle's shape from its version string (0.1.0:
 2 channels, 0.2.0: 1 channel):

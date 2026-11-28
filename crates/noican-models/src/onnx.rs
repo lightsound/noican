@@ -9,7 +9,7 @@ use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::value::{DynValue, Tensor};
 
-/// See docs/adr/0008-model-runtime.md.
+/// See docs/adr/0008-model-runtime.md#onnx-single-threaded-streaming.
 ///
 /// # Errors
 ///

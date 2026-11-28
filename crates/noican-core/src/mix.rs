@@ -1,18 +1,18 @@
-//! See docs/adr/0007-dsp-stages.md.
+//! See docs/adr/0007-dsp-stages.md#dry-wet-intensity-mix.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 const DRY_RING_CAPACITY: usize = 1 << 16;
 
-/// See docs/adr/0007-dsp-stages.md.
+/// See docs/adr/0007-dsp-stages.md#dry-wet-intensity-mix.
 #[derive(Clone, Debug)]
 pub struct IntensityControl {
     bits: Arc<AtomicU32>,
 }
 
 impl IntensityControl {
-    /// See docs/adr/0007-dsp-stages.md.
+    /// See docs/adr/0007-dsp-stages.md#dry-wet-intensity-mix.
     #[must_use]
     pub fn new(initial: f32) -> Self {
         let control = Self {
@@ -22,7 +22,7 @@ impl IntensityControl {
         control
     }
 
-    /// See docs/adr/0007-dsp-stages.md.
+    /// See docs/adr/0007-dsp-stages.md#dry-wet-intensity-mix.
     pub fn set(&self, intensity: f32) {
         if !intensity.is_finite() {
             return;

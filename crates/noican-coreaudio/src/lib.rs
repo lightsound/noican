@@ -1,4 +1,4 @@
-//! See docs/adr/0003-coreaudio-transport.md.
+//! See docs/adr/0003-coreaudio-transport.md#coreaudio-transport-architecture.
 
 use thiserror::Error;
 
@@ -42,7 +42,7 @@ pub const fn check_monitor_device(_device: u32) -> Result<(), CoreAudioError> {
     Err(CoreAudioError::UnsupportedPlatform)
 }
 
-/// See docs/adr/0001-realtime-audio-rules.md.
+/// See docs/adr/0001-realtime-audio-rules.md#worker-block-size.
 pub const WORKER_BLOCK_SAMPLES: usize = 480;
 
 /// AUHAL lifecycle failures.
@@ -65,25 +65,25 @@ pub enum CoreAudioError {
     /// A control call needs a running transport.
     #[error("the engine transport is not running")]
     NotRunning,
-    /// See docs/adr/0005-preview-monitor.md.
+    /// See docs/adr/0005-preview-monitor.md#preview-monitor-isolation.
     #[error("preview monitor failed: {0}")]
     Monitor(String),
-    /// See docs/adr/0005-preview-monitor.md.
+    /// See docs/adr/0005-preview-monitor.md#monitor-refusal-message-contract.
     #[error("the system output is a virtual loopback device")]
     MonitorLoopbackOutput {
         /// UID of the rejected default output device.
         uid: String,
     },
-    /// See docs/adr/0005-preview-monitor.md.
+    /// See docs/adr/0005-preview-monitor.md#monitor-refusal-message-contract.
     #[error("the system output is a multi-output device")]
     MonitorAggregateOutput {
         /// UID of the rejected default output device.
         uid: String,
     },
-    /// See docs/adr/0005-preview-monitor.md.
+    /// See docs/adr/0005-preview-monitor.md#monitor-refusal-message-contract.
     #[error("the built-in speakers would feed back")]
     MonitorSpeakerOutput,
-    /// See docs/adr/0004-aggregate-output-routing.md.
+    /// See docs/adr/0004-aggregate-output-routing.md#virtual-output-routing-fail-closed.
     #[error("virtual output routing failed: {0}")]
     OutputRouting(String),
     /// This build does not target macOS.
@@ -92,7 +92,7 @@ pub enum CoreAudioError {
 }
 
 #[cfg(not(target_os = "macos"))]
-/// See docs/adr/0015-device-session.md.
+/// See docs/adr/0015-device-session.md#non-macos-portable-stub.
 #[derive(Debug)]
 pub struct Runtime;
 

@@ -3,9 +3,9 @@
 Status: Accepted
 
 Moved from code comments on 2026-11-21 (the delete-comment pass).
-The original wording is preserved under each topic; the source
-location of each comment at the time of the move (commit 397e3df)
-is noted above its text.
+The original wording is preserved under each topic; the file and
+symbol each comment was attached to are noted above its text and
+checked by `scripts/adr-links.py`.
 
 ## abandoned-replacement-stage
 
@@ -26,7 +26,7 @@ could replace it.
 
 ## click-free-stage-switching
 
-Source: `crates/noican-core/src/switch.rs` lines 1–17.
+Source: `crates/noican-core/src/switch.rs`.
 
 Lock-free publication and click-free activation of prepared stages.
 
@@ -46,20 +46,20 @@ jump to the new stage's latency exactly at the silent fade boundary,
 so switching stages with different latencies stays click-free at any
 intensity.
 
-Source: `crates/noican-core/src/switch.rs` lines 33–36.
+Source: `crates/noican-core/src/switch.rs`, `StagePublisher`.
 
 Producer-side handle used by the UI or model-loader thread.
 
 The queue has one preallocated slot: publishing a newer stage replaces an
 older unconsumed stage without locking the inference thread.
 
-Source: `crates/noican-core/src/switch.rs` lines 52–54.
+Source: `crates/noican-core/src/switch.rs`, `StagePublisher::publish`.
 
 Publishes a fully initialized stage for activation by the inference
 thread. Returns the id of a previously published stage that was
 superseded before the inference thread consumed it, if any.
 
-Source: `crates/noican-core/src/switch.rs` lines 70–74.
+Source: `crates/noican-core/src/switch.rs`, `SwitchingEngine`.
 
 Inference-thread owner of the active stage.
 
@@ -67,13 +67,13 @@ Retrieving a published replacement requires no mutex and no heap
 allocation; the pending stage is warmed (fed input) while the current one
 fades out, so its internal pipeline is primed at activation time.
 
-Source: `crates/noican-core/src/switch.rs` lines 96–98.
+Source: `crates/noican-core/src/switch.rs`, `MAX_FADE_SAMPLES`.
 
 Longest supported fade half. Bounds the fade so the internal gain
 arithmetic is exact (`u16` → `f32` is lossless); ~1.37 s at 48 kHz,
 orders of magnitude above any sensible switch fade.
 
-Source: `crates/noican-core/src/switch.rs` lines 102–115.
+Source: `crates/noican-core/src/switch.rs`, `SwitchingEngine::new`.
 
 Creates a switching engine and its producer-side publisher.
 
@@ -90,7 +90,7 @@ touching the engine.
 Returns [`StageError::Unsupported`] when `fade_samples` is zero or
 exceeds [`MAX_FADE_SAMPLES`].
 
-Source: `crates/noican-core/src/switch.rs` lines 165–176.
+Source: `crates/noican-core/src/switch.rs`, `SwitchingEngine::process_block`.
 
 Processes one block at the engine rate and advances any switch
 transition. `output.len()` must equal `input.len()`.
@@ -105,19 +105,19 @@ only ever changes at the silent fade boundary.
 
 Propagates [`StageError`] from the active or warming stage.
 
-Source: `crates/noican-core/src/switch.rs` lines 231–233.
+Source: `crates/noican-core/src/switch.rs`, `SwitchingEngine::activate_pending`.
 
 `prepared` (now holding the superseded stage) is dropped here, on
 the inference thread — allowed, since only the audio I/O callback
 is allocation-free (docs/tech-research.md §9).
 
-Source: `crates/noican-core/src/switch.rs` lines 238–240.
+Source: `crates/noican-core/src/switch.rs`, `ratio`.
 
 Exact fade gain: both operands fit `u16` (enforced by
 [`MAX_FADE_SAMPLES`] in [`SwitchingEngine::new`]) and `u16` → `f32` is
 lossless, so no precision-loss opt-out is needed.
 
-Source: `crates/noican-core/src/switch.rs` lines 426–429.
+Source: `crates/noican-core/src/switch.rs`, `tests::switching_between_latencies_at_partial_intensity_stays_click_free`.
 
 The dry-compensation delay jumps from the old stage's latency
 to the new one's exactly at the silent fade boundary; on a
@@ -126,7 +126,7 @@ step. Bounded sample-to-sample deltas prove the fade masks it.
 
 ## composite-stage-dependencies
 
-Source: `crates/noican-models/src/factory.rs` lines 54–56.
+Source: `crates/noican-models/src/factory.rs`, `dependency_file_path`.
 
 Path of file `index` of the registry entry `spec` depends on
 ([`ModelSpec::depends_on`], one level), for composite stages that
@@ -134,7 +134,7 @@ run another entry's weights.
 
 ## core-engine-architecture
 
-Source: `crates/noican-core/src/lib.rs` lines 1–26.
+Source: `crates/noican-core/src/lib.rs`.
 
 Core audio-processing abstractions for the Noican engine.
 
@@ -165,7 +165,7 @@ models identically (docs/tech-research.md §12, Phase 0).
 
 ## dry-wet-intensity-mix
 
-Source: `crates/noican-core/src/mix.rs` lines 1–23.
+Source: `crates/noican-core/src/mix.rs`.
 
 Dry/wet intensity blending with a latency-compensated dry path.
 
@@ -191,7 +191,7 @@ both paths line up. Intensity changes are additionally smoothed with
 a per-block linear ramp, so a slider drag never steps ("zipper"
 noise).
 
-Source: `crates/noican-core/src/mix.rs` lines 28–32.
+Source: `crates/noican-core/src/mix.rs`, `DRY_RING_CAPACITY`.
 
 Capacity of the dry-compensation ring in samples at the engine rate.
 A power of two (mask indexing, no division on the audio path) covering
@@ -199,7 +199,7 @@ A power of two (mask indexing, no division on the audio path) covering
 reported latency. Larger reported latencies are clamped to this bound
 (partial compensation instead of an out-of-range read).
 
-Source: `crates/noican-core/src/mix.rs` lines 35–40.
+Source: `crates/noican-core/src/mix.rs`, `IntensityControl`.
 
 Control-plane handle to the dry/wet intensity: one shared atomic.
 
@@ -208,24 +208,24 @@ microphone. Cloning shares the same underlying value, so the control
 plane keeps one handle while the inference thread's mixer reads the
 other — no lock, no rebuild, safe to update at UI slider rates.
 
-Source: `crates/noican-core/src/mix.rs` lines 47–48.
+Source: `crates/noican-core/src/mix.rs`, `IntensityControl::new`.
 
 Creates a control initialized to `initial` (clamped to `0.0..=1.0`;
 a non-finite value falls back to fully processed).
 
-Source: `crates/noican-core/src/mix.rs` lines 58–61.
+Source: `crates/noican-core/src/mix.rs`, `IntensityControl::set`.
 
 Publishes a new intensity, clamped to `0.0..=1.0`. Non-finite
 values are ignored (the previous intensity stays), so a corrupt
 caller value can never poison the audio path. One atomic store —
 never blocks, safe from any thread.
 
-Source: `crates/noican-core/src/mix.rs` lines 79–80.
+Source: `crates/noican-core/src/mix.rs`, `IntensityControl::default`.
 
 Fully processed (100%): the engine behaves exactly as it did
 before the intensity control existed until someone moves it.
 
-Source: `crates/noican-core/src/mix.rs` lines 86–90.
+Source: `crates/noican-core/src/mix.rs`, `DryWetMixer`.
 
 Inference-thread side of the intensity control: blends the delayed dry
 signal into the wet block in place.
@@ -233,7 +233,7 @@ signal into the wet block in place.
 Owned by [`crate::SwitchingEngine`]; not constructed on the audio
 path (the ring allocation happens on the control plane).
 
-Source: `crates/noican-core/src/mix.rs` lines 115–124.
+Source: `crates/noican-core/src/mix.rs`, `DryWetMixer::blend`.
 
 Blends `dry` (the raw engine-rate input) into `wet` in place:
 `wet[i] = w * wet[i] + (1 - w) * dry[i - dry_delay]`, with `w`
@@ -246,31 +246,31 @@ not comb-filter. The dry history is fed continuously (even at
 real history, not silence. Real-time safe: no allocation, no
 locks, one atomic read per block.
 
-Source: `crates/noican-core/src/mix.rs` lines 131–133.
+Source: `crates/noican-core/src/mix.rs`, `DryWetMixer::blend`.
 
 Lossless `u16 → f32` ramp arithmetic, mirroring `switch::ratio`
 (blocks are 10 ms; anything above 65535 samples still ramps,
 just marginally faster than one block).
 
-Source: `crates/noican-core/src/mix.rs` lines 139–141.
+Source: `crates/noican-core/src/mix.rs`, `DryWetMixer::blend`.
 
 For blocks over u16::MAX samples the saturated `len` makes the
 per-sample step too large, so clamp to the ramp segment — the
 block lands exactly on `target` instead of overshooting.
 
-Source: `crates/noican-core/src/mix.rs` lines 149–150.
+Source: `crates/noican-core/src/mix.rs`, `DryWetMixer::blend`.
 
 At intensity 1.0 this is exactly `wet` (adding a true zero),
 so full strength is bit-identical to the pre-mixer engine.
 
-Source: `crates/noican-core/src/mix.rs` lines 153–154.
+Source: `crates/noican-core/src/mix.rs`, `DryWetMixer::blend`.
 
 Land exactly on the target: the per-sample accumulation may
 carry rounding, and the next block must start from the truth.
 
 ## dry-wet-strength-contract
 
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift` lines 165–170.
+Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine.setIntensity`.
 
 Publishes the dry/wet strength (0 = raw microphone, 1 = fully
 processed; out-of-range values clamp, non-finite values are
@@ -281,26 +281,26 @@ the preview monitor.
 
 ## dsp-window-semantics
 
-Source: `crates/noican-models/src/dsp.rs` lines 8–11.
+Source: `crates/noican-models/src/dsp.rs`, `vorbis_window`.
 
 Vorbis window: `w[i] = sin(pi/2 * sin^2(pi/2 * (i + 0.5) / (N/2)))`.
 
 Satisfies squared-COLA at 50% overlap, so analysis + synthesis
 windowing needs no extra normalization (DPDFNet, DeepFilterNet family).
 
-Source: `crates/noican-models/src/dsp.rs` lines 29–30.
+Source: `crates/noican-models/src/dsp.rs`, `periodic_hann_window`.
 
 Periodic Hann window (`torch.hann_window` semantics):
 `w[n] = 0.5 * (1 - cos(2*pi*n / N))` — divisor `N`, not `N - 1`.
 
-Source: `crates/noican-models/src/dsp.rs` lines 47–48.
+Source: `crates/noican-models/src/dsp.rs`, `sqrt_hann_window`.
 
 Square root of the periodic Hann window (`hann_sqrt` in DPDFNet
 metadata for some profiles).
 
 ## fft-interleaved-layout
 
-Source: `crates/noican-models/src/dsp.rs` lines 100–105.
+Source: `crates/noican-models/src/dsp.rs`, `FftPair::forward_interleaved`.
 
 Forward transform of `frame` (length `n`), writing interleaved
 `[re0, im0, re1, im1, ...]` into `spec` (length `2 * bins`).
@@ -309,7 +309,7 @@ Forward transform of `frame` (length `n`), writing interleaved
 
 Returns [`StageError::Inference`] on an internal FFT failure.
 
-Source: `crates/noican-models/src/dsp.rs` lines 126–131.
+Source: `crates/noican-models/src/dsp.rs`, `FftPair::inverse_interleaved`.
 
 Inverse transform of interleaved `spec` (length `2 * bins`) into
 `frame` (length `n`), scaled by `1 / n` (numpy `irfft` semantics).
@@ -318,20 +318,20 @@ Inverse transform of interleaved `spec` (length `2 * bins`) into
 
 Returns [`StageError::Inference`] on an internal FFT failure.
 
-Source: `crates/noican-models/src/dsp.rs` lines 141–141.
+Source: `crates/noican-models/src/dsp.rs`, `FftPair::inverse_interleaved`.
 
 realfft requires the Nyquist/DC imaginary parts to be zero.
 
 ## fft-scaling-semantics
 
-Source: `crates/noican-models/src/dsp.rs` lines 54–55.
+Source: `crates/noican-models/src/dsp.rs`, `FftPair`.
 
 A paired forward/inverse real FFT of a fixed size with numpy
 `rfft`/`irfft` scaling: forward is unnormalized, inverse divides by `n`.
 
 ## framed-stage-adapter
 
-Source: `crates/noican-core/src/framed.rs` lines 1–7.
+Source: `crates/noican-core/src/framed.rs`.
 
 Adapter turning a fixed-frame, fixed-rate [`FrameProcessor`] into a
 [`Stage`] operating at [`ENGINE_SAMPLE_RATE`] with arbitrary block sizes.
@@ -341,7 +341,7 @@ absorbed (docs/tech-research.md §12): the engine always exchanges 48 kHz
 blocks; the adapter resamples (integer factor), accumulates full model
 frames, and re-emits at the engine rate with a fixed, reported latency.
 
-Source: `crates/noican-core/src/framed.rs` lines 32–39.
+Source: `crates/noican-core/src/framed.rs`, `FramedStage::new`.
 
 Wraps `processor`. `max_block_len` is the largest block the engine
 will pass to [`Stage::process_block`] (used only to pre-size buffers;
@@ -354,7 +354,7 @@ does not divide [`ENGINE_SAMPLE_RATE`].
 
 ## framed-stage-latency
 
-Source: `crates/noican-core/src/framed.rs` lines 56–58.
+Source: `crates/noican-core/src/framed.rs`, `FramedStage::new`.
 
 Latency: one full round of buffering, plus both filters' group
 delays when resampling. Priming the output FIFO with `round_len`
@@ -362,7 +362,7 @@ zeros guarantees process_block can always pop a full block.
 
 ## hush-absolute-level
 
-Source: `crates/noican-cli/src/eval_run.rs` lines 108–112.
+Source: `crates/noican-cli/src/eval_run.rs`, `clipping_warning`.
 
 A warning line when `samples` exceed full scale: every written WAV is
 clamped to ±1.0 on the way to 16-bit, so the listening set would be
@@ -372,7 +372,7 @@ absolute level, so the level the user chose must reach the model.
 
 ## hush-band-gain-window
 
-Source: `crates/noican-models/src/stages/hush_wideband.rs` lines 156–167.
+Source: `crates/noican-models/src/stages/hush_wideband.rs`, `BAND_GAIN_BINS`.
 
 STFT bins of Hush's spectrum whose gain steers the added band:
 4.0–7.0 kHz inclusive (`bin × 16 000 / 320` Hz, 50 Hz per bin).
@@ -389,12 +389,12 @@ this stage.
 
 ## hush-core-contract
 
-Source: `crates/noican-models/src/stages/hush_wideband.rs` lines 144–145.
+Source: `crates/noican-models/src/stages/hush_wideband.rs`, `CORE_SAMPLE_RATE`.
 
 Hush's native rate; the core is rejected at construction if the
 tarball says otherwise.
 
-Source: `crates/noican-models/src/stages/hush_wideband.rs` lines 314–321.
+Source: `crates/noican-models/src/stages/hush_wideband.rs`, `HushWidebandStage::new`.
 
 Loads the Hush core from its tarball (the `hush` registry entry's
 file) and wraps it.
@@ -407,7 +407,7 @@ and [`StageError::Unsupported`] when it is not the 16 kHz /
 
 ## hush-failure-frame-handling
 
-Source: `crates/noican-models/src/stages/hush_wideband.rs` lines 378–382.
+Source: `crates/noican-models/src/stages/hush_wideband.rs`, `HushWidebandStage::process_frame`.
 
 `apply` and `split` have queued this frame's per-sample state;
 `merge` and `restore` must consume it even when the core fails,
@@ -417,7 +417,7 @@ block and keeps calling). A failed frame is a muted frame.
 
 ## hush-high-band-gating
 
-Source: `crates/noican-models/src/stages/hush_wideband.rs` lines 675–679.
+Source: `crates/noican-models/src/stages/hush_wideband.rs`, `tests::gate_closes_when_the_core_hears_nothing`.
 
 With real weights: the gate closes. A 12 kHz tone lies entirely
 in the band the core never sees, so the core's input is below its
@@ -425,7 +425,7 @@ silence threshold, `band_gain` is 0, and the tone must not reach
 the output — an ungated band-split (option A in the module docs)
 would pass it at full level.
 
-Source: `crates/noican-models/src/stages/hush_wideband.rs` lines 704–706.
+Source: `crates/noican-models/src/stages/hush_wideband.rs`, `tests::gate_closes_when_the_core_hears_nothing`.
 
 The tone's abrupt onset is broadband and leaks through the
 decimator for the first frame; the gate must be shut from the
@@ -433,22 +433,22 @@ second frame on.
 
 ## hush-input-leveler
 
-Source: `crates/noican-models/src/stages/hush_wideband.rs` lines 476–476.
+Source: `crates/noican-models/src/stages/hush_wideband.rs`, `tests::leveler_and_recombiner_are_transparent_with_an_identity_core`.
 
 0.6× the reference signal: ≈ −12 dBFS, 25 dB above the target.
 
-Source: `crates/noican-models/src/stages/hush_wideband.rs` lines 778–781.
+Source: `crates/noican-models/src/stages/hush_wideband.rs`, `tests::hot_input_is_trimmed_for_the_core_and_restored_at_the_output`.
 
 With real weights: hot input reaches the core at the target level
 and leaves the stage at the input's own level (plus the makeup
 gain), so the leveler changes what Hush decides, not how loud the
 stage is.
 
-Source: `crates/noican-models/src/stages/hush_wideband.rs` lines 798–798.
+Source: `crates/noican-models/src/stages/hush_wideband.rs`, `tests::hot_input_is_trimmed_for_the_core_and_restored_at_the_output`.
 
 Speech-like tone pair at ≈ −20 dBFS: 17 dB above the target.
 
-Source: `crates/noican-models/src/stages/hush_wideband.rs` lines 874–877.
+Source: `crates/noican-models/src/stages/hush_wideband.rs`, `tests::wideband_matches_hush_on_band_limited_input`.
 
 Band-limit the test signal the same way the 16 kHz path does,
 so the high band the wideband stage would add is ~zero. At
@@ -473,7 +473,7 @@ asserted bound of the makeup gain plus 3 dB.
 
 ## hush-makeup-gain
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 16–45.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`, `HUSH_MAKEUP_GAIN_DB`.
 
 Fixed makeup gain applied to Hush's output, in dB.
 
@@ -506,17 +506,17 @@ already at its own clipping point, and a limiter here would distort
 every loud syllable to guard a corner case — so the overshoot is
 accepted and documented instead.
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 65–66.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`, `apply_gain`.
 
 Applies a fixed linear gain in place (the Hush makeup gain hook;
 separated from the model call so it is testable without weights).
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 140–141.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`, `DfTractStage::output_gain`.
 
 Linear output gain (1.0 for DeepFilterNet3; the measured makeup
 gain for Hush — see [`HUSH_MAKEUP_GAIN_DB`]).
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 207–213.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`, `DfTractStage::hush_unity_gain`.
 
 Hush without the makeup gain, for composite stages that apply
 `HUSH_MAKEUP_GAIN_DB` themselves after mixing in other material
@@ -526,26 +526,26 @@ Hush without the makeup gain, for composite stages that apply
 
 Returns [`StageError::Inference`] when the tarball cannot be loaded.
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 308–309.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`, `DfTractStage::process_frame`.
 
 A pure per-sample gain: latency, alignment, and the
 cross-correlation residual are unaffected.
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 342–345.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`, `tests::hush_makeup_gain_cancels_every_measured_deficit`.
 
 The measured voiced-frame RMS deficits across the corpus in
 the constant's doc comment (dB versus passthrough). The
 constant must bring every one of them into the ±1 dB
 acceptance band around passthrough.
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 355–358.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`, `tests::hush_makeup_gain_cancels_every_measured_deficit`.
 
 The no-clipping-guard design decision: the worst measured raw
 output peak (0.61 on a 0.70-peak input) must stay under full
 scale after the gain — overshoot only enters with inputs
 already at their own clipping point (see the doc comment).
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 419–421.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`, `tests::hush_stage_output_is_scaled_by_the_makeup_gain`.
 
 With real weights, the Hush stage output must be exactly the
 gain-1.0 stage output scaled by the makeup gain — the gain is a
@@ -553,7 +553,7 @@ pure post-multiply, so alignment and residual delay are untouched.
 
 ## hush-wideband-band-split
 
-Source: `crates/noican-models/src/stages/hush_wideband.rs` lines 1–132.
+Source: `crates/noican-models/src/stages/hush_wideband.rs`.
 
 Hush with 48 kHz output: a band-split wrapper around the 16 kHz Hush
 core (`hush-48k` in the registry).
@@ -688,7 +688,7 @@ drift onto a lone second talker as AGC, more state) produced nothing
 better and stopped. Frames the core still skips as silent are trimmed
 input under −70 dBFS; the zero output there is accepted as before.
 
-Source: `crates/noican-models/src/stages/hush_wideband.rs` lines 179–184.
+Source: `crates/noican-models/src/stages/hush_wideband.rs`, `BandRecombiner`.
 
 Splits the engine-rate input into Hush's band and the remainder, and
 recombines Hush's output with the (gated) remainder.
@@ -697,12 +697,12 @@ Pure DSP, no model: the core sits between [`Self::split`] and
 [`Self::merge`] so the reconstruction can be tested with an identity
 core.
 
-Source: `crates/noican-models/src/stages/hush_wideband.rs` lines 236–237.
+Source: `crates/noican-models/src/stages/hush_wideband.rs`, `BandRecombiner::split`.
 
 Consumes one 480-sample frame: returns the 160-sample low band for
 the core and queues the aligned high band for [`Self::merge`].
 
-Source: `crates/noican-models/src/stages/hush_wideband.rs` lines 288–292.
+Source: `crates/noican-models/src/stages/hush_wideband.rs`, `HushWidebandStage`.
 
 Hush with the input's upper band added back under Hush's own gate.
 
@@ -710,14 +710,14 @@ A 48 kHz [`FrameProcessor`] with 480-sample frames; wrapped by
 [`noican_core::FramedStage`] it reports the same latency as `hush`
 (1080 samples, 22.5 ms).
 
-Source: `crates/noican-models/src/stages/hush_wideband.rs` lines 903–904.
+Source: `crates/noican-models/src/stages/hush_wideband.rs`, `tests::wideband_matches_hush_on_band_limited_input`.
 
 The residual high band of a band-limited input is the
 resampler's stopband (−60 dB and below).
 
 ## intensity-change-ungated
 
-Source: `macos/NoicanState/Sources/NoicanState/AppEvent.swift` lines 24–28.
+Source: `macos/NoicanState/Sources/NoicanState/AppEvent.swift`, `AppEvent.intensityChanged`.
 
 The strength slider moved (0 = raw microphone, 1 = fully
 processed). Applying it is a lock-free atomic write on the engine
@@ -725,7 +725,7 @@ side, so this claims no transition and is accepted even while
 busy — gating it would make the slider feel dead during a model
 download.
 
-Source: `macos/Sources/NoicanMenuBar/MenuView.swift` lines 310–314.
+Source: `macos/Sources/NoicanMenuBar/MenuView.swift`, `MenuView.strengthSection`.
 
 Dry/wet mix applied inside the inference worker as one
 atomic value: dragging never rebuilds the engine and
@@ -735,7 +735,7 @@ plays the same mix the virtual microphone receives.
 
 ## intensity-dry-wet-mix
 
-Source: `crates/noican-ffi/src/lib.rs` lines 825–840.
+Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_set_intensity`.
 
 Sets the dry/wet intensity ("strength").
 
@@ -756,14 +756,14 @@ monitor. Returns 0, or -1 for a null handle.
 
 ## intensity-lock-free-atomic
 
-Source: `macos/NoicanState/Sources/NoicanState/AppModel.swift` lines 175–178.
+Source: `macos/NoicanState/Sources/NoicanState/AppModel.swift`, `AppModel.intensity`.
 
 Dry/wet strength (0 = raw microphone, 1 = fully processed;
 default 1). Slider state like the pickers — it persists across
 engine lifecycles and applying it is a lock-free atomic write,
 so changes never claim an engine transition.
 
-Source: `macos/Sources/NoicanMenuBar/AppState.swift` lines 162–164.
+Source: `macos/Sources/NoicanMenuBar/AppState.swift`, `AppState.setIntensity`.
 
 Strength slider binding setter (0 = raw microphone, 1 = fully
 processed). Not busy-gated: applying it is a lock-free atomic
@@ -771,7 +771,7 @@ write, so the slider stays live even during a model download.
 
 ## intensity-slider-semantics
 
-Source: `macos/NoicanState/Sources/NoicanState/AppReducer.swift` lines 162–166.
+Source: `macos/NoicanState/Sources/NoicanState/AppReducer.swift`, `AppReducer.intensityChanged`.
 
 The strength slider is picker-like state with an atomic-write
 effect: it claims no engine transition (the engine applies it
@@ -781,7 +781,7 @@ lifecycles and seeds the next start.
 
 ## leveler-delay-contract
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 187–189.
+Source: `crates/noican-models/src/stages/leveler.rs`, `InputLeveler::new`.
 
 A leveler for `frame_len`-sample frames at `sample_rate`, whose
 restore runs `delay` samples after the apply (the wrapped core's
@@ -789,7 +789,7 @@ total output delay at that rate).
 
 ## leveler-design
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 1–57.
+Source: `crates/noican-models/src/stages/leveler.rs`.
 
 Input leveler for level-sensitive cores: trims the input so the
 loudest sustained talker sits at a target level, and undoes the trim
@@ -851,13 +851,13 @@ dynamics back. Only the core's decisions change.
 
 ## leveler-test-scenarios
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 521–523.
+Source: `crates/noican-models/src/stages/leveler.rs`, `tests::quiet_sentences_of_the_same_talker_stay_above_the_core_floor`.
 
 The owner's spread: sentences at −20 dBFS and at −42 dBFS. The
 anchor pins to the loud ones; the quiet ones must still reach the
 core at or above the floor, and the loud ones at the target.
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 576–579.
+Source: `crates/noican-models/src/stages/leveler.rs`, `tests::a_pause_lets_the_floor_follow_the_next_sentence_at_once`.
 
 The owner's pauses sit far under the speech floor. The hold and
 the fall of the floor's peak-hold run through them, so a quiet
@@ -866,7 +866,7 @@ frame — the first second is not spent in the gated region.
 
 ## leveler-tuning
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 61–69.
+Source: `crates/noican-models/src/stages/leveler.rs`, `HUSH_TARGET_LEVEL_DBFS`.
 
 Anchor target. Hush passes a lone voice at parity around −37 dBFS
 segment RMS (`docs/hush-48k-eval.md`, level sweep: own-voice SI-SDR
@@ -878,18 +878,18 @@ loud frames, a few dB above the segment RMS, so the target is set
 12.4. −35 is the flattest, i.e. the most level-independent, and
 stays within 0.3 dB of the unleveled stage's best case (14.4).
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 72–73.
+Source: `crates/noican-models/src/stages/leveler.rs`, `SPEECH_FLOOR_DBFS`.
 
 Frames quieter than this do not move the anchor (room tone and
 pauses; VCTK stand-in speech frames sit above −55 dBFS at the target).
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 76–78.
+Source: `crates/noican-models/src/stages/leveler.rs`, `ATTACK_DB_PER_SECOND`.
 
 Anchor slew upward. 20 dB/s: a talker 15 dB above the target is
 trimmed to it within ≈ 1 s (2.4 s to settle within 1 dB on the
 stand-in), while a 100 ms transient moves the anchor by 2 dB.
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 81–86.
+Source: `crates/noican-models/src/stages/leveler.rs`, `RELEASE_DB_PER_SECOND`.
 
 Anchor slew downward for frames within [`RELEASE_GATE_DB`] of the
 anchor. 3 dB/s: a within-sentence dip of 10 dB lasting 300 ms
@@ -898,7 +898,7 @@ is followed within seconds. Measured against 2 and 10 dB/s on the
 stand-in (10 dB/s let the trim breathe with the syllables and left
 the core 9 dB hot; 2 dB/s settled in 13 s instead of 2.4 s).
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 89–98.
+Source: `crates/noican-models/src/stages/leveler.rs`, `RELEASE_GATE_DB`.
 
 Frames more than this far under the anchor release it only at
 [`LEAK_DB_PER_SECOND`]. Without the gate, three seconds of breaths
@@ -911,18 +911,18 @@ the harness's +12 dB SIR sits outside it and cannot pull the trim
 down within their turn, while the talker's own softer sentences
 (a few dB) are still followed at the release rate.
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 101–103.
+Source: `crates/noican-models/src/stages/leveler.rs`, `LEAK_DB_PER_SECOND`.
 
 Anchor crawl for frames under the release gate: a talker who steps
 20 dB back from the microphone regains full level in 40 s rather
 than never.
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 106–107.
+Source: `crates/noican-models/src/stages/leveler.rs`, `MAX_ATTENUATION_DB`.
 
 Deepest trim. Input hotter than target + 30 dB (−7 dBFS RMS) is at
 the microphone's own clipping point; the trim stops there.
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 110–119.
+Source: `crates/noican-models/src/stages/leveler.rs`, `CORE_FLOOR_DBFS`.
 
 The talker's sustained level is not trimmed below this. It is
 measured on a peak-hold of the frame level (see
@@ -935,7 +935,7 @@ at −38 the second flips (−2.1 dB). The floor therefore keeps the
 talker's quiet sentences audible without lifting a second talker
 into the primary window.
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 122–132.
+Source: `crates/noican-models/src/stages/leveler.rs`, `FLOOR_HOLD_SECONDS`.
 
 How long the peak-hold level the floor is measured on keeps its
 value before it starts to fall. The floor must react to a *sentence*
@@ -949,7 +949,7 @@ sentences, quiet-sentence SI-SDR): 1.0 s → 13.6 / 9.1 dB, 0.6 s →
 within 0.2 dB while a 1 s pause (a sentence boundary) already
 leaves 0.4 s of fall before the next sentence.
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 135–140.
+Source: `crates/noican-models/src/stages/leveler.rs`, `FLOOR_DECAY_DB_PER_SECOND`.
 
 Fall rate of the peak-hold level once the hold has run out. With
 the 0.6 s hold, a 1.0 s pause leaves the next quiet sentence 3 dB
@@ -958,13 +958,13 @@ pauses of 1.1 s and longer hand it over clean. Measured against
 20 dB/s (static −22 dBFS row 13.5 vs 13.4 dB; dynamic quiet
 sentences 10.8 / 14.8 vs 11.1 / 15.8 dB).
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 538–540.
+Source: `crates/noican-models/src/stages/leveler.rs`, `tests::quiet_sentences_of_the_same_talker_stay_above_the_core_floor`.
 
 Skip the first 1.5 s of every sentence: the floor's
 peak-hold (0.6 s hold, then 30 dB/s: 1.3 s for the 22 dB
 step) and the anchor's attack are still moving there.
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 585–589.
+Source: `crates/noican-models/src/stages/leveler.rs`, `tests::a_pause_lets_the_floor_follow_the_next_sentence_at_once`.
 
 1.2 s of digital silence — an ordinary sentence boundary, and
 just past the 0.6 s hold + 0.5 s fall the constants give for a
@@ -974,7 +974,7 @@ the tuning: with the earlier 1 s hold and 20 dB/s fall the
 
 ## microphone-switch-fallback
 
-Source: `macos/NoicanState/Sources/NoicanState/AppReducer.swift` lines 251–255.
+Source: `macos/NoicanState/Sources/NoicanState/AppReducer.swift`, `AppReducer.microphoneSelected`.
 
 A live change rebuilds the transport with the same model and
 mode (a brief gap is inherent). If the rebuild itself fails,
@@ -982,7 +982,7 @@ the previous device (which was working a moment ago) is
 restored by the `startCompleted` failure transition instead of
 leaving the session dead.
 
-Source: `macos/NoicanState/Sources/NoicanState/AppReducer.swift` lines 293–298.
+Source: `macos/NoicanState/Sources/NoicanState/AppReducer.swift`, `AppReducer.startCompleted`.
 
 A failed live microphone switch must not kill the session:
 fall back to the device that was working a moment ago —
@@ -993,7 +993,7 @@ list.
 
 ## peak-hold-rearm-policy
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 227–238.
+Source: `crates/noican-models/src/stages/leveler.rs`, `InputLeveler::track_sustained`.
 
 Peak-hold of the frame level: rises at once, holds for
 `FLOOR_HOLD_SECONDS` after the last frame at its level, then falls
@@ -1008,28 +1008,28 @@ speech time — so after a pause longer than the hold the next
 sentence sets it on its first frame, whatever its level, and the
 floor is right for that sentence from the start.
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 249–252.
+Source: `crates/noican-models/src/stages/leveler.rs`, `InputLeveler::track_sustained`.
 
 Landed on the frame level: this frame *is* the
 sustained level, so it re-arms the hold like any other
 peak. Otherwise a level trailing off for longer than
 the hold would ride down with the hold spent.
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 615–618.
+Source: `crates/noican-models/src/stages/leveler.rs`, `tests::a_short_pause_keeps_the_floor_held`.
 
 The other half of the hold: a pause shorter than it (a breath, a
 comma) must not release the floor, or every loud sentence's soft
 syllables would be lifted onto it and the next onset would reach
 the core hot.
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 623–626.
+Source: `crates/noican-models/src/stages/leveler.rs`, `tests::a_short_pause_keeps_the_floor_held`.
 
 A steady tone's frames jitter by 1e-5 dB, so how much of the
 hold is left after 4 s of it is arbitrary (only frames at or
 above the peak re-arm it); a sentence ends on a syllable peak,
 so end on one: a frame above the peak re-arms the hold.
 
-Source: `crates/noican-models/src/stages/leveler.rs` lines 641–646.
+Source: `crates/noican-models/src/stages/leveler.rs`, `tests::a_short_pause_keeps_the_floor_held`.
 
 The same after a level that trails off for longer than the
 hold (each frame 0.05 dB under the last, 2 s) and ends on a
@@ -1040,7 +1040,7 @@ it any further.
 
 ## stage-interface
 
-Source: `crates/noican-core/src/stage.rs` lines 38–42.
+Source: `crates/noican-core/src/stage.rs`, `FrameProcessor`.
 
 A fixed-frame mono processor at its native sample rate.
 
@@ -1050,7 +1050,7 @@ differences.
 
 ## stage-latency-alignment
 
-Source: `crates/noican-cli/src/process.rs` lines 16–21.
+Source: `crates/noican-cli/src/process.rs`, `run_stage_aligned`.
 
 Runs `input` through `stage`, compensating the stage's internal buffering
 latency so the output is time-aligned with the input.
@@ -1061,7 +1061,7 @@ Propagates stage processing failures.
 
 ## stage-process-block-contract
 
-Source: `crates/noican-core/src/stage.rs` lines 19–26.
+Source: `crates/noican-core/src/stage.rs`, `Stage::process_block`.
 
 Process one block. `output` must be the same length as `input` and is
 fully overwritten. The stage may impose internal latency: the first
@@ -1072,7 +1072,7 @@ samples it emits are zeros until its pipeline fills.
 Returns [`StageError::BufferLen`] when `output.len() != input.len()`,
 or [`StageError::Inference`] when the backend fails.
 
-Source: `crates/noican-core/src/stage.rs` lines 54–59.
+Source: `crates/noican-core/src/stage.rs`, `FrameProcessor::process_frame`.
 
 Process exactly one frame: `input.len() == output.len() ==`
 [`Self::frame_len`].
@@ -1083,7 +1083,7 @@ Returns [`StageError::Inference`] when the backend fails.
 
 ## stage-threading-model
 
-Source: `crates/noican-core/src/stage.rs` lines 10–14.
+Source: `crates/noican-core/src/stage.rs`, `Stage`.
 
 A streaming mono audio processor operating at [`ENGINE_SAMPLE_RATE`].
 
@@ -1093,7 +1093,7 @@ callback; see docs/tech-research.md §9), but should avoid unbounded work.
 
 ## stereo-channel-averaging
 
-Source: `crates/noican-cli/src/audio.rs` lines 349–352.
+Source: `crates/noican-cli/src/audio.rs`, `tests::stereo_input_is_averaged_not_left_channel_only`.
 
 Regression guard against the candidate-B stereo bug (left channel
 only): the stereo fixture has the tone on the right channel and
@@ -1102,13 +1102,13 @@ amplitude while "left only" would yield silence.
 
 ## strength-alignment
 
-Source: `crates/noican-core/src/capture.rs` lines 582–584.
+Source: `crates/noican-core/src/capture.rs`, `tests::Silent`.
 
 Silent stage with a reported latency, standing in for a model:
 at 50% intensity the engine output is exactly the half-gain,
 delay-compensated dry path.
 
-Source: `crates/noican-core/src/capture.rs` lines 609–616.
+Source: `crates/noican-core/src/capture.rs`, `tests::strength_alignment_survives_the_input_resampler`.
 
 End-to-end strength alignment (the PR #15 C5 measurement, applied
 to the native-capture path): speech-like audio captured at 16 kHz

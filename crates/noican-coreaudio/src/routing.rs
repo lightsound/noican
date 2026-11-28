@@ -1,4 +1,4 @@
-//! See docs/adr/0004-aggregate-output-routing.md.
+//! See docs/adr/0004-aggregate-output-routing.md#aggregate-output-routing.
 
 use crate::CoreAudioError;
 
@@ -6,7 +6,7 @@ use crate::CoreAudioError;
 /// channel" (the device channel renders silence).
 pub const UNMAPPED_CHANNEL: i32 = -1;
 
-/// See docs/adr/0004-aggregate-output-routing.md.
+/// See docs/adr/0004-aggregate-output-routing.md#aggregate-output-routing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VirtualOutputChannels {
     first: u32,
@@ -14,7 +14,7 @@ pub struct VirtualOutputChannels {
 }
 
 impl VirtualOutputChannels {
-    /// See docs/adr/0004-aggregate-output-routing.md.
+    /// See docs/adr/0004-aggregate-output-routing.md#aggregate-output-routing.
     ///
     /// # Errors
     ///
@@ -56,7 +56,7 @@ impl VirtualOutputChannels {
     }
 }
 
-/// See docs/adr/0004-aggregate-output-routing.md.
+/// See docs/adr/0004-aggregate-output-routing.md#aggregate-output-routing.
 ///
 /// # Errors
 ///
@@ -87,7 +87,7 @@ pub fn render_channel_map(
     Ok(map)
 }
 
-/// See docs/adr/0003-coreaudio-transport.md.
+/// See docs/adr/0003-coreaudio-transport.md#split-transport-render-format.
 ///
 /// # Errors
 ///

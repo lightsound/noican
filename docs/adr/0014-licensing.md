@@ -3,13 +3,13 @@
 Status: Accepted
 
 Moved from code comments on 2026-11-21 (the delete-comment pass).
-The original wording is preserved under each topic; the source
-location of each comment at the time of the move (commit 397e3df)
-is noted above its text.
+The original wording is preserved under each topic; the file and
+symbol each comment was attached to are noted above its text and
+checked by `scripts/adr-links.py`.
 
 ## activation-binding-recheck
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/StoredLicense.swift` lines 49–51.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/StoredLicense.swift`, `StoredLicense.belongs`.
 
 Whether the activation was issued for this backend and this Mac.
 Anything else must be activated again (with the stored key) before
@@ -17,7 +17,7 @@ it can be validated.
 
 ## compiled-in-license-configuration
 
-Source: `macos/Sources/NoicanMenuBar/LicenseConfiguration.swift` lines 4–11.
+Source: `macos/Sources/NoicanMenuBar/LicenseConfiguration.swift`, `LicenseConfiguration`.
 
 The license server this build talks to. Compiled in rather than read
 from Info.plist: an unconfigured build runs unrestricted, and a plist
@@ -30,7 +30,7 @@ build" and noise cancellation is not gated.
 
 ## default-model-licensing
 
-Source: `macos/Sources/NoicanMenuBar/AppState.swift` lines 37–40.
+Source: `macos/Sources/NoicanMenuBar/AppState.swift`, `AppState.defaultModelID`.
 
 Model selected on first launch (also labeled "Default" in the
 model list). The default must be a model whose training data is
@@ -39,7 +39,7 @@ notes); of the registered models, only `dfn3` is.
 
 ## device-id-fail-closed
 
-Source: `macos/Sources/NoicanMenuBar/LicenseModel.swift` lines 110–131.
+Source: `macos/Sources/NoicanMenuBar/LicenseModel.swift`, `LicenseModel.hardwareID`.
 
 A salted hash of the hardware UUID: identifies this Mac to the
 local record without sending the UUID anywhere.
@@ -66,7 +66,7 @@ meant to disown.
 
 ## device-identity-migration-detection
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseBackend.swift` lines 31–34.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseBackend.swift`, `DeviceDescriptor.id`.
 
 Opaque per-Mac identifier (a salted hash of the hardware UUID).
 Kept locally with the activation to notice a Keychain that moved
@@ -75,14 +75,14 @@ condition, so a logic-board swap cannot lock the customer out.
 
 ## device-metadata-contract
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseBackend.swift` lines 39–40.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseBackend.swift`, `DeviceDescriptor.metadata`.
 
 Extra facts stored with the activation for support (app and macOS
 versions). Values must be non-empty.
 
 ## keychain-code-identity
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/KeychainLicenseStore.swift` lines 5–9.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/KeychainLicenseStore.swift`, `KeychainLicenseStore`.
 
 Keeps the activation as one generic-password item in the user's login
 Keychain. The item's access control list admits the app that created
@@ -92,7 +92,7 @@ code identity after every rebuild and gets a Keychain access prompt.
 
 ## license-activation-slot-reuse
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseController.swift` lines 145–151.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseController.swift`, `LicenseController.activate`.
 
 Activates a key the customer entered. When this Mac still holds an
 activation (for example after the customer rotated the key in the
@@ -104,7 +104,7 @@ old one can be released in the customer portal).
 
 ## license-backend-portability
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseBackend.swift` lines 3–10.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseBackend.swift`, `LicenseBackend`.
 
 The license server as the app sees it: activate a key on this Mac,
 re-validate that activation, release it. `PolarLicenseBackend` is the
@@ -115,7 +115,7 @@ from Polar) replaces it by conforming to this protocol and changing
 against the new backend on the next launch, so customers never
 re-enter their key.
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseBackend.swift` lines 12–14.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseBackend.swift`, `LicenseBackend.identifier`.
 
 Stable name of the backend, persisted with each activation. A
 stored activation whose identifier differs was issued by another
@@ -123,37 +123,37 @@ backend and is re-activated rather than validated.
 
 ## license-deactivation-semantics
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseBackend.swift` lines 24–25.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseBackend.swift`, `LicenseBackend.deactivate`.
 
 Releases the device slot. An activation the server no longer
 knows counts as released.
 
 ## license-error-taxonomy-grace
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseBackend.swift` lines 67–69.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseBackend.swift`, `LicenseBackendError`.
 
 Backend failures, split by what they mean for a customer who already
 paid: only a definitive answer from the license server may take a
 license away; anything else keeps the offline grace period running.
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseBackend.swift` lines 73–74.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseBackend.swift`, `LicenseBackendError.unavailable`.
 
 No usable answer: offline, timeout, rate limit, server error, or a
 response this build does not understand. `reason` is for the UI.
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseBackend.swift` lines 82–83.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseBackend.swift`, `LicenseRejection.activationRevoked`.
 
 Validation: the key or this Mac's activation is gone — released
 from the customer portal, key rotated, refunded, or revoked.
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseBackend.swift` lines 85–86.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseBackend.swift`, `LicenseRejection.refused`.
 
 Activation refused with the server's explanation: the device limit
 is reached, or the key is revoked, disabled, or expired.
 
 ## license-foreign-activation
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseController.swift` lines 174–177.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseController.swift`, `LicenseController.deactivate`.
 
 Releases this Mac's device slot and forgets the key. An activation
 issued for another Mac (a Keychain carried over by Migration
@@ -162,21 +162,21 @@ would deactivate the other Mac.
 
 ## license-gate-live-session-exemption
 
-Source: `macos/NoicanState/Sources/NoicanState/LicenseGate.swift` lines 4–7.
+Source: `macos/NoicanState/Sources/NoicanState/LicenseGate.swift`, `AppReducer.processingAllowanceChanged`.
 
 Records whether Preview/On may be started. Deliberately no effect
 when the license lapses mid-session: the check runs in the
 background (hourly), and cutting the microphone off in the middle
 of a call is worse than one more session.
 
-Source: `macos/NoicanState/Sources/NoicanState/LicenseGate.swift` lines 20–23.
+Source: `macos/NoicanState/Sources/NoicanState/LicenseGate.swift`, `AppReducer.refusesWithoutLicense`.
 
 The gate on mode taps: a Preview/On tap without a license is
 refused in place like an unsafe Preview (mode and engine stay as
 they are, the reason shows under the control); Off always passes.
 Returns whether the tap was refused.
 
-Source: `macos/NoicanState/Sources/NoicanState/LicenseGate.swift` lines 33–40.
+Source: `macos/NoicanState/Sources/NoicanState/LicenseGate.swift`, `AppReducer.refusesStartWithoutLicense`.
 
 The gate on engine starts, for every path that reaches one (mode
 taps, microphone picks, rate-change rebuilds, the failed-switch
@@ -187,7 +187,7 @@ start) is not restarted. Returns whether the start was refused;
 the refusal leaves the machine and the torn-down engine as they
 are.
 
-Source: `macos/NoicanState/Sources/NoicanState/LicenseGate.swift` lines 49–52.
+Source: `macos/NoicanState/Sources/NoicanState/LicenseGate.swift`, `AppReducer.rebuildsLiveSession`.
 
 Whether a start claimed from `state` replaces a live transport:
 a settled session that is still up, or the fallback of a live
@@ -196,7 +196,7 @@ carried the working device to return to, is still in flight).
 
 ## license-gating
 
-Source: `macos/NoicanState/Sources/NoicanState/AppModel.swift` lines 210–213.
+Source: `macos/NoicanState/Sources/NoicanState/AppModel.swift`, `AppModel.isProcessingAllowed`.
 
 Whether the license lets the user start noise cancellation. Gates
 Preview/On taps and every engine start except a rebuild of a
@@ -205,7 +205,7 @@ interrupted by a license change (see `LicenseGate.swift`).
 
 ## license-keychain-read-retry
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseController.swift` lines 50–53.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseController.swift`, `LicenseController.needsReload`.
 
 Whether the last Keychain read failed (locked Keychain at login,
 a denied access prompt). Every later entry point reads it again
@@ -214,28 +214,28 @@ customer unlicensed for the whole session.
 
 ## license-notice-presentation
 
-Source: `macos/Sources/NoicanMenuBar/LicenseSection.swift` lines 61–62.
+Source: `macos/Sources/NoicanMenuBar/LicenseSection.swift`, `LicenseSection.body`.
 
 Offline, the status caption already says the license
 still works; the reason is detail, not an error.
 
 ## license-offline-grace
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseStatus.swift` lines 27–28.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseStatus.swift`, `LicenseStatus.offline`.
 
 The last verification attempt could not reach the server; the
 license keeps working offline until `graceEndsAt`.
 
 ## license-operation-serialization
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseController.swift` lines 3–4.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseController.swift`, `LicenseActivity`.
 
 The operation in flight, if any. At most one runs at a time; requests
 made while one runs are ignored (the UI disables its buttons).
 
 ## license-processing-gate
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseStatus.swift` lines 35–38.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseStatus.swift`, `LicenseStatus.allowsProcessing`.
 
 The one switch for unlicensed behavior: whether noise cancellation
 (Preview and On) may be started. Everything else in the app —
@@ -244,7 +244,7 @@ regardless of the license.
 
 ## license-recheck-scheduling
 
-Source: `macos/Sources/NoicanMenuBar/LicenseModel.swift` lines 8–13.
+Source: `macos/Sources/NoicanMenuBar/LicenseModel.swift`, `LicenseModel`.
 
 The app's license shell: builds the `LicenseController` from
 `LicenseConfiguration`, publishes its state to the menu, forwards
@@ -253,7 +253,7 @@ re-checks the license hourly (the continuous clock keeps counting
 through sleep, so the first tick after a long sleep comes right away)
 and whenever the network comes back.
 
-Source: `macos/Sources/NoicanMenuBar/LicenseModel.swift` lines 80–82.
+Source: `macos/Sources/NoicanMenuBar/LicenseModel.swift`, `LicenseModel.networkChanged`.
 
 Re-checks when connectivity returns (not on the monitor's first
 report, which the launch check already covers). `refreshIfDue`
@@ -261,14 +261,14 @@ only asks the server when a check is actually due.
 
 ## license-refresh-policy
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseController.swift` lines 98–101.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseController.swift`, `LicenseController.refreshIfDue`.
 
 Launch and hourly entry point: re-activates a record issued by
 another backend or for another Mac with its stored key, and
 re-validates one that is due — including a rejected record, so a
 mistaken rejection heals by itself.
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseController.swift` lines 118–121.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseController.swift`, `LicenseController.isRecheckDue`.
 
 A healthy record is due when its last success needs renewal. A
 rejected or foreign record has no recent success to count from, so
@@ -277,24 +277,24 @@ than asking the server again every hour.
 
 ## license-revalidation-and-grace
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseStatus.swift` lines 61–62.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseStatus.swift`, `LicensePolicy.revalidationInterval`.
 
 A validation older than this is repeated at the next opportunity
 (launch or the hourly check).
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseStatus.swift` lines 64–65.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseStatus.swift`, `LicensePolicy.offlineGracePeriod`.
 
 How long a license keeps working without a successful validation,
 counted from the last one.
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseStatus.swift` lines 96–97.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseStatus.swift`, `LicensePolicy.isRevalidationDue`.
 
 Whether the activation should be validated again. A validation
 time in the future (the clock was set back) is due as well.
 
 ## license-section-folding
 
-Source: `macos/Sources/NoicanMenuBar/LicenseSection.swift` lines 4–8.
+Source: `macos/Sources/NoicanMenuBar/LicenseSection.swift`, `LicenseSection`.
 
 The popover's license section. Without a working license the key
 field is always visible (it is what the refused mode control points
@@ -304,14 +304,14 @@ Mac".
 
 ## license-state-sync
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseController.swift` lines 27–30.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseController.swift`, `LicenseController`.
 
 Runs activation, validation, and deactivation against a
 `LicenseBackend` and keeps the Keychain record and the published
 `LicenseState` in step. Main-actor bound: it is driven by the UI and
 its state feeds the menu directly.
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseController.swift` lines 247–250.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseController.swift`, `LicenseController.finish`.
 
 A definitive answer from the server (yes or no) was received:
 persist it. A Keychain failure is reported but does not undo the
@@ -320,35 +320,35 @@ authoritative (a later read must not bring back an older item).
 
 ## license-status-model
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseStatus.swift` lines 20–21.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseStatus.swift`, `LicenseStatus.unconfigured`.
 
 The build carries no license-server configuration (development
 builds before the Polar organization exists).
 
 ## license-unconfigured-build
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseController.swift` lines 59–60.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseController.swift`, `LicenseController.init`.
 
 `backend` is nil when the build has no license-server
 configuration; the status is then `.unconfigured`.
 
 ## offline-grace-period
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/StoredLicense.swift` lines 22–23.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/StoredLicense.swift`, `StoredLicense.lastValidatedAt`.
 
 Local clock time of the last successful activation or validation;
 the offline grace period counts from here.
 
 ## polar-activation-slot-release
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift` lines 133–134.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift`, `PolarLicenseBackend.activate`.
 
 Activation takes no benefit filter, so a key for another
 product got a slot; give it back before refusing.
 
 ## polar-api-contract
 
-Source: `macos/NoicanLicensing/Tests/NoicanLicensingTests/PolarLicenseBackendTests.swift` lines 6–10.
+Source: `macos/NoicanLicensing/Tests/NoicanLicensingTests/PolarLicenseBackendTests.swift`, `organizationID`.
 
 Request and response shapes follow Polar's customer-portal license-key
 reference (API version 2026-10): POST /v1/customer-portal/license-keys/
@@ -358,7 +358,7 @@ few it must ignore.
 
 ## polar-api-versioning
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift` lines 87–97.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift`, `PolarLicenseBackend`.
 
 Polar's public customer-portal license-key API
 (`POST /v1/customer-portal/license-keys/{activate,validate,deactivate}`),
@@ -387,7 +387,7 @@ comparisons — on one spelling.
 
 ## polar-config-gating
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift` lines 48–51.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift`, `PolarConfiguration.isComplete`.
 
 Whether both IDs are filled in with UUIDs. Anything less leaves the
 build unconfigured (ungated) rather than half-scoped: a missing
@@ -396,28 +396,28 @@ and a malformed one would fail every validation.
 
 ## polar-environment-separation
 
-Source: `macos/Sources/NoicanMenuBar/LicenseConfiguration.swift` lines 14–15.
+Source: `macos/Sources/NoicanMenuBar/LicenseConfiguration.swift`, `LicenseConfiguration.polar`.
 
 Switch to .production for release builds; sandbox keys do not
 exist on production and vice versa.
 
 ## polar-error-format
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift` lines 409–410.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift`, `ErrorResponse`.
 
 Polar's error body: `{"error": "ResourceNotFound", "detail": "…"}`.
 Validation errors (422) carry an array in `detail`, read as nil.
 
 ## polar-metadata-limits
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift` lines 285–286.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift`, `PolarLicenseBackend.clamped`.
 
 Polar limits metadata keys to 40 characters and values to 1–500;
 the label has no documented bound and gets the same one.
 
 ## polar-public-config
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift` lines 6–8.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift`, `PolarConfiguration`.
 
 Where the app's Polar integration points. Every value is public
 (the customer-portal license endpoints take no secret), so it is
@@ -425,13 +425,13 @@ compiled into the app.
 
 ## polar-response-handling
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift` lines 101–103.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift`, `PolarLicenseBackend.unreadableResponseReason`.
 
 The `.unavailable` reason for a 200 response this build cannot
 use — undecodable, or missing a field the grant depends on.
 One constant so the two cases can never drift apart in wording.
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift` lines 163–170.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift`, `PolarLicenseBackend.validate`.
 
 A field that is present and wrong is definitive evidence
 against the key: reject, as before. A field that is absent
@@ -442,7 +442,7 @@ revocation either, so it takes the unavailable path (the
 offline grace) rather than recording a rejection the
 server never made.
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift` lines 344–351.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift`, `LicenseKeyResponse`.
 
 Only the fields the app acts on. Decoding stays lenient — all but
 the key's own ID are optional, so a field a later API version drops
@@ -453,26 +453,26 @@ activation, before any of them counts as evidence for a grant. The
 remaining fields (display key, expiry, activation limit) stay
 optional in effect as well: none of them decides a grant.
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift` lines 375–377.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift`, `LicenseKeyResponse.isGranted`.
 
 Polar answers 404 for revoked or disabled keys, so a 200 should
 always say `granted`; any other status is refused — and so is a
 response without the field, which proves nothing about the key.
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift` lines 382–384.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift`, `LicenseKeyResponse.isForBenefit`.
 
 The configured benefit, named in the response: a key for another
 product is refused, and a response that does not name the benefit
 at all has not shown the key is for this product.
 
-Source: `macos/NoicanLicensing/Tests/NoicanLicensingTests/PolarLicenseBackendTests.swift` lines 257–260.
+Source: `macos/NoicanLicensing/Tests/NoicanLicensingTests/PolarLicenseBackendTests.swift`, `PolarResponseTests.minimalResponse`.
 
 The response is unsigned, so a body carrying only IDs — the
 shape anything interposing on the connection could serve —
 must not mint a grant, however forward-compatible that would
 be. The fresh activation is given back before refusing.
 
-Source: `macos/NoicanLicensing/Tests/NoicanLicensingTests/PolarLicenseBackendTests.swift` lines 280–282.
+Source: `macos/NoicanLicensing/Tests/NoicanLicensingTests/PolarLicenseBackendTests.swift`, `PolarResponseTests.validationWrongFieldWithAbsentField`.
 
 Absence downgrades only the absent field to unavailable; it
 must not shield a field that is present and definitively
@@ -480,14 +480,14 @@ wrong. (licenseKeyJSON's default activation is null.)
 
 ## polar-timestamp-parsing
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift` lines 245–246.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/PolarLicenseBackend.swift`, `PolarLicenseBackend.parseDate`.
 
 Polar timestamps carry microseconds (`2024-09-02T13:48:13.251621Z`);
 the fraction is dropped rather than trusted to a formatter.
 
 ## rejection-record-retention
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/StoredLicense.swift` lines 25–27.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/StoredLicense.swift`, `StoredLicense.rejection`.
 
 Set when the server's last definitive answer was no. The record is
 kept (and re-checked) rather than deleted, so a mistaken rejection
@@ -495,7 +495,7 @@ heals on the next successful validation.
 
 ## stored-license-key-retention
 
-Source: `macos/NoicanLicensing/Sources/NoicanLicensing/StoredLicense.swift` lines 3–6.
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/StoredLicense.swift`, `StoredLicense`.
 
 The activation as persisted on this Mac (in the Keychain). The key
 itself is kept, not just the activation: it is what lets a backend

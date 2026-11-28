@@ -3,19 +3,19 @@
 Status: Accepted
 
 Moved from code comments on 2026-11-21 (the delete-comment pass).
-The original wording is preserved under each topic; the source
-location of each comment at the time of the move (commit 397e3df)
-is noted above its text.
+The original wording is preserved under each topic; the file and
+symbol each comment was attached to are noted above its text and
+checked by `scripts/adr-links.py`.
 
 ## deepfilternet-embedded-weights
 
-Source: `crates/noican-models/src/manifest.rs` lines 103–103.
+Source: `crates/noican-models/src/manifest.rs`, `ALL_MODELS`.
 
 Embedded in the deep_filter crate (default-model feature).
 
 ## deepfilternet-tract-runtime
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 1–9.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`.
 
 DeepFilterNet-family stages via the upstream `deep_filter` (tract) crate.
 
@@ -27,7 +27,7 @@ route Hush's own `libweya_nc` takes), so these two models run on tract
 while every other model runs on ONNX Runtime — hidden behind the same
 [`FrameProcessor`] interface.
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 87–91.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`, `magnitude_ratio`.
 
 Ratio of enhanced to noisy magnitude from the two band energies: the
 broadband gain the model applied there, `sqrt(Σ|Y|² / Σ|X|²)`,
@@ -35,11 +35,11 @@ clamped to `0..=1` (the network's ERB mask and deep-filter stage
 attenuate; any apparent amplification is numerical). A zero (or
 denormal) noisy energy yields 0.
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 143–143.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`, `DfTractStage::params`.
 
 Kept to rebuild the model on reset (`DfTract` has no state-reset API).
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 167–173.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`, `DfTractStage::deepfilternet3`.
 
 DeepFilterNet3 48 kHz baseline from the model bundle embedded in the
 `deep_filter` crate (no download required).
@@ -49,7 +49,7 @@ DeepFilterNet3 48 kHz baseline from the model bundle embedded in the
 Returns [`StageError::Inference`] when tract fails to build the
 model.
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 183–189.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`, `DfTractStage::deepfilternet3_ll`.
 
 DeepFilterNet3's zero-lookahead 48 kHz variant from its ONNX tarball
 (`DeepFilterNet3_ll_onnx.tar.gz`: `df_lookahead = conv_lookahead =
@@ -59,7 +59,7 @@ DeepFilterNet3's zero-lookahead 48 kHz variant from its ONNX tarball
 
 Returns [`StageError::Inference`] when the tarball cannot be loaded.
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 196–202.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`, `DfTractStage::hush`.
 
 Hush 16 kHz from its ONNX tarball (`advanced_dfnet16k_*.tar.gz`),
 using the thresholds Hush's own `weya_nc` runtime uses
@@ -69,7 +69,7 @@ using the thresholds Hush's own `weya_nc` runtime uses
 
 Returns [`StageError::Inference`] when the tarball cannot be loaded.
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 230–244.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`, `DfTractStage::band_gain`.
 
 Broadband gain the model applied to the last processed frame over
 `bins` (STFT bin indices, `bin × sample_rate / fft_size` Hz),
@@ -87,11 +87,11 @@ silent reports 0 (its output was zeroed).
 
 Panics when `bins` exceeds [`Self::n_freqs`].
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 265–265.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`, `DfTractStage::from_params`.
 
 Overlap-add window delay plus the model's lookahead frames.
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 317–319.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`, `DfTractStage::reset`.
 
 DfTract exposes no state reset; rebuild the plans. This is a
 control-plane operation (model switch / stream restart), not an
@@ -99,14 +99,14 @@ audio-thread one, so the cost is acceptable.
 
 ## dfn3-ll-latency
 
-Source: `crates/noican-models/tests/model_integration.rs` lines 125–126.
+Source: `crates/noican-models/tests/model_integration.rs`, `dfn3_ll_latency_is_twenty_ms`.
 
 The zero-lookahead variant's delay is one hop of framing plus the
 overlap-add window: 960 samples (20 ms) at 48 kHz, half of `dfn3`'s.
 
 ## dpdfnet-lookahead
 
-Source: `crates/noican-models/src/stages/dpdfnet.rs` lines 29–41.
+Source: `crates/noican-models/src/stages/dpdfnet.rs`, `LOOKAHEAD_HOPS`.
 
 Model lookahead in STFT hops, on top of the overlap-add window delay.
 
@@ -124,7 +124,7 @@ the voice (hardware test C5).
 
 ## dpdfnet-stft-pipeline
 
-Source: `crates/noican-models/src/stages/dpdfnet.rs` lines 1–12.
+Source: `crates/noican-models/src/stages/dpdfnet.rs`.
 
 DPDFNet 48 kHz HR streaming stage.
 
@@ -139,7 +139,7 @@ sliding analysis window → analysis window function → unnormalized rfft
 squared-COLA, so no OLA normalization is needed. All STFT parameters
 and the state-vector initialization come from the ONNX metadata.
 
-Source: `crates/noican-models/src/stages/dpdfnet.rs` lines 83–89.
+Source: `crates/noican-models/src/stages/dpdfnet.rs`, `DpdfnetStage::new`.
 
 Loads a DPDFNet streaming ONNX at `path`, reading all STFT and
 state parameters from its embedded metadata.
@@ -151,14 +151,14 @@ metadata, or an unsupported window type.
 
 ## embedded-dfn3-model
 
-Source: `crates/noican-models/tests/model_integration.rs` lines 117–118.
+Source: `crates/noican-models/tests/model_integration.rs`, `dfn3_runs`.
 
 DeepFilterNet3 is embedded in the binary — runnable even without a
 models directory.
 
 ## model-declared-size-caps
 
-Source: `crates/noican-models/src/onnx.rs` lines 212–220.
+Source: `crates/noican-models/src/onnx.rs`, `MAX_STATE_ELEMENTS`.
 
 Largest element count accepted for one recurrent state tensor. The
 shipped models' state tensors are orders of magnitude smaller; the
@@ -172,40 +172,40 @@ that size allocations from other model-declared counts (DPDFNet's
 
 ## model-metadata-bounds
 
-Source: `crates/noican-models/src/stages/dpdfnet.rs` lines 24–26.
+Source: `crates/noican-models/src/stages/dpdfnet.rs`, `MAX_WINDOW_LEN`.
 
 Largest plausible STFT window length in samples (the real DPDFNet
 profiles use 960–4096). Bounds the model-declared `window_length`
 metadata before it sizes buffers and the FFT plan.
 
-Source: `crates/noican-models/src/stages/dpdfnet.rs` lines 102–104.
+Source: `crates/noican-models/src/stages/dpdfnet.rs`, `DpdfnetStage::new`.
 
 win_len sizes the analysis/overlap buffers and the FFT plan;
 like every model-declared count it is bounded before it is
 trusted. Real profiles use at most a few thousand samples.
 
-Source: `crates/noican-models/src/stages/dpdfnet.rs` lines 110–113.
+Source: `crates/noican-models/src/stages/dpdfnet.rs`, `DpdfnetStage::new`.
 
 hop sizes the framed stage's buffers and indexes the sliding
 window: zero would stall the frame loop, and anything above
 win_len underflows the delay arithmetic and panics the window
 slide. Real profiles use hop = win_len / 2.
 
-Source: `crates/noican-models/src/stages/dpdfnet.rs` lines 130–131.
+Source: `crates/noican-models/src/stages/dpdfnet.rs`, `DpdfnetStage::new`.
 
 state_size sizes the zeroed state vectors below; bound it
 like the state-tensor shapes in onnx.rs.
 
 ## onnx-runtime-environment-singleton
 
-Source: `crates/noican-models/src/onnx.rs` lines 41–42.
+Source: `crates/noican-models/src/onnx.rs`, `environment`.
 
 The process-wide ONNX Runtime environment. `ort` allows exactly one per
 process and every session must be built against it.
 
 ## onnx-single-threaded-streaming
 
-Source: `crates/noican-models/src/onnx.rs` lines 12–28.
+Source: `crates/noican-models/src/onnx.rs`, `load_streaming_session`.
 
 Loads an ONNX session tuned for low-latency streaming inference on CPU:
 single-threaded (frames are small; thread wakeups cost more than they
@@ -227,7 +227,7 @@ Returns [`StageError::Inference`] when the file cannot be loaded.
 
 ## ulunas-stft-contract
 
-Source: `crates/noican-models/src/stages/ulunas.rs` lines 1–8.
+Source: `crates/noican-models/src/stages/ulunas.rs`.
 
 UL-UNAS 16 kHz streaming stage.
 
@@ -240,7 +240,7 @@ windows, overlap-add divided by the overlapped squared-window sum.
 
 ## upstream-deep-filter-coupling
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 48–57.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`, `SILENT_FRAME_MEAN_SQUARE`.
 
 Mean-square level below which `DfTract::process` skips the network,
 zeroes its output and leaves its spectrum buffers stale (upstream
@@ -253,12 +253,12 @@ Pinned against `deep_filter` **v0.5.6** (the workspace `Cargo.toml`
 git tag). This is a silent coupling — no test can compare it with
 upstream — so re-read `DfTract::process` when that tag moves.
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 73–74.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`, `mean_square`.
 
 Mean square of a frame (the quantity upstream compares against
 [`SILENT_FRAME_MEAN_SQUARE`]).
 
-Source: `crates/noican-models/src/stages/dfn_tract.rs` lines 146–147.
+Source: `crates/noican-models/src/stages/dfn_tract.rs`, `DfTractStage::last_frame_silent`.
 
 True when the last frame fell under [`SILENT_FRAME_MEAN_SQUARE`]
 (the model produced zeros without touching its spectra).
