@@ -21,13 +21,17 @@ script can resolve:
 - Any other mention of `docs/adr/NNNN-<topic>.md` in `AGENTS.md`, `docs/`
   (the ADRs themselves included), `.agents/`, or `scripts/` must name an
   existing file, and an existing section when it carries a `#<section>`.
-- A reference is read to the end of its token, so a misspelt file name or
-  section is reported as malformed or missing rather than skipped. What
-  opens the reference decides where the token ends: a Markdown link
-  destination (`](...)`, `<...>`), a code span and a quoted string are read
-  literally up to their closing mark, so punctuation inside one is part of
-  the reference, and wrong. Only a reference in running prose may be
-  followed by closing punctuation.
+- A reference is the repository-root path written as plain text, and it
+  is read to the end of its token, so a misspelt file name or section is
+  reported as malformed or missing rather than skipped. Inside a code span
+  or a quoted string the token runs to the closing mark and is taken
+  literally; in running prose it ends at whitespace and may be followed by
+  closing punctuation.
+- A Markdown or HTML link into `docs/adr/` is rejected. Whether a rendered
+  link reaches its section depends on Markdown's destination grammar
+  (escapes, titles, line breaks, reference definitions), which this script
+  does not parse, and a relative link that works from `docs/` does not
+  contain the root path at all. Name the record in plain text instead.
 - A Rust type is defined where its `struct`, `enum`, `union` or `trait`
   is. An `impl` block makes its methods addressable (`Type::method`) but
   does not define `Type`.
@@ -55,7 +59,13 @@ PROSE_EXTS = (".md", ".py", ".sh")
 SKIP_DIRS = {".git", "target", ".build"}
 
 ADR_PREFIX = "docs/adr/"
-ADR_CLOSERS = {"(": ")", "<": ">", "`": "`", '"': '"', "'": "'"}
+ADR_CLOSERS = {"`": "`", '"': '"', "'": "'"}
+ADR_LINK = re.compile(
+    r"\]\(\s*<?[^\s<>()]*docs/adr/"
+    r"|^ {0,3}\[[^\]\n]+\]:\s*<?\S*docs/adr/"
+    r"|\bhref\s*=\s*[\"']?[^\s\"'<>]*docs/adr/",
+    re.M,
+)
 ADR_PATH_BREAKS = frozenset(" \t<>()`\"'")
 ADR_TRAILING = ".,:;)]>`\"'"
 ADR_TARGET = re.compile(r"(\d{4}-[a-z0-9-]+\.md)(?:#([a-z0-9-]+))?")
@@ -232,27 +242,34 @@ def load_sections(errors):
 def references(line):
     """Yield what follows `docs/adr/` in every reference on the line.
 
-    What opens a reference decides where it ends: a Markdown link destination
-    runs to its `)`, an angle-bracket destination to its `>`, a code span or
-    a quoted string to the matching mark, and all of it is the reference.
-    Anything else is prose, which ends at whitespace and may carry closing
-    punctuation after the reference.
+    A code span or a quoted string that opens right before the path runs to
+    its closing mark, and all of it is the reference. Anything else is
+    prose, which ends at whitespace and may carry closing punctuation after
+    the reference.
     """
     start = line.find(ADR_PREFIX)
     while start != -1:
         opened = start
         while opened > 0 and line[opened - 1] not in ADR_PATH_BREAKS:
             opened -= 1
-        mark = line[opened - 1] if opened > 0 else ""
-        if mark == "(" and not line.endswith("](", 0, opened):
-            mark = ""
-        closer = ADR_CLOSERS.get(mark)
+        closer = ADR_CLOSERS.get(line[opened - 1] if opened > 0 else "")
         begin = end = start + len(ADR_PREFIX)
         while end < len(line) and not line[end].isspace() and line[end] != closer:
             end += 1
         token = line[begin:end]
         yield token if closer else token.rstrip(ADR_TRAILING)
         start = line.find(ADR_PREFIX, end)
+
+
+def check_links(path, lines, errors):
+    """Reject Markdown and HTML links into `docs/adr/` (see the module docstring)."""
+    text = "\n".join(lines)
+    for link in ADR_LINK.finditer(text):
+        number = text.count("\n", 0, link.end()) + 1
+        errors.append(
+            f"{path}:{number}: link into docs/adr/ (write the reference as plain text, "
+            "`docs/adr/NNNN-<topic>.md#<section>`; rendered links are not checked)"
+        )
 
 
 def check_mentions(line, where, sections, errors, require_section):
@@ -314,7 +331,9 @@ def check_pointers(sections, errors):
     checked = 0
     for top in CODE_DIRS:
         for path in walk(top, CODE_EXTS):
-            for number, line in enumerate(read_lines(path), 1):
+            lines = read_lines(path)
+            check_links(path, lines, errors)
+            for number, line in enumerate(lines, 1):
                 checked += check_mentions(line, f"{path}:{number}", sections, errors, require_section=True)
     return checked
 
@@ -324,7 +343,9 @@ def check_prose(sections, errors):
         for path in walk(top, PROSE_EXTS):
             if path == SELF:
                 continue
-            for number, line in enumerate(read_lines(path), 1):
+            lines = read_lines(path)
+            check_links(path, lines, errors)
+            for number, line in enumerate(lines, 1):
                 check_mentions(line, f"{path}:{number}", sections, errors, require_section=False)
 
 
