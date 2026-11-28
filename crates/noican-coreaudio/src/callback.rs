@@ -1,4 +1,4 @@
-//! See docs/adr/0001-realtime-audio-rules.md.
+//! See docs/adr/0001-realtime-audio-rules.md#realtime-allocation-ban.
 
 use std::mem::size_of;
 use std::sync::Arc;
@@ -6,10 +6,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use rtrb::{Consumer, Producer};
 
-/// See docs/adr/0003-coreaudio-transport.md.
+/// See docs/adr/0003-coreaudio-transport.md#realtime-callback-frame-cap.
 pub const MAX_CALLBACK_FRAMES: usize = 4_096;
 
-/// See docs/adr/0003-coreaudio-transport.md.
+/// See docs/adr/0003-coreaudio-transport.md#realtime-callback-frame-cap.
 #[must_use]
 pub fn capture_byte_size(frames: usize, capacity: usize) -> Option<u32> {
     if frames > capacity {
@@ -39,7 +39,7 @@ impl RenderGeometry {
     }
 }
 
-/// See docs/adr/0003-coreaudio-transport.md.
+/// See docs/adr/0003-coreaudio-transport.md#render-geometry-zero-channel.
 #[must_use]
 pub fn render_geometry(
     data_byte_size: u32,
@@ -56,7 +56,7 @@ pub fn render_geometry(
     RenderGeometry { channels, frames }
 }
 
-/// See docs/adr/0004-aggregate-output-routing.md.
+/// See docs/adr/0004-aggregate-output-routing.md#dual-mono-rendering.
 pub fn fill_dual_mono(
     samples: &mut [f32],
     channels: usize,
@@ -73,7 +73,7 @@ pub fn fill_dual_mono(
     delivered
 }
 
-/// See docs/adr/0003-coreaudio-transport.md.
+/// See docs/adr/0003-coreaudio-transport.md#capture-ring-overrun-accounting.
 #[derive(Debug)]
 pub struct CaptureFeed {
     ring: Producer<f32>,
@@ -88,7 +88,7 @@ impl CaptureFeed {
         Self { ring, overruns }
     }
 
-    /// See docs/adr/0003-coreaudio-transport.md.
+    /// See docs/adr/0003-coreaudio-transport.md#capture-ring-overrun-accounting.
     pub fn push(&mut self, samples: &[f32]) {
         for &sample in samples {
             let sample = if sample.is_finite() { sample } else { 0.0 };
@@ -121,7 +121,7 @@ pub(crate) fn shed_capture_backlog(
     stale
 }
 
-/// See docs/adr/0002-engine-diagnostics.md.
+/// See docs/adr/0002-engine-diagnostics.md#output-underrun-counting.
 #[derive(Debug)]
 pub struct OutputFeed {
     ring: Consumer<f32>,
@@ -141,7 +141,7 @@ impl OutputFeed {
         }
     }
 
-    /// See docs/adr/0002-engine-diagnostics.md.
+    /// See docs/adr/0002-engine-diagnostics.md#output-underrun-counting.
     pub fn render(&mut self, samples: &mut [f32], channels: usize) {
         let ring = &mut self.ring;
         if fill_dual_mono(samples, channels, || ring.pop().ok()) {

@@ -1,4 +1,4 @@
-//! See docs/adr/0005-preview-monitor.md.
+//! See docs/adr/0005-preview-monitor.md#monitor-preview-architecture.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -7,22 +7,22 @@ use rtrb::Producer;
 
 use crate::CoreAudioError;
 
-/// See docs/adr/0005-preview-monitor.md.
+/// See docs/adr/0005-preview-monitor.md#monitor-state-protocol.
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MonitorState {
-    /// See docs/adr/0005-preview-monitor.md.
+    /// See docs/adr/0005-preview-monitor.md#monitor-state-protocol.
     #[default]
     Off = 0,
     /// The monitor AUHAL is up and the worker tees processed audio into
     /// its ring.
     Playing = 1,
-    /// See docs/adr/0005-preview-monitor.md.
+    /// See docs/adr/0005-preview-monitor.md#monitor-state-protocol.
     Tripped = 2,
 }
 
 impl MonitorState {
-    /// See docs/adr/0005-preview-monitor.md.
+    /// See docs/adr/0005-preview-monitor.md#monitor-state-protocol.
     #[must_use]
     pub const fn from_raw(raw: i32) -> Self {
         match raw {
@@ -39,16 +39,16 @@ impl MonitorState {
     }
 }
 
-/// See docs/adr/0005-preview-monitor.md.
+/// See docs/adr/0005-preview-monitor.md#monitor-ring-latency-drift.
 pub const MONITOR_RING_CAPACITY: usize = 4_800;
 
-/// See docs/adr/0005-preview-monitor.md.
+/// See docs/adr/0005-preview-monitor.md#monitor-ring-latency-drift.
 pub const MONITOR_PRIME_SAMPLES: usize = 1_920;
 
-/// See docs/adr/0005-preview-monitor.md.
+/// See docs/adr/0005-preview-monitor.md#howl-guard-tuning.
 pub const HOWL_PEAK_THRESHOLD: f32 = 0.98;
 
-/// See docs/adr/0005-preview-monitor.md.
+/// See docs/adr/0005-preview-monitor.md#howl-guard-tuning.
 pub const HOWL_TRIP_BLOCKS: usize = 50;
 
 /// Four-character Core Audio code as a big-endian `u32`.
@@ -57,16 +57,16 @@ pub const fn fourcc(bytes: [u8; 4]) -> u32 {
     u32::from_be_bytes(bytes)
 }
 
-/// See docs/adr/0003-coreaudio-transport.md.
+/// See docs/adr/0003-coreaudio-transport.md#coreaudio-transport-and-source-codes.
 pub const TRANSPORT_TYPE_VIRTUAL: u32 = fourcc(*b"virt");
-/// See docs/adr/0003-coreaudio-transport.md.
+/// See docs/adr/0003-coreaudio-transport.md#coreaudio-transport-and-source-codes.
 pub const TRANSPORT_TYPE_AGGREGATE: u32 = fourcc(*b"grup");
-/// See docs/adr/0003-coreaudio-transport.md.
+/// See docs/adr/0003-coreaudio-transport.md#coreaudio-transport-and-source-codes.
 pub const TRANSPORT_TYPE_BUILT_IN: u32 = fourcc(*b"bltn");
-/// See docs/adr/0003-coreaudio-transport.md.
+/// See docs/adr/0003-coreaudio-transport.md#coreaudio-transport-and-source-codes.
 pub const DATA_SOURCE_INTERNAL_SPEAKER: u32 = fourcc(*b"ispk");
 
-/// See docs/adr/0005-preview-monitor.md.
+/// See docs/adr/0005-preview-monitor.md#monitor-target-safety.
 ///
 /// # Errors
 ///
@@ -96,7 +96,7 @@ fn is_noican_loopback_uid(uid: &str) -> bool {
     uid.contains("BlackHole") || uid.to_lowercase().starts_with("com.lightsound.noican.")
 }
 
-/// See docs/adr/0005-preview-monitor.md.
+/// See docs/adr/0005-preview-monitor.md#howl-guard.
 #[derive(Debug, Default)]
 pub struct HowlGuard {
     consecutive: usize,
@@ -109,7 +109,7 @@ impl HowlGuard {
         Self { consecutive: 0 }
     }
 
-    /// See docs/adr/0005-preview-monitor.md.
+    /// See docs/adr/0005-preview-monitor.md#howl-guard.
     pub fn observe(&mut self, block: &[f32]) -> bool {
         let peak = block.iter().fold(0.0_f32, |acc, s| acc.max(s.abs()));
         if peak >= HOWL_PEAK_THRESHOLD {
@@ -154,7 +154,7 @@ impl MonitorTee {
         }
     }
 
-    /// See docs/adr/0005-preview-monitor.md.
+    /// See docs/adr/0005-preview-monitor.md#monitor-tee-overrun-and-trip.
     pub fn feed(&mut self, block: &[f32]) -> bool {
         if MonitorState::from_raw(self.state.load(Ordering::Acquire)) != MonitorState::Playing {
             self.howl.reset();

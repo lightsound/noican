@@ -1,4 +1,4 @@
-//! See docs/adr/0009-model-catalog-fetch.md.
+//! See docs/adr/0009-model-catalog-fetch.md#model-weight-pinning.
 
 /// Broad role of a model in the pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,14 +16,14 @@ pub struct FileSpec {
     pub name: &'static str,
     /// Direct download URL (official release asset).
     pub url: &'static str,
-    /// See docs/adr/0009-model-catalog-fetch.md.
+    /// See docs/adr/0009-model-catalog-fetch.md#model-weight-pinning.
     pub sha256: Option<&'static str>,
 }
 
 /// A model available to the engine and CLI.
 #[derive(Debug, Clone, Copy)]
 pub struct ModelSpec {
-    /// See docs/adr/0009-model-catalog-fetch.md.
+    /// See docs/adr/0009-model-catalog-fetch.md#model-id-stability.
     pub id: &'static str,
     /// Human-readable name for UIs.
     pub display_name: &'static str,
@@ -33,9 +33,9 @@ pub struct ModelSpec {
     pub sample_rate: u32,
     /// License of the weights (informational; see `THIRD_PARTY_NOTICES.md`).
     pub license: &'static str,
-    /// See docs/adr/0009-model-catalog-fetch.md.
+    /// See docs/adr/0009-model-catalog-fetch.md#model-depends-on.
     pub files: &'static [FileSpec],
-    /// See docs/adr/0009-model-catalog-fetch.md.
+    /// See docs/adr/0009-model-catalog-fetch.md#model-depends-on.
     pub depends_on: &'static [&'static str],
 }
 
@@ -46,7 +46,7 @@ impl ModelSpec {
         ALL_MODELS.iter().find(|m| m.id == id)
     }
 
-    /// See docs/adr/0009-model-catalog-fetch.md.
+    /// See docs/adr/0009-model-catalog-fetch.md#model-depends-on.
     pub fn dependencies(&self) -> impl Iterator<Item = &'static Self> {
         self.depends_on.iter().filter_map(|id| Self::find(id))
     }

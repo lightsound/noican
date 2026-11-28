@@ -56,9 +56,11 @@ and `macos/` (skip `.git`, `target`, `.build`):
   the same hack into one issue.
 - **Decision Record** → move the text into `docs/adr/`, grouped by topic
   into the existing numbered ADRs (add a new ADR only for a genuinely new
-  topic). Preserve the original wording; note each block's source location
-  (file and line range at the time of the move) above its text. Then delete
-  the block from the code.
+  topic). Preserve the original wording; note above its text what the block
+  was attached to, as ``Source: `path`, `Symbol`.`` (or ``Source: `path`.``
+  for a module doc). Line numbers are not a source: they stop being true at
+  the next edit. `python3 scripts/adr-links.py --symbols <file>` lists the
+  symbols a file defines. Then delete the block from the code.
 
 Two constraints shape the deletions:
 
@@ -73,7 +75,8 @@ Two constraints shape the deletions:
   target (a dependency's failure hides its dependents, and `cfg`-gated
   modules answer only on their own target).
 - For a Decision Record in a forced position (or a `//!` module doc), leave
-  a pointer instead: `/// See docs/adr/NNNN-<topic>.md.` One exception:
+  a pointer instead: `/// See docs/adr/NNNN-<topic>.md#<section>.`, where
+  `<section>` is the record's `## ` heading. One exception:
   clippy's `missing_errors_doc` / `missing_panics_doc` /
   `missing_safety_doc` require a public function's doc to keep its
   `# Errors` / `# Panics` / `# Safety` section, so retain those sections
@@ -100,9 +103,11 @@ change class where "the diff is only comments" can be proven mechanically
 
 1. Regenerate the baseline: `python3 scripts/comment-ratchet.py --update`.
    The baseline may only shrink; if a count went up, the pass went wrong.
-2. If ADRs were added or the documentation map changed, update the
+2. Run `python3 scripts/adr-links.py`: every pointer left in the code and
+   every `Source:` line written into an ADR must resolve.
+3. If ADRs were added or the documentation map changed, update the
    "Where things are documented" section of `AGENTS.md` to stay true.
-3. Follow the repo's standing rules for the change itself: independent
+4. Follow the repo's standing rules for the change itself: independent
    review loop before the PR, CI green, and a final report stating the
    category counts, the issues filed, the ADRs touched, the lines shed,
    and what remains in the baseline and why.

@@ -1,4 +1,4 @@
-//! See docs/adr/0003-coreaudio-transport.md.
+//! See docs/adr/0003-coreaudio-transport.md#split-transport-architecture.
 
 use std::ffi::c_void;
 use std::sync::{

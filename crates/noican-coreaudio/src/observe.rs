@@ -1,10 +1,10 @@
-//! See docs/adr/0001-realtime-audio-rules.md.
+//! See docs/adr/0001-realtime-audio-rules.md#lock-free-worker-observability.
 
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 const LEVEL_DECAY_PER_BLOCK: f32 = 0.9;
 
-/// See docs/adr/0001-realtime-audio-rules.md.
+/// See docs/adr/0001-realtime-audio-rules.md#lock-free-worker-observability.
 #[derive(Debug, Default)]
 pub struct StreamLevels {
     input_bits: AtomicU32,
@@ -48,10 +48,10 @@ impl StreamLevels {
     }
 }
 
-/// See docs/adr/0001-realtime-audio-rules.md.
+/// See docs/adr/0001-realtime-audio-rules.md#lock-free-worker-observability.
 pub const BLOCK_BUDGET_NS: u64 = 10_000_000;
 
-/// See docs/adr/0001-realtime-audio-rules.md.
+/// See docs/adr/0001-realtime-audio-rules.md#lock-free-worker-observability.
 #[derive(Debug, Default)]
 pub struct WorkerBlockStats {
     blocks: AtomicU64,

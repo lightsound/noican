@@ -124,6 +124,16 @@ jobs:
           persist-credentials: false
       - run: python3 scripts/comment-ratchet.py
 
+  adr-links:
+    name: ADR links (code and decision records resolve)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 scripts/adr-links.py
+
   actionlint:
     name: jactionlint (workflow lint)
     runs-on: ubuntu-26.04

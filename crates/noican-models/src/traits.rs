@@ -1,11 +1,11 @@
-//! See docs/adr/0009-model-catalog-fetch.md.
+//! See docs/adr/0009-model-catalog-fetch.md#model-picker-ratings.
 
-/// See docs/adr/0009-model-catalog-fetch.md.
+/// See docs/adr/0009-model-catalog-fetch.md#model-picker-ratings.
 #[derive(Debug, Clone, Copy)]
 pub struct ModelTraits {
-    /// See docs/adr/0009-model-catalog-fetch.md.
+    /// See docs/adr/0009-model-catalog-fetch.md#model-picker-ratings.
     pub noise_removal: u8,
-    /// See docs/adr/0009-model-catalog-fetch.md.
+    /// See docs/adr/0009-model-catalog-fetch.md#model-picker-ratings.
     pub voice_quality: u8,
     /// Inverse algorithmic latency (measured; higher = less delay).
     pub responsiveness: u8,
@@ -29,7 +29,7 @@ impl ModelTraits {
         }
     }
 
-    /// See docs/adr/0009-model-catalog-fetch.md.
+    /// See docs/adr/0009-model-catalog-fetch.md#model-picker-ratings.
     #[must_use]
     pub fn for_id(id: &str) -> Self {
         PROFILES

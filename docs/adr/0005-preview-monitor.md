@@ -3,13 +3,13 @@
 Status: Accepted
 
 Moved from code comments on 2026-11-21 (the delete-comment pass).
-The original wording is preserved under each topic; the source
-location of each comment at the time of the move (commit 397e3df)
-is noted above its text.
+The original wording is preserved under each topic; the file and
+symbol each comment was attached to are noted above its text and
+checked by `scripts/adr-links.py`.
 
 ## feedback-trip-handling
 
-Source: `macos/NoicanState/Sources/NoicanState/AppReducer.swift` lines 509–513.
+Source: `macos/NoicanState/Sources/NoicanState/AppReducer.swift`, `AppReducer.monitorTripped`.
 
 Reacts to the engine-side feedback killswitch: the worker already
 silenced the preview, so release the playback device and tell the
@@ -19,7 +19,7 @@ re-tapping Preview retries.
 
 ## howl-guard
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 173–181.
+Source: `crates/noican-coreaudio/src/monitor.rs`, `HowlGuard`.
 
 Last-resort feedback killswitch for the preview monitor.
 
@@ -31,7 +31,7 @@ playing through speakers back into the microphone. Complements
 Real-time safe: one fold over the observed block, no allocation, no
 locks. Owned by [`MonitorTee`] on the inference worker.
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 194–196.
+Source: `crates/noican-coreaudio/src/monitor.rs`, `HowlGuard::observe`.
 
 Observes one teed block. Returns `true` when the guard trips; the
 caller must then stop feeding the monitor. The run resets on any
@@ -39,7 +39,7 @@ block below the threshold and after a trip.
 
 ## howl-guard-tuning
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 83–87.
+Source: `crates/noican-coreaudio/src/monitor.rs`, `HOWL_PEAK_THRESHOLD`.
 
 Peak level (linear) a teed block must reach to count toward a trip.
 
@@ -47,7 +47,7 @@ Acoustic feedback has loop gain above one, so it grows until it
 saturates near full scale; speech peaks touch this level but do not
 hold it continuously.
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 90–94.
+Source: `crates/noican-coreaudio/src/monitor.rs`, `HOWL_TRIP_BLOCKS`.
 
 Consecutive near-clipping blocks (10 ms each) before a trip: 500 ms.
 
@@ -57,7 +57,7 @@ is painful.
 
 ## monitor-auhal-configuration
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 416–418.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `configure_monitor_auhal`.
 
 Output-only AUHAL on the monitor device: input disabled, mono 48 kHz
 engine samples rendered as interleaved stereo (AUHAL's converter
@@ -65,13 +65,13 @@ handles the device's own rate and format).
 
 ## monitor-lifecycle-and-ring
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 73–75.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `MonitorContext`.
 
 Render context of the output-only monitor AUHAL. Owned by the monitor
 callback while preview runs; reclaimed (with its ring consumer) when
 preview stops so a later enable can reuse the preallocated ring.
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 98–102.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `MonitorControl`.
 
 Control-plane owner of the preview monitor. Invariants held here:
 exactly one of `consumer` (parked while off) and `handle` (lent to the
@@ -79,14 +79,14 @@ running monitor AUHAL) is populated, and a feedback trip disarms the
 tee (the shared [`MonitorState`] cell reads `Tripped`) while leaving
 the AUHAL up until the next toggle.
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 114–117.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `monitor_pair`.
 
 Creates the two halves of the preview monitor around one preallocated
 ring: the control half for [`super::Runtime`] and the worker half for
 the inference thread. Resets any stale value left in `state` to
 [`MonitorState::Off`].
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 133–141.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `MonitorControl::enable`.
 
 Starts (or re-arms) the monitor on the vetted system default
 output.
@@ -98,47 +98,47 @@ targets, and other [`CoreAudioError`] values when the monitor
 AUHAL cannot start; the ring consumer is reclaimed on every error
 path so a later enable can retry.
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 155–156.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `MonitorControl::enable`.
 
 Discard anything left over from a previous preview session so
 re-enabling never replays stale audio.
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 170–171.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `MonitorControl::enable`.
 
 The AUHAL never came up, so the cell already reads
 `Off`; park the consumer for a retry.
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 178–179.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `MonitorControl::disable`.
 
 Stops the monitor AUHAL (if up) and parks the ring consumer for
 the next enable. Idempotent.
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 181–183.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `MonitorControl::disable`.
 
 Move the cell to `Off` first (also clearing a pending trip) so
 the worker stops feeding the ring before the monitor AUHAL
 goes away.
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 191–192.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `MonitorControl::disable`.
 
 Callbacks have stopped; reclaim the ring consumer so a
 later enable reuses the preallocated ring.
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 376–379.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `start_monitor_unit`.
 
 Creates, configures, and starts the output-only monitor AUHAL on
 `device`, handing `consumer` to its render callback. On failure the
 consumer is returned so the preallocated ring survives for a retry;
 the partially configured unit is released by its RAII guard.
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 408–409.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `start_monitor_unit`.
 
 The unit never started, so no callback observed the context;
 reclaim it to recover the ring consumer.
 
 ## monitor-module-split
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 1–7.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`.
 
 Control-plane half of the preview monitor: resolving and vetting the
 playback target, and owning the output-only monitor AUHAL's lifecycle.
@@ -150,7 +150,7 @@ contains what needs Core Audio.
 
 ## monitor-preview-architecture
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 1–14.
+Source: `crates/noican-coreaudio/src/monitor.rs`.
 
 Preview (self-monitor) policy and worker-side machinery.
 
@@ -169,20 +169,20 @@ into a preallocated lock-free ring.
 
 ## monitor-priming-and-drift
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 78–80.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `MonitorContext::primed`.
 
 Whether enough samples are buffered to play. Cleared on underrun so
 playback resumes only after [`MONITOR_PRIME_SAMPLES`] accumulate,
 turning clock drift into bounded silence gaps instead of crackle.
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 460–461.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `monitor_render_callback`.
 
 The engine is mono; every device channel gets the same sample. The
 monitor counts no underruns: re-priming is its whole response.
 
 ## monitor-refusal-message-contract
 
-Source: `crates/noican-coreaudio/src/lib.rs` lines 101–108.
+Source: `crates/noican-coreaudio/src/lib.rs`, `CoreAudioError::MonitorLoopbackOutput`.
 
 Enabling preview was refused because the system default output is a
 virtual loopback device, which would feed the processed voice into
@@ -193,14 +193,14 @@ it into its own sentences ("Preview needs headphones — …",
 "Preview stopped: …"), and the rejected device's UID is kept in
 the variant for programmatic callers.
 
-Source: `crates/noican-coreaudio/src/lib.rs` lines 114–117.
+Source: `crates/noican-coreaudio/src/lib.rs`, `CoreAudioError::MonitorAggregateOutput`.
 
 Enabling preview was refused because the system default output is
 an aggregate or Multi-Output device, which can contain the meeting
 loopback as a subdevice this check cannot cheaply inspect. Message
 shape: see [`CoreAudioError::MonitorLoopbackOutput`].
 
-Source: `crates/noican-coreaudio/src/lib.rs` lines 123–126.
+Source: `crates/noican-coreaudio/src/lib.rs`, `CoreAudioError::MonitorSpeakerOutput`.
 
 Enabling preview was refused because the system default output is
 the built-in speakers, which would feed the processed microphone
@@ -209,7 +209,7 @@ Message shape: see [`CoreAudioError::MonitorLoopbackOutput`].
 
 ## monitor-ring-latency-drift
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 69–75.
+Source: `crates/noican-coreaudio/src/monitor.rs`, `MONITOR_RING_CAPACITY`.
 
 Monitor ring capacity: 100 ms at 48 kHz.
 
@@ -219,7 +219,7 @@ its capacity. A small ring caps the preview latency at ~100 ms and
 turns the drift into an occasional discarded block instead (accepted
 preview artifact).
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 78–80.
+Source: `crates/noican-coreaudio/src/monitor.rs`, `MONITOR_PRIME_SAMPLES`.
 
 Samples the monitor ring must hold before playback (re)starts after an
 underrun: 40 ms at 48 kHz. Priming turns scattered single-sample
@@ -227,7 +227,7 @@ underruns into one bounded silence gap.
 
 ## monitor-runtime-send-safety
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 84–86.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `MonitorHandle`.
 
 Raw pointers of a running monitor AUHAL, stored as integers so the
 runtime stays `Send`. They are only dereferenced on the control thread
@@ -235,7 +235,7 @@ that owns the runtime, after callbacks have been stopped.
 
 ## monitor-safety-listener-lifecycle
 
-Source: `macos/Sources/NoicanMenuBar/ListenerObservation.swift` lines 46–50.
+Source: `macos/Sources/NoicanMenuBar/ListenerObservation.swift`, `AppState.syncMonitorSafetyObservation`.
 
 Keeps the per-device data-source listener in lockstep with the
 settled monitor state: registered on the monitor's device when an
@@ -243,7 +243,7 @@ enable settles, and always removed the moment the monitor is no
 longer armed (disable claimed, trip, teardown) — a listener left
 behind would fire for a monitor that no longer exists.
 
-Source: `macos/Sources/NoicanMenuBar/ListenerObservation.swift` lines 74–76.
+Source: `macos/Sources/NoicanMenuBar/ListenerObservation.swift`, `AppState.syncMonitorSafetyObservation`.
 
 Without the registration the listener is dead — do
 not store it, and surface why the safety check
@@ -251,7 +251,7 @@ stopped reacting to jack reassignments.
 
 ## monitor-safety-observation
 
-Source: `macos/Sources/NoicanMenuBar/AppState.swift` lines 76–84.
+Source: `macos/Sources/NoicanMenuBar/AppState.swift`, `AppState.monitorSafetyListener`.
 
 Follows the monitor's actual output device while the preview
 plays: a data-source flip (headphone jack → internal speakers on
@@ -263,12 +263,12 @@ monitor enable settles; always removed when the monitor disarms
 Internal for `ListenerObservation.swift`, which owns its
 registration lifecycle.
 
-Source: `macos/Sources/NoicanMenuBar/AppState.swift` lines 440–441.
+Source: `macos/Sources/NoicanMenuBar/AppState.swift`, `AppState.registerDeviceListener`.
 
 The monitor's target can vanish as a whole device (on
 machines whose headphone jack is a separate device).
 
-Source: `macos/Sources/NoicanMenuBar/AppState.swift` lines 549–551.
+Source: `macos/Sources/NoicanMenuBar/AppState.swift`, `AppState.checkMonitorTrip`.
 
 Forwards the engine-side feedback killswitch to the reducer, which
 releases the playback device and explains why. Checked lock-free
@@ -276,7 +276,7 @@ at 20 Hz while the popover is open and at 1 Hz by the health poll.
 
 ## monitor-safety-recheck
 
-Source: `macos/Sources/NoicanMenuBar/ListenerObservation.swift` lines 15–23.
+Source: `macos/Sources/NoicanMenuBar/ListenerObservation.swift`, `AppState.checkMonitorSafety`.
 
 Re-vets the device the running monitor actually plays on and
 auto-stops the preview (via the reducer) when its safety is gone.
@@ -290,20 +290,20 @@ on while the monitor stayed on the old device.
 
 ## monitor-state-protocol
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 105–108.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `MonitorControl::state`.
 
 The shared [`MonitorState`] cell: this control half moves it
 between `Off` and `Playing`; the worker's [`MonitorTee`] gates on
 it and moves it to `Tripped`. Also read lock-free by the FFI
 layer, which owns the `Arc` (`noican_engine_monitor_state`).
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 144–146.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `MonitorControl::enable`.
 
 The monitor AUHAL is still up (a feedback trip only disarms
 the tee); re-arm it — which also clears the trip, since
 `Playing` overwrites `Tripped` in the one shared cell.
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 23–31.
+Source: `crates/noican-coreaudio/src/monitor.rs`, `MonitorState`.
 
 Preview monitor state: the single lock-free protocol value.
 
@@ -315,12 +315,12 @@ including while a slow monitor start holds it.
 The values cross the C ABI verbatim
 (`noican_engine_monitor_state`), so the discriminants are fixed.
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 35–36.
+Source: `crates/noican-coreaudio/src/monitor.rs`, `MonitorState::Off`.
 
 No preview is playing: the engine is stopped, the preview was
 never enabled, or a disable tore the monitor AUHAL down.
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 42–46.
+Source: `crates/noican-coreaudio/src/monitor.rs`, `MonitorState::Tripped`.
 
 The feedback guard tripped: the monitor AUHAL is *still up* but
 the tee is disarmed, so it renders silence. The next
@@ -328,25 +328,25 @@ the tee is disarmed, so it renders silence. The next
 re-arms the same AUHAL back to [`MonitorState::Playing`], disable
 tears it down to [`MonitorState::Off`].
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 51–52.
+Source: `crates/noican-coreaudio/src/monitor.rs`, `MonitorState::from_raw`.
 
 Decodes a raw atomic/C-ABI value; anything unknown reads as
 [`MonitorState::Off`] (the safe interpretation for a poller).
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 225–226.
+Source: `crates/noican-coreaudio/src/monitor.rs`, `MonitorTee::state`.
 
 The shared [`MonitorState`] cell: armed/disarmed by the control
 plane; moved to [`MonitorState::Tripped`] here on a trip.
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 305–305.
+Source: `crates/noican-coreaudio/src/monitor.rs`, `tests::monitor_state_round_trips_and_defaults_to_off`.
 
 The C-ABI discriminants are frozen (noican.h).
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 375–375.
+Source: `crates/noican-coreaudio/src/monitor.rs`, `tests::rearming_after_a_trip_requires_a_fresh_sustained_run`.
 
 Control plane re-arms (as Runtime::set_monitor(true) does).
 
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift` lines 104–108.
+Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine.setMonitor`.
 
 Toggles the preview self-monitor (processed voice on the system
 default output). Fails when the engine is stopped or the default
@@ -354,13 +354,13 @@ output is a virtual loopback; the meeting-facing path is never
 affected. The monitor does not survive an engine stop/start, so
 callers re-enable it after `start`.
 
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift` lines 329–331.
+Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `MonitorState`.
 
 Preview monitor state as reported by `noican_engine_monitor_state`.
 Raw values mirror the C `NoicanMonitorState` enum (noican.h) and the
 Rust `MonitorState`; they are frozen.
 
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift` lines 337–339.
+Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `MonitorState.tripped`.
 
 The feedback guard silenced the preview: the monitor AUHAL is
 still up but renders silence. Cleared by the next monitor toggle
@@ -368,7 +368,7 @@ in either direction — enabling re-arms, disabling tears down.
 
 ## monitor-target-error-live-clearing
 
-Source: `macos/NoicanState/Sources/NoicanState/AppEvent.swift` lines 77–79.
+Source: `macos/NoicanState/Sources/NoicanState/AppEvent.swift`, `AppEvent.monitorTargetErrorChanged`.
 
 Re-sample of the preview-target pre-flight while a refusal message
 is showing, so the message clears (or updates) live as the user
@@ -376,7 +376,7 @@ fixes the default output.
 
 ## monitor-target-safety
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 116–141.
+Source: `crates/noican-coreaudio/src/monitor.rs`, `classify_monitor_target`.
 
 Decides whether an output device may receive the preview.
 
@@ -405,7 +405,7 @@ deliberately broader (any virtual/aggregate transport).
 
 Returns the matching [`CoreAudioError`] refusal for the cases above.
 
-Source: `macos/NoicanState/Sources/NoicanState/AppEvent.swift` lines 92–96.
+Source: `macos/NoicanState/Sources/NoicanState/AppEvent.swift`, `AppEvent.monitorTargetBecameUnsafe`.
 
 The device the playing monitor targets lost its safety after
 enable time (the headphone jack flipped to the internal speakers,
@@ -413,7 +413,7 @@ or the device disappeared): the preview must stop itself before
 the unvetted output keeps playing. `reason` explains what
 happened, in the same voice as the enable-time refusals.
 
-Source: `macos/NoicanState/Sources/NoicanState/AppReducer.swift` lines 526–531.
+Source: `macos/NoicanState/Sources/NoicanState/AppReducer.swift`, `AppReducer.monitorTargetBecameUnsafe`.
 
 The playing monitor's target lost its safety (headphone jack
 unplugged into the internal speakers, or the device vanished):
@@ -424,14 +424,14 @@ on the (new) vetted output.
 
 ## monitor-target-vetting
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 91–94.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `MonitorHandle::device`.
 
 Device the AUHAL was opened on (the vetted default output at
 enable time). Exposed to the control plane so it can watch *this*
 device for losing its safety — the default output may move on
 while the monitor stays here.
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 206–219.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `check_monitor_target`.
 
 Checks whether the current system default output may receive the
 preview, without creating or changing any audio object.
@@ -448,7 +448,7 @@ Returns exactly the refusals enabling would produce: the
 speakers) or [`CoreAudioError::Monitor`] when no default output is
 configured.
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 224–245.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `check_monitor_device`.
 
 Checks whether a *specific* output device may (still) receive the
 preview, without creating or changing any audio object.
@@ -473,14 +473,14 @@ the device list and is the caller's check.
 Returns the [`classify_monitor_target`] refusals (loopback, aggregate,
 built-in speakers).
 
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift` lines 122–125.
+Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine.monitorTargetError`.
 
 Reason the current system default output must not receive the
 preview (loopback, aggregate, or built-in speakers), or nil when
 preview may start. A pure inspection — a few Core Audio property
 reads, no audio objects — so it is cheap to poll.
 
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift` lines 140–146.
+Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine.monitorDeviceError`.
 
 Reason a *specific* device must not receive the preview — the same
 vetting as `monitorTargetError`, applied to the device the monitor
@@ -492,7 +492,7 @@ is the caller's device-list check instead.
 
 ## monitor-tee-overrun-and-trip
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 243–254.
+Source: `crates/noican-coreaudio/src/monitor.rs`, `MonitorTee::feed`.
 
 Feeds one processed block into the monitor ring when the shared
 state reads [`MonitorState::Playing`], without blocking.
@@ -509,7 +509,7 @@ both branches are observable in tests.
 
 ## monitoring-section-visibility
 
-Source: `macos/NoicanState/Sources/NoicanState/AppModel.swift` lines 364–366.
+Source: `macos/NoicanState/Sources/NoicanState/AppModel.swift`, `AppModel.showsMonitoring`.
 
 Whether the monitoring section (level meters) is shown: only for
 a settled, healthy run, so the section neither slides in during a
@@ -517,13 +517,13 @@ start that may still fail nor disappears during a model switch.
 
 ## preview-monitor
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 558–560.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `WorkerLinks::run_block`.
 
 Preview branch: the tee only copies into its preallocated monitor
 ring (skipped entirely while disarmed) and disarms itself on
 sustained feedback; it never delays the main path below.
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 901–922.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `Runtime::set_monitor`.
 
 Enables or disables the preview self-monitor: the worker tees its
 processed output into the monitor ring and a second, output-only
@@ -548,7 +548,7 @@ default output must not receive the preview (loopback, aggregate,
 or built-in speakers), and other [`CoreAudioError`] values when the
 monitor AUHAL cannot start.
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 935–941.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `Runtime::monitor_device`.
 
 Device the running preview monitor plays on (resolved and vetted
 at enable time), or `None` while the monitor is down. The control
@@ -560,7 +560,7 @@ noticing.
 
 ## preview-monitor-contract
 
-Source: `crates/noican-ffi/src/lib.rs` lines 476–499.
+Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_set_monitor`.
 
 Enables (nonzero) or disables (zero) the preview self-monitor: the
 processed microphone signal plays on the system default output device.
@@ -587,7 +587,7 @@ poll). A toggle in either direction clears a pending feedback trip
 
 `handle` must be null or a live engine handle.
 
-Source: `crates/noican-ffi/src/lib.rs` lines 520–533.
+Source: `crates/noican-ffi/src/lib.rs`, `noican_monitor_target_error`.
 
 Checks whether the current system default output may receive the
 preview, without starting or changing anything.
@@ -604,7 +604,7 @@ Preview control up front instead of failing after the fact.
 
 A non-null `buffer` must be writable for `capacity` bytes.
 
-Source: `crates/noican-ffi/src/lib.rs` lines 545–566.
+Source: `crates/noican-ffi/src/lib.rs`, `noican_monitor_device_error`.
 
 Checks whether a *specific* output device may (still) receive the
 preview.
@@ -629,7 +629,7 @@ byte count including the terminating NUL.
 
 A non-null `buffer` must be writable for `capacity` bytes.
 
-Source: `crates/noican-ffi/src/lib.rs` lines 579–592.
+Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_monitor_device`.
 
 Device ID the running preview monitor plays on, or 0 while no monitor
 AUHAL is up (stopped engine, preview off).
@@ -646,7 +646,7 @@ for event-driven and low-rate callers — not the 20 Hz poll path.
 
 `handle` must be null or a live engine handle.
 
-Source: `crates/noican-ffi/src/lib.rs` lines 636–654.
+Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_monitor_state`.
 
 The preview monitor's state as one value.
 
@@ -668,14 +668,14 @@ safe to poll at UI rates even while a monitor start is in progress.
 
 `handle` must be null or a live engine handle.
 
-Source: `crates/noican-ffi/src/lib.rs` lines 1247–1250.
+Source: `crates/noican-ffi/src/lib.rs`, `tests::monitor_target_check_is_null_safe_and_consistent`.
 
 The outcome depends on the host's audio devices (and on Linux it
 is always a refusal), but the contract holds everywhere: a null
 buffer only measures, and a nonzero result re-reads as a
 NUL-terminated reason string.
 
-Source: `crates/noican-ffi/src/lib.rs` lines 1273–1276.
+Source: `crates/noican-ffi/src/lib.rs`, `tests::monitor_device_check_is_null_safe_and_consistent`.
 
 Same contract as the default-output check: a null buffer only
 measures, and a nonzero result re-reads as a NUL-terminated
@@ -684,14 +684,14 @@ properties, which fail open on macOS by policy.
 
 ## preview-monitor-isolation
 
-Source: `crates/noican-coreaudio/src/lib.rs` lines 97–98.
+Source: `crates/noican-coreaudio/src/lib.rs`, `CoreAudioError::Monitor`.
 
 The preview monitor path could not start. Monitor failures never
 affect the meeting-facing path.
 
 ## preview-monitor-sequencing
 
-Source: `macos/NoicanState/Sources/NoicanState/AppReducer.swift` lines 278–280.
+Source: `macos/NoicanState/Sources/NoicanState/AppReducer.swift`, `AppReducer.startCompleted`.
 
 Preview mode is engine + monitor; the monitor half
 starts once the transport is up, staying busy (and
@@ -699,7 +699,7 @@ rendering the same snapshot) until its outcome lands.
 
 ## preview-refusal-live-clearing
 
-Source: `macos/Sources/NoicanMenuBar/AppState.swift` lines 562–566.
+Source: `macos/Sources/NoicanMenuBar/AppState.swift`, `AppState.refreshPreviewAvailability`.
 
 Maintains a shown refusal message only: once a Preview attempt was
 refused, re-sample the pre-flight so the reducer clears (or
@@ -707,20 +707,20 @@ updates) the message live as the user fixes the output. Called
 from the default-output listener, device hot-plug, and popover
 polling.
 
-Source: `macos/Sources/NoicanMenuBar/AppState.swift` lines 628–629.
+Source: `macos/Sources/NoicanMenuBar/AppState.swift`, `AppState.registerDefaultOutputListener`.
 
 Follows default-output changes so a shown refusal message clears
 the moment the user switches to a safe device.
 
 ## preview-refusal-message
 
-Source: `macos/NoicanState/Sources/NoicanState/AppReducer.swift` lines 102–104.
+Source: `macos/NoicanState/Sources/NoicanState/AppReducer.swift`, `AppReducer.modeSelected`.
 
 Refuse in place and explain: neither the mode nor the
 engine changes, and `monitorTargetErrorChanged` clears the
 message as soon as the output becomes safe.
 
-Source: `macos/NoicanState/Sources/NoicanState/AppReducer.swift` lines 494–496.
+Source: `macos/NoicanState/Sources/NoicanState/AppReducer.swift`, `AppReducer.monitorTargetErrorChanged`.
 
 Maintains a shown refusal message only: once a Preview attempt was
 refused, the shell re-samples the pre-flight so the message clears
@@ -728,7 +728,7 @@ refused, the shell re-samples the pre-flight so the message clears
 
 ## preview-refusal-message-shape
 
-Source: `macos/Sources/NoicanMenuBar/MenuView.swift` lines 147–148.
+Source: `macos/Sources/NoicanMenuBar/MenuView.swift`, `MenuView.modePicker`.
 
 One short sentence: the engine reports the cause (no
 UID, no remedy); the remedy is always the same.

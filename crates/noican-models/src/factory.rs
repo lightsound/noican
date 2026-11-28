@@ -14,10 +14,10 @@ use crate::stages::ulunas::UlunasStage;
 /// Identifier of the built-in bypass stage (always available, no weights).
 pub const PASSTHROUGH_ID: &str = "passthrough";
 
-/// See docs/adr/0009-model-catalog-fetch.md.
+/// See docs/adr/0009-model-catalog-fetch.md#model-catalog-single-source.
 #[derive(Debug, Clone, Copy)]
 pub struct CatalogEntry {
-    /// See docs/adr/0009-model-catalog-fetch.md.
+    /// See docs/adr/0009-model-catalog-fetch.md#model-catalog-single-source.
     pub id: &'static str,
     /// Human-readable name for UIs.
     pub display_name: &'static str,
@@ -39,7 +39,7 @@ pub fn catalog() -> impl Iterator<Item = CatalogEntry> {
     }))
 }
 
-/// See docs/adr/0001-realtime-audio-rules.md.
+/// See docs/adr/0001-realtime-audio-rules.md#buffer-presizing-contract.
 pub const MAX_BLOCK_LEN: usize = 2048;
 
 fn file_path(models_dir: &Path, spec: &ModelSpec, index: usize) -> std::path::PathBuf {
@@ -64,7 +64,7 @@ fn dependency_file_path(
     Ok(file_path(models_dir, dep, index))
 }
 
-/// See docs/adr/0009-model-catalog-fetch.md.
+/// See docs/adr/0009-model-catalog-fetch.md#model-weight-digest-verification.
 ///
 /// # Errors
 ///

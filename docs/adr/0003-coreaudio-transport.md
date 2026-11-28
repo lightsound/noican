@@ -3,13 +3,13 @@
 Status: Accepted
 
 Moved from code comments on 2026-11-21 (the delete-comment pass).
-The original wording is preserved under each topic; the source
-location of each comment at the time of the move (commit 397e3df)
-is noted above its text.
+The original wording is preserved under each topic; the file and
+symbol each comment was attached to are noted above its text and
+checked by `scripts/adr-links.py`.
 
 ## audio-stall-heartbeat
 
-Source: `macos/Sources/NoicanMenuBar/AppState.swift` lines 500–502.
+Source: `macos/Sources/NoicanMenuBar/AppState.swift`, `AppState.checkEngineHealth`.
 
 Heartbeat: the device must keep delivering callbacks while
 running. Three silent seconds means it stopped (unplugged mic,
@@ -17,7 +17,7 @@ coreaudiod restart, post-sleep stall) without reporting an error.
 
 ## auhal-channel-map
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 947–959.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `Runtime::routing_description`.
 
 Diagnostic: how the render stream is routed into the device. On
 the aggregate transport: the output channel count AUHAL reports for
@@ -33,13 +33,13 @@ neither the map's effect nor the format negotiation can otherwise
 be observed. The two transports' descriptions start differently
 (`aggregate output channels …` / `virtual output channels …`).
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 1013–1015.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `configure_auhal`.
 
 Dual mono: as many client channels as the virtual output has, so a
 one-to-one channel map can feed every one of them (crate::routing).
 A 1-channel virtual output yields the mono format of old.
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 1140–1164.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `set_render_channel_map`.
 
 Places the render stream (one client channel per virtual-output
 channel) on the virtual output's channels inside the aggregate device
@@ -67,7 +67,7 @@ The capture direction keeps AUHAL's default map (client channel 0 ←
 device input channel 0 = the microphone, which is the first
 subdevice); it is deliberately not touched here.
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 1193–1199.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `describe_applied_channel_map`.
 
 Reads the output channel map back for the start-time diagnostics.
 Called after `AudioUnitInitialize`, the point where AUHAL reconciles
@@ -79,7 +79,7 @@ Never fails the start: an unreadable map is reported as such.
 
 ## auhal-direction-scopes
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 1045–1052.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `Direction`.
 
 One of AUHAL's two I/O directions. Each has its own element (bus),
 split into a device-facing and an app-facing scope: capture enters
@@ -90,7 +90,7 @@ app on its input scope and reaches the device on its output scope
 unit's configuration names what it switches or formats instead of
 spelling out that scope and element.
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 1254–1257.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `stream_format_channels`.
 
 Channel count of the output element's stream format on `scope`:
 [`AUDIO_UNIT_SCOPE_OUTPUT`] is the device side (what the hardware
@@ -122,7 +122,7 @@ output ring back to its target.
 
 ## capture-error-contract
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 365–376.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `Capture::capture`.
 
 Captures this cycle's `frame_count` frames and wakes the worker.
 
@@ -139,14 +139,14 @@ to the running callback.
 
 ## capture-landing-buffer
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 336–339.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `Capture::buffer`.
 
 Preallocated landing buffer for `AudioUnitRender` (mono,
 [`MAX_CALLBACK_FRAMES`]). On the aggregate transport the render
 buffer AUHAL hands over carries one channel per virtual-output
 channel, so it cannot double as the mono capture target.
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 1026–1028.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `set_max_frames_per_slice`.
 
 Bounds the unit's callback size to [`MAX_CALLBACK_FRAMES`] so the
 preallocated capture landing buffer always suffices (the callback
@@ -170,7 +170,7 @@ nor blocks. Files the CLI reads do not pass through it.
 
 ## capture-ring-overrun-accounting
 
-Source: `crates/noican-coreaudio/src/callback.rs` lines 110–117.
+Source: `crates/noican-coreaudio/src/callback.rs`, `CaptureFeed`.
 
 The capture side's hand-off to the inference worker: pushes captured
 samples into the capture ring, counting the ones a full ring drops.
@@ -181,14 +181,14 @@ than blocking the callback. A count that moves means real audio was
 silently lost — audible as clipped input reaching the models — which
 the frame heartbeat alone cannot show.
 
-Source: `crates/noican-coreaudio/src/callback.rs` lines 132–133.
+Source: `crates/noican-coreaudio/src/callback.rs`, `CaptureFeed::push`.
 
 Queues `samples` for the worker. Never blocks; each dropped sample
 is counted with a relaxed add (real-time safe).
 
 ## capture-support-classification
 
-Source: `macos/NoicanState/Tests/NoicanStateTests/NativeRateReducerTests.swift` lines 31–33.
+Source: `macos/NoicanState/Tests/NoicanStateTests/NativeRateReducerTests.swift`, `CaptureSupportTests.nativeRates`.
 
 A device idling exactly at 48 kHz without advertising it in
 its rate list is convertible too (1/1 through the same
@@ -196,24 +196,24 @@ resampler); the live probe still prefers the aggregate path.
 
 ## capture-support-in-state
 
-Source: `macos/NoicanState/Sources/NoicanState/InputDevice.swift` lines 1–3.
+Source: `macos/NoicanState/Sources/NoicanState/InputDevice.swift`, `CaptureSupport`.
 
 How a microphone can feed the 48 kHz engine, decided from the Core
 Audio snapshot at device-refresh time. Carrying this here lets the
 reducer pre-flight selections without touching Core Audio.
 
-Source: `macos/NoicanState/Sources/NoicanState/InputDevice.swift` lines 5–6.
+Source: `macos/NoicanState/Sources/NoicanState/InputDevice.swift`, `CaptureSupport.engineRate`.
 
 The device can run at the 48 kHz engine rate: captured through
 the private Aggregate Device (the original, unchanged path).
 
-Source: `macos/NoicanState/Sources/NoicanState/InputDevice.swift` lines 27–29.
+Source: `macos/NoicanState/Sources/NoicanState/InputDevice.swift`, `CaptureSupport.classify`.
 
 Classifies a device from the two Core Audio facts the shell
 samples: whether it advertises 48 kHz support, and its current
 nominal rate. Pure, so the policy stays reducer-testable.
 
-Source: `macos/NoicanState/Sources/NoicanState/InputDevice.swift` lines 54–59.
+Source: `macos/NoicanState/Sources/NoicanState/InputDevice.swift`, `InputDevice`.
 
 One selectable microphone as the state machine sees it: a pure value
 snapshot taken by the control plane at device-refresh time. Carrying
@@ -224,7 +224,7 @@ observed separately via `AppEvent.inputSampleRateChanged`).
 
 ## coreaudio-generic-pointer-read
 
-Source: `macos/Sources/NoicanMenuBar/VirtualOutputLevelCheck.swift` lines 61–63.
+Source: `macos/Sources/NoicanMenuBar/VirtualOutputLevelCheck.swift`, `VirtualOutputLevelProbe.readProperty`.
 
 An explicit typed pointer: `&value` on a generic inout would
 form a raw pointer to a possibly reference-holding `T`,
@@ -232,7 +232,7 @@ which the compiler (rightly) warns about.
 
 ## coreaudio-module-layout
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 1–5.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`.
 
 Audited AUHAL FFI and real-time callbacks for the main transport.
 
@@ -242,21 +242,21 @@ callback attachment, disposal) is defined here and reused there.
 
 ## coreaudio-transport-and-source-codes
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 103–104.
+Source: `crates/noican-coreaudio/src/monitor.rs`, `TRANSPORT_TYPE_VIRTUAL`.
 
 `kAudioDeviceTransportTypeVirtual`: loopback drivers (`BlackHole`,
 JoyCast, ...).
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 106–107.
+Source: `crates/noican-coreaudio/src/monitor.rs`, `TRANSPORT_TYPE_AGGREGATE`.
 
 `kAudioDeviceTransportTypeAggregate`: aggregate and Multi-Output
 devices composed in Audio MIDI Setup.
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 109–109.
+Source: `crates/noican-coreaudio/src/monitor.rs`, `TRANSPORT_TYPE_BUILT_IN`.
 
 `kAudioDeviceTransportTypeBuiltIn`: the Mac's own output.
 
-Source: `crates/noican-coreaudio/src/monitor.rs` lines 111–113.
+Source: `crates/noican-coreaudio/src/monitor.rs`, `DATA_SOURCE_INTERNAL_SPEAKER`.
 
 Built-in output data source for the internal speakers
 (`kAudioDevicePropertyDataSource` value `'ispk'`; the headphone jack
@@ -264,7 +264,7 @@ reports `'hdpn'`).
 
 ## coreaudio-transport-architecture
 
-Source: `crates/noican-coreaudio/src/lib.rs` lines 1–29.
+Source: `crates/noican-coreaudio/src/lib.rs`.
 
 AUHAL transport between Core Audio devices and the Rust engine.
 
@@ -298,14 +298,14 @@ never blocking the callback.
 
 ## heartbeat-frame-counter
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 344–347.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `Capture::frames`.
 
 Heartbeat: input frames delivered since start (relaxed atomic add is
 real-time safe). A counter that stops advancing while "running"
 means the device stopped calling back (unplugged microphone,
 coreaudiod restart, post-sleep stall).
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 826–828.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `Runtime::frames_processed`.
 
 Total input frames the render callback has delivered since start.
 A value that stops advancing while running means the device stopped
@@ -313,13 +313,13 @@ calling back; the control plane uses it as a heartbeat.
 
 ## realtime-callback-frame-cap
 
-Source: `crates/noican-coreaudio/src/callback.rs` lines 27–29.
+Source: `crates/noican-coreaudio/src/callback.rs`, `MAX_CALLBACK_FRAMES`.
 
 Largest callback an AUHAL unit may deliver, in frames. Set as
 `kAudioUnitProperty_MaximumFramesPerSlice` on every unit that
 captures, and the length of each preallocated capture landing buffer.
 
-Source: `crates/noican-coreaudio/src/callback.rs` lines 32–34.
+Source: `crates/noican-coreaudio/src/callback.rs`, `capture_byte_size`.
 
 Byte size of a mono `f32` capture landing buffer holding `frames`,
 or `None` when `frames` exceeds `capacity` (the buffer's length) —
@@ -327,7 +327,7 @@ the callback must then fault instead of rendering past the buffer.
 
 ## realtime-callback-rules
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 1572–1581.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `render_samples`.
 
 The interleaved `f32` samples a render callback may write — the first
 buffer of the list AUHAL handed over, bounded by [`render_geometry`] —
@@ -340,7 +340,7 @@ or a null data pointer). Shared by the three render callbacks
 `data` must be the non-null buffer list AUHAL passed to the running
 render callback; the slice must not outlive that callback.
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 1600–1608.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `render_callback`.
 
 Render callback of the aggregate AUHAL: captures the microphone frames
 of this cycle into the preallocated mono landing buffer, pushes them to
@@ -352,14 +352,14 @@ Real-time rules (docs/tech-research.md §9): no allocation, no locks;
 a callback larger than the frame bound faults instead of allocating;
 ring overrun drops samples; underrun renders silence.
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 1630–1631.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `render_callback`.
 
 The render buffer is silenced so nothing stale can reach the
 virtual output should AUHAL play it despite the error.
 
 ## render-geometry-zero-channel
 
-Source: `crates/noican-coreaudio/src/callback.rs` lines 64–69.
+Source: `crates/noican-coreaudio/src/callback.rs`, `render_geometry`.
 
 Bounds a render request to the buffer AUHAL handed over.
 
@@ -370,7 +370,7 @@ division by zero.
 
 ## setup-guard-ownership
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 301–303.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `ContextGuard`.
 
 Owns a heap-allocated callback context during setup, reclaiming it
 on any early error return (safe because the audio unit is never started
@@ -378,7 +378,7 @@ on those paths, so no callback can observe the pointer).
 
 ## split-transport-architecture
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 1–41.
+Source: `crates/noican-coreaudio/src/macos/split.rs`.
 
 Split transport for non-48 kHz microphones (issue #7): two AUHAL
 instances bridged by a drift-compensating worker.
@@ -422,7 +422,7 @@ worker's semaphore; the output callback only pops the output ring
 (silence on underrun); all resampling runs on the worker with state
 preallocated at start.
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 68–75.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `NATIVE_CHUNK_SAMPLES`.
 
 Native-rate samples drained from the capture ring per worker pass
 (also the resampler's preallocation unit): 480 native samples cover
@@ -433,7 +433,7 @@ pass). The resampler's per-call output bound
 buffers, so a 96 kHz device (half an engine block per pass) needs no
 separate tuning.
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 99–104.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `OutputContext::feed`.
 
 The output ring and its underrun counter, with the same
 complete-starvation definition as the aggregate path. On this
@@ -442,41 +442,41 @@ silence, so the feed counts from the first callback on, and a
 fully drained ring means the worker (or the capture side) fell
 behind by more than the whole cushion.
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 133–134.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `start`.
 
 Validate the rate (and preallocate the conversion state) before
 touching any audio object.
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 180–181.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `start`.
 
 Start the units, unwinding everything on failure (the RAII guards
 release the units and contexts; the worker is stopped explicitly).
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 254–256.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `configure_capture_auhal`.
 
 Input-only AUHAL on the microphone: output disabled, capture client
 format at the device's native rate (AUHAL performs no sample-rate
 conversion on the input side, so the client rate must match).
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 334–336.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `attach_input_callback`.
 
 Registers `context` as the capture unit's input callback (the
 input-only AUHAL notification slot, distinct from the render-callback
 slot used by output units).
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 371–372.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `split_processing_loop`.
 
 Converted samples per pass, bounded by the resampler at the
 largest drift correction so the buffer never grows afterwards.
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 394–395.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `split_processing_loop`.
 
 Block until the capture callback signals more input (or
 the timeout elapses, so shutdown is always noticed).
 
 ## split-transport-contract
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 750–775.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `Runtime::start_native`.
 
 Opens the split transport for a microphone that cannot run at the
 48 kHz engine rate (issue #7): an input-only AUHAL captures
@@ -507,7 +507,7 @@ worker.
 
 ## split-transport-native-capture
 
-Source: `crates/noican-ffi/src/lib.rs` lines 223–248.
+Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_start_native`.
 
 Starts the split transport for a microphone that cannot run at the
 48 kHz engine rate (issue #7).
@@ -538,7 +538,7 @@ valid NUL-terminated string for the duration of this call.
 
 ## split-transport-render-format
 
-Source: `crates/noican-coreaudio/src/routing.rs` lines 303–318.
+Source: `crates/noican-coreaudio/src/routing.rs`, `split_render_channels`.
 
 Client render channel count for the split transport's output-only
 AUHAL, from the output channel count AUHAL reports for the virtual
@@ -559,12 +559,12 @@ to start instead.
 
 ## transport-device-binding
 
-Source: `macos/NoicanState/Sources/NoicanState/AppModel.swift` lines 9–10.
+Source: `macos/NoicanState/Sources/NoicanState/AppModel.swift`, `EngineSession.inputUID`.
 
 Microphone the running transport was built around (the aggregate
 is composed at start time, so a live change means a rebuild).
 
-Source: `macos/NoicanState/Sources/NoicanState/AppModel.swift` lines 45–47.
+Source: `macos/NoicanState/Sources/NoicanState/AppModel.swift`, `StartAttempt.inputUID`.
 
 Microphone to compose the aggregate around. Captured at claim
 time: the *selection* can be reassigned by device hot-plug during
@@ -572,14 +572,14 @@ the busy window, but the transport is bound to this device.
 
 ## transport-pointer-ownership
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 571–574.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `Transport`.
 
 The AUHAL instance(s) a running transport owns, with their callback
 contexts. Raw pointers are stored as integers so the runtime stays
 `Send`; they are only dereferenced on the control thread that owns
 the runtime, after callbacks have been stopped.
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 617–622.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `Transport::dispose`.
 
 Disposes the audio unit(s) and reclaims the callback context(s).
 
@@ -588,12 +588,12 @@ Disposes the audio unit(s) and reclaims the callback context(s).
 Callbacks must no longer be running (units stopped, worker
 joined), and this must be called at most once.
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 806–807.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `Runtime::stop`.
 
 Units are stopped and the worker joined, and `running` guards
 against a second call.
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 1340–1342.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `dispose_unit`.
 
 Uninitializes and disposes a stopped audio unit. Callbacks must no
 longer be running (the unit was stopped, and for the main transport
@@ -601,13 +601,13 @@ the worker joined).
 
 ## transport-session-accessors
 
-Source: `macos/NoicanState/Sources/NoicanState/AppModel.swift` lines 272–274.
+Source: `macos/NoicanState/Sources/NoicanState/AppModel.swift`, `AppModel.liveSession`.
 
 The live transport in a settled state: running, or failed with the
 transport still up (an engine fault). Nil while busy — the busy
 transition owns its session and no new transition may start.
 
-Source: `macos/NoicanState/Sources/NoicanState/AppModel.swift` lines 295–299.
+Source: `macos/NoicanState/Sources/NoicanState/AppModel.swift`, `AppModel.hasLiveTransport`.
 
 Whether an engine transport exists that the health poll must
 watch. True through busy monitor/model transitions (the transport
@@ -615,7 +615,7 @@ stays up) and through a fault (failed with a live session); false
 while off, torn down, or rebuilding (`starting` claims a fresh
 transport whose watch begins on success).
 
-Source: `macos/NoicanState/Sources/NoicanState/AppModel.swift` lines 304–311.
+Source: `macos/NoicanState/Sources/NoicanState/AppModel.swift`, `AppModel.transportSession`.
 
 The session whose engine transport is currently up, *including*
 through busy monitor/model transitions (which keep the transport
@@ -628,7 +628,7 @@ fresh transport).
 
 ## transport-session-listener
 
-Source: `macos/NoicanState/Tests/NoicanStateTests/NativeRateReducerTests.swift` lines 185–187.
+Source: `macos/NoicanState/Tests/NoicanStateTests/NativeRateReducerTests.swift`, `InputRateChangeTests.transportSessionSurvivesBusyTransitions`.
 
 The input-rate listener keys on this: dropping it during a
 Preview toggle or model switch would blind the observer while
@@ -636,12 +636,12 @@ the transport keeps running.
 
 ## transport-shape-decision
 
-Source: `macos/Sources/NoicanMenuBar/AppState.swift` lines 235–236.
+Source: `macos/Sources/NoicanMenuBar/AppState.swift`, `AppState.startEngine`.
 
 Snapshot capability, kept as the fallback vote for the
 transport-shape decision below.
 
-Source: `macos/Sources/NoicanMenuBar/AppState.swift` lines 574–596.
+Source: `macos/Sources/NoicanMenuBar/AppState.swift`, `AppState.shouldUseAggregate`.
 
 Transport shape for a start effect: 48 kHz-capable microphones
 keep the original aggregate path unchanged; other devices

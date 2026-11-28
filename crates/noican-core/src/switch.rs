@@ -1,4 +1,4 @@
-//! See docs/adr/0007-dsp-stages.md.
+//! See docs/adr/0007-dsp-stages.md#click-free-stage-switching.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -14,7 +14,7 @@ struct PreparedStage {
     stage: Box<dyn Stage>,
 }
 
-/// See docs/adr/0007-dsp-stages.md.
+/// See docs/adr/0007-dsp-stages.md#click-free-stage-switching.
 #[derive(Clone)]
 pub struct StagePublisher {
     queue: Arc<ArrayQueue<PreparedStage>>,
@@ -30,7 +30,7 @@ impl std::fmt::Debug for StagePublisher {
 }
 
 impl StagePublisher {
-    /// See docs/adr/0007-dsp-stages.md.
+    /// See docs/adr/0007-dsp-stages.md#click-free-stage-switching.
     #[must_use = "a superseded stage id usually indicates rapid re-publication worth logging"]
     pub fn publish(&self, stage: Box<dyn Stage>) -> Option<String> {
         let generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
@@ -46,7 +46,7 @@ enum Transition {
     FadeIn { completed: usize },
 }
 
-/// See docs/adr/0007-dsp-stages.md.
+/// See docs/adr/0007-dsp-stages.md#click-free-stage-switching.
 pub struct SwitchingEngine {
     queue: Arc<ArrayQueue<PreparedStage>>,
     current: Box<dyn Stage>,
@@ -68,11 +68,11 @@ impl std::fmt::Debug for SwitchingEngine {
     }
 }
 
-/// See docs/adr/0007-dsp-stages.md.
+/// See docs/adr/0007-dsp-stages.md#click-free-stage-switching.
 pub const MAX_FADE_SAMPLES: usize = u16::MAX as usize;
 
 impl SwitchingEngine {
-    /// See docs/adr/0007-dsp-stages.md.
+    /// See docs/adr/0007-dsp-stages.md#click-free-stage-switching.
     ///
     /// # Errors
     ///
@@ -127,7 +127,7 @@ impl SwitchingEngine {
         self.current_generation
     }
 
-    /// See docs/adr/0007-dsp-stages.md.
+    /// See docs/adr/0007-dsp-stages.md#click-free-stage-switching.
     ///
     /// # Errors
     ///

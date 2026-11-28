@@ -1,4 +1,4 @@
-//! See docs/adr/0005-preview-monitor.md.
+//! See docs/adr/0005-preview-monitor.md#monitor-module-split.
 
 use std::ffi::{c_char, c_void};
 use std::ptr;
@@ -146,7 +146,7 @@ impl MonitorControl {
     }
 }
 
-/// See docs/adr/0005-preview-monitor.md.
+/// See docs/adr/0005-preview-monitor.md#monitor-target-vetting.
 ///
 /// # Errors
 ///
@@ -158,7 +158,7 @@ pub fn check_monitor_target() -> Result<(), CoreAudioError> {
     monitor_target_device().map(|_device| ())
 }
 
-/// See docs/adr/0005-preview-monitor.md.
+/// See docs/adr/0005-preview-monitor.md#monitor-target-vetting.
 ///
 /// # Errors
 ///

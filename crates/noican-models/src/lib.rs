@@ -1,4 +1,4 @@
-//! See docs/adr/0009-model-catalog-fetch.md.
+//! See docs/adr/0009-model-catalog-fetch.md#model-backend-selection.
 
 pub mod dsp;
 pub mod factory;

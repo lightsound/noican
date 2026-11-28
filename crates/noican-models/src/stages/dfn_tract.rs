@@ -1,4 +1,4 @@
-//! See docs/adr/0008-model-runtime.md.
+//! See docs/adr/0008-model-runtime.md#deepfilternet-tract-runtime.
 
 use std::path::Path;
 
@@ -88,7 +88,7 @@ fn build(params: &DfParams, runtime: &RuntimeParams) -> Result<DfTract, StageErr
 }
 
 impl DfTractStage {
-    /// See docs/adr/0008-model-runtime.md.
+    /// See docs/adr/0008-model-runtime.md#deepfilternet-tract-runtime.
     ///
     /// # Errors
     ///
@@ -103,7 +103,7 @@ impl DfTractStage {
         )
     }
 
-    /// See docs/adr/0008-model-runtime.md.
+    /// See docs/adr/0008-model-runtime.md#deepfilternet-tract-runtime.
     ///
     /// # Errors
     ///
@@ -114,7 +114,7 @@ impl DfTractStage {
         Self::from_params(id, params, RuntimeParams::default_with_ch(1), 1.0)
     }
 
-    /// See docs/adr/0008-model-runtime.md.
+    /// See docs/adr/0008-model-runtime.md#deepfilternet-tract-runtime.
     ///
     /// # Errors
     ///
@@ -123,7 +123,7 @@ impl DfTractStage {
         Self::hush_with_gain(id, tarball, db_to_linear(HUSH_MAKEUP_GAIN_DB))
     }
 
-    /// See docs/adr/0007-dsp-stages.md.
+    /// See docs/adr/0007-dsp-stages.md#hush-makeup-gain.
     ///
     /// # Errors
     ///

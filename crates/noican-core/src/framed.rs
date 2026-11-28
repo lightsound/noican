@@ -1,4 +1,4 @@
-//! See docs/adr/0007-dsp-stages.md.
+//! See docs/adr/0007-dsp-stages.md#framed-stage-adapter.
 
 use std::collections::VecDeque;
 
@@ -22,7 +22,7 @@ pub struct FramedStage<P> {
 }
 
 impl<P: FrameProcessor> FramedStage<P> {
-    /// See docs/adr/0007-dsp-stages.md.
+    /// See docs/adr/0007-dsp-stages.md#framed-stage-adapter.
     ///
     /// # Errors
     ///

@@ -1,4 +1,4 @@
-//! See docs/adr/0010-eval-methodology.md.
+//! See docs/adr/0010-eval-methodology.md#cli-file-mode-model-comparison.
 
 #![expect(
     clippy::print_stdout,

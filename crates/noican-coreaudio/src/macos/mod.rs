@@ -1,4 +1,4 @@
-//! See docs/adr/0003-coreaudio-transport.md.
+//! See docs/adr/0003-coreaudio-transport.md#coreaudio-module-layout.
 
 #![expect(
     unsafe_code,
@@ -533,7 +533,7 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    /// See docs/adr/0004-aggregate-output-routing.md.
+    /// See docs/adr/0004-aggregate-output-routing.md#aggregate-transport-contract.
     ///
     /// # Errors
     ///
@@ -600,7 +600,7 @@ impl Runtime {
         })
     }
 
-    /// See docs/adr/0003-coreaudio-transport.md.
+    /// See docs/adr/0003-coreaudio-transport.md#split-transport-contract.
     ///
     /// # Errors
     ///
@@ -660,19 +660,19 @@ impl Runtime {
             || self.worker.as_ref().is_some_and(JoinHandle::is_finished)
     }
 
-    /// See docs/adr/0003-coreaudio-transport.md.
+    /// See docs/adr/0003-coreaudio-transport.md#heartbeat-frame-counter.
     #[must_use]
     pub fn frames_processed(&self) -> u64 {
         self.shared.frames.load(Ordering::Relaxed)
     }
 
-    /// See docs/adr/0002-engine-diagnostics.md.
+    /// See docs/adr/0002-engine-diagnostics.md#diagnostic-counters.
     #[must_use]
     pub fn output_underruns(&self) -> u64 {
         self.shared.underruns.load(Ordering::Relaxed)
     }
 
-    /// See docs/adr/0002-engine-diagnostics.md.
+    /// See docs/adr/0002-engine-diagnostics.md#diagnostic-counters.
     #[must_use]
     pub fn input_overruns(&self) -> u64 {
         self.shared.input_overruns.load(Ordering::Relaxed)
@@ -700,20 +700,20 @@ impl Runtime {
         self.shared.block_stats.max_ns()
     }
 
-    /// See docs/adr/0001-realtime-audio-rules.md.
+    /// See docs/adr/0001-realtime-audio-rules.md#worker-realtime-promotion.
     #[must_use]
     pub fn worker_realtime(&self) -> bool {
         self.shared.worker_realtime.load(Ordering::Acquire)
     }
 
-    /// See docs/adr/0002-engine-diagnostics.md.
+    /// See docs/adr/0002-engine-diagnostics.md#diagnostic-counters.
     pub fn reset_debug_stats(&self) {
         self.shared.underruns.store(0, Ordering::Relaxed);
         self.shared.input_overruns.store(0, Ordering::Relaxed);
         self.shared.block_stats.reset();
     }
 
-    /// See docs/adr/0005-preview-monitor.md.
+    /// See docs/adr/0005-preview-monitor.md#preview-monitor.
     ///
     /// # Errors
     ///
@@ -734,13 +734,13 @@ impl Runtime {
         }
     }
 
-    /// See docs/adr/0005-preview-monitor.md.
+    /// See docs/adr/0005-preview-monitor.md#preview-monitor.
     #[must_use]
     pub fn monitor_device(&self) -> Option<u32> {
         self.monitor.active_device()
     }
 
-    /// See docs/adr/0003-coreaudio-transport.md.
+    /// See docs/adr/0003-coreaudio-transport.md#auhal-channel-map.
     #[must_use]
     pub fn routing_description(&self) -> &str {
         &self.routing

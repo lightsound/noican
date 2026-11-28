@@ -3,13 +3,13 @@
 Status: Accepted
 
 Moved from code comments on 2026-11-21 (the delete-comment pass).
-The original wording is preserved under each topic; the source
-location of each comment at the time of the move (commit 397e3df)
-is noted above its text.
+The original wording is preserved under each topic; the file and
+symbol each comment was attached to are noted above its text and
+checked by `scripts/adr-links.py`.
 
 ## aggregate-buffer-size
 
-Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift` lines 283–285.
+Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift`, `AggregateDevice.configureBufferSize`.
 
 256 frames is a preference, not a requirement: the transport's
 ring buffers absorb whatever callback size the device settles on,
@@ -17,7 +17,7 @@ so a driver clamping to its supported range is fine.
 
 ## aggregate-channel-routing
 
-Source: `crates/noican-ffi/src/lib.rs` lines 166–188.
+Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_start`.
 
 Starts AUHAL on an already-created private Aggregate Device.
 
@@ -43,7 +43,7 @@ without holding the control lock).
 `handle` must be a live engine handle and `model_id` must point to a
 valid NUL-terminated string for the duration of this call.
 
-Source: `crates/noican-ffi/src/lib.rs` lines 1462–1467.
+Source: `crates/noican-ffi/src/lib.rs`, `tests::start_rejects_an_empty_virtual_output_range_before_any_slow_work`.
 
 Valid layouts — the built-in microphone (no own outputs) and a
 headphone-equipped microphone (two outputs ahead of the
@@ -52,7 +52,7 @@ transport itself then refuses (and macOS fails on the
 nonexistent device 0 or its layout), but never with the
 empty-range message.
 
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift` lines 46–52.
+Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine.start`.
 
 Starts the aggregate transport on a composed private aggregate.
 The composition's `virtualOutputChannels` tells the Rust side
@@ -64,7 +64,7 @@ re-checks the range against the device before starting.
 
 ## aggregate-composition-order
 
-Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift` lines 45–55.
+Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift`, `AggregateDevice.create`.
 
 Composition order is load-bearing: the microphone stays first
 (clock master; aggregate input channel 0 must be the
@@ -80,7 +80,7 @@ result against the aggregate's own channel count).
 
 ## aggregate-device-clocking
 
-Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift` lines 38–42.
+Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift`, `AggregateDevice.create`.
 
 Switch the subdevices themselves to 48 kHz before composing the
 aggregate: the aggregate follows its clock master (the mic), and
@@ -88,12 +88,12 @@ setting the rate on the aggregate alone is rejected ('nope') by
 some configurations while the mic idles at another rate (16 kHz
 Bluetooth profiles, 44.1 kHz defaults, ...).
 
-Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift` lines 65–66.
+Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift`, `AggregateDevice.create`.
 
 Only the virtual output is drift-compensated against
 the microphone's clock.
 
-Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift` lines 150–153.
+Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift`, `AggregateDevice.ensure48k`.
 
 Switches `device` to 48 kHz (polling the asynchronous change),
 or throws when it cannot run there. Shared with the split
@@ -102,7 +102,7 @@ the virtual output at the 48 kHz engine rate for consumers.
 
 ## aggregate-device-lifecycle
 
-Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift` lines 95–97.
+Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift`, `AggregateDevice.create`.
 
 A thrown create must leave nothing behind: the aggregate
 above is this object's only recorded state, so the caller
@@ -110,7 +110,7 @@ cannot reach it to destroy it itself.
 
 ## aggregate-device-threading
 
-Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift` lines 14–17.
+Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift`, `AggregateDevice`.
 
 Owns the private Aggregate Device combining the physical input and the
 virtual output. `@unchecked Sendable`: creation happens on the detached
@@ -119,7 +119,7 @@ start task and teardown on the main actor, but never concurrently —
 
 ## aggregate-output-channel-routing
 
-Source: `macos/NoicanState/Sources/NoicanState/VirtualOutputChannels.swift` lines 1–21.
+Source: `macos/NoicanState/Sources/NoicanState/VirtualOutputChannels.swift`, `VirtualOutputChannels`.
 
 Where the virtual output's channels sit in the private aggregate's
 output channel list.
@@ -143,25 +143,25 @@ Pure arithmetic, kept in this package so it is unit-tested on every
 CI target; the app's `AggregateDevice` feeds it the channel counts of
 the very subdevice list it composes.
 
-Source: `macos/NoicanState/Tests/NoicanStateTests/VirtualOutputChannelsTests.swift` lines 5–8.
+Source: `macos/NoicanState/Tests/NoicanStateTests/VirtualOutputChannelsTests.swift`, `VirtualOutputChannelsTests`.
 
 The Rust side (`noican_coreaudio::routing`) tests the channel map built
 from these numbers; this suite covers the arithmetic that produces them
 from the composed subdevice list — the only number in the chain that
 depends on real device data.
 
-Source: `macos/NoicanState/Tests/NoicanStateTests/VirtualOutputChannelsTests.swift` lines 21–21.
+Source: `macos/NoicanState/Tests/NoicanStateTests/VirtualOutputChannelsTests.swift`, `VirtualOutputChannelsTests.headphoneJackMicrophone`.
 
 Shure MV7+: stereo headphone jack ahead of the virtual output.
 
-Source: `macos/NoicanState/Tests/NoicanStateTests/VirtualOutputChannelsTests.swift` lines 40–41.
+Source: `macos/NoicanState/Tests/NoicanStateTests/VirtualOutputChannelsTests.swift`, `VirtualOutputChannelsTests.channelCountPassThrough`.
 
 Zero is reported as-is; the Rust side refuses an empty range
 with a precise message rather than this type guessing.
 
 ## aggregate-output-routing
 
-Source: `crates/noican-coreaudio/src/routing.rs` lines 1–184.
+Source: `crates/noican-coreaudio/src/routing.rs`.
 
 Output-channel routing for the aggregate transport: where the virtual
 output sits inside the private Aggregate Device, and the AUHAL channel
@@ -348,7 +348,7 @@ either adds the FFI change, adds unsafe code, or adds an unverified
 AUHAL behaviour without removing the one read the chosen option
 makes.
 
-Source: `crates/noican-coreaudio/src/routing.rs` lines 192–201.
+Source: `crates/noican-coreaudio/src/routing.rs`, `VirtualOutputChannels`.
 
 Position of the virtual output's channels within an Aggregate Device's
 output channel list.
@@ -361,7 +361,7 @@ client stream the transport renders. Constructed by the control plane
 from the subdevice list it composes; see [`render_channel_map`] for
 how it is checked against the device.
 
-Source: `crates/noican-coreaudio/src/routing.rs` lines 209–216.
+Source: `crates/noican-coreaudio/src/routing.rs`, `VirtualOutputChannels::new`.
 
 Describes `count` virtual-output channels starting at device
 output channel `first`.
@@ -372,7 +372,7 @@ Returns [`CoreAudioError::OutputRouting`] when `count` is zero (a
 virtual output without output channels cannot receive audio) or
 when the range does not fit a `u32`.
 
-Source: `crates/noican-coreaudio/src/routing.rs` lines 252–273.
+Source: `crates/noican-coreaudio/src/routing.rs`, `render_channel_map`.
 
 Builds the AUHAL output channel map that places a `target.count()`-
 channel client stream on `target` in a device with `device_channels`
@@ -397,7 +397,7 @@ layout, and the transport must not guess where the virtual output is.
 Returns [`CoreAudioError::OutputRouting`] when `target.end()` differs
 from `device_channels`.
 
-Source: `crates/noican-coreaudio/src/routing.rs` lines 293–296.
+Source: `crates/noican-coreaudio/src/routing.rs`, `render_channel_map`.
 
 In range by construction (`count >= 1` and `end() == device_channels`);
 plain indexing rather than a silent `get_mut`, because an all-`-1`
@@ -406,7 +406,7 @@ prevents.
 
 ## aggregate-rate-polling
 
-Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift` lines 226–231.
+Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift`, `AggregateDevice.configureSampleRate`.
 
 Nominal-rate changes propagate to the subdevices asynchronously,
 and some drivers reject the set while already at the target rate,
@@ -415,14 +415,14 @@ so poll the read-back instead of trusting one set + one read
 while the microphone idled at 44.1 kHz). Runs on the background
 start task, never on the main actor.
 
-Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift` lines 257–258.
+Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift`, `AggregateDevice.configureSampleRate`.
 
 Re-issue once midway in case the first set landed before the
 subdevices had finished attaching.
 
 ## aggregate-transport-contract
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 664–690.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `Runtime::start`.
 
 Opens an initialized AUHAL on a private Aggregate Device.
 
@@ -454,14 +454,14 @@ and the worker (RAII guards; nothing leaks on failed starts).
 
 ## audio-stall-detection
 
-Source: `macos/NoicanState/Sources/NoicanState/AppEvent.swift` lines 104–105.
+Source: `macos/NoicanState/Sources/NoicanState/AppEvent.swift`, `AppEvent.audioStalled`.
 
 The health poll saw no frames for three consecutive seconds while
 running (unplugged mic, coreaudiod restart, post-sleep stall).
 
 ## dual-mono-rendering
 
-Source: `crates/noican-coreaudio/src/callback.rs` lines 86–93.
+Source: `crates/noican-coreaudio/src/callback.rs`, `fill_dual_mono`.
 
 Writes one mono engine sample per frame into an interleaved render
 buffer, duplicated into all of the frame's `channels` (dual mono).
@@ -474,7 +474,7 @@ Returns whether any frame received a real sample.
 
 ## loopback-device-exclusion
 
-Source: `macos/Sources/NoicanMenuBar/CoreAudioDevices.swift` lines 64–72.
+Source: `macos/Sources/NoicanMenuBar/CoreAudioDevices.swift`, `AudioDeviceCatalog.isNoicanVirtualDevice`.
 
 True for a loopback device Noican can route into: stock BlackHole
 2ch (the Phase 0 device) or the Noican-branded driver. It registers
@@ -486,7 +486,7 @@ Keep in sync with the Rust preview-monitor policy
 which matches the same UIDs and additionally rejects any
 virtual/aggregate transport.
 
-Source: `macos/Sources/NoicanMenuBar/CoreAudioDevices.swift` lines 82–86.
+Source: `macos/Sources/NoicanMenuBar/CoreAudioDevices.swift`, `AudioDeviceCatalog.isSelectableInput`.
 
 True for devices that make sense as the physical microphone. Virtual
 devices (JoyCast, other loopbacks — they report the `virt` transport
@@ -496,7 +496,7 @@ subdevices also make the private aggregate reject the 48 kHz setup.
 
 ## split-output-routing
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 207–212.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `build_output_half`.
 
 Builds the output half of the split transport: an output-only AUHAL
 on the virtual output with the render callback attached and the unit
@@ -505,7 +505,7 @@ description for [`Runtime::routing_description`]: the virtual
 output's reported channel count, the render format set from it, and
 that format read back after `AudioUnitInitialize`.
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 238–242.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `describe_applied_render_format`.
 
 Reads the client render format back for the start-time diagnostics,
 after `AudioUnitInitialize` — the point where AUHAL reconciles the
@@ -513,7 +513,7 @@ client format with the device (the aggregate path reads its channel
 map back at the same point, for the same reason). Never fails the
 start: an unreadable format is reported as such.
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 281–308.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `configure_output_auhal`.
 
 Output-only AUHAL on the virtual output: input disabled, mono 48 kHz
 engine samples rendered as interleaved packed float with **one
@@ -546,7 +546,7 @@ any width.
 
 ## split-output-stall-detection
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 84–94.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `OUTPUT_STALL_BLOCKS`.
 
 Consecutive engine blocks the output callback may stay silent before
 the worker flags a fault (3 s of processed capture at 10 ms blocks,
@@ -560,28 +560,28 @@ transient ring-filling hiccup from latching a false fault: a full
 ring drains only at the servo's ppm trickle, but a live callback
 keeps pulsing regardless.
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 106–109.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `OutputContext::pulses`.
 
 Heartbeat: render callbacks delivered since start (relaxed
 atomic add is real-time safe). The worker watches it to detect a
 virtual-output side that stopped calling back (see
 [`OUTPUT_STALL_BLOCKS`]).
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 415–418.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `split_processing_loop`.
 
 Output-side heartbeat (see OUTPUT_STALL_BLOCKS): blocks
 only run while capture delivers, so a pulse counter that
 stops moving here means the output callback went silent
 while the microphone is still alive.
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 485–486.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `output_render_callback`.
 
 Heartbeat for the worker's output-side stall watch (relaxed
 atomic add: real-time safe, like the capture frame counter).
 
 ## transport-routing-by-device
 
-Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift` lines 161–164.
+Source: `macos/Sources/NoicanMenuBar/AggregateDevice.swift`, `AggregateDevice.ensure48k`.
 
 Defensive only: microphones that cannot run at 48 kHz
 (Bluetooth telephony profiles) are routed to the split
@@ -590,7 +590,7 @@ and never reach the aggregate path.
 
 ## transport-routing-diagnostics
 
-Source: `crates/noican-ffi/src/lib.rs` lines 600–616.
+Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_routing_description`.
 
 Diagnostic: how the running transport routes the engine output into
 the virtual output.
@@ -610,7 +610,7 @@ for the one-time start log, not the poll path).
 `handle` must be null or a live engine handle. A non-null `buffer`
 must be writable for `capacity` bytes.
 
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift` lines 242–249.
+Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine.routingDescription`.
 
 Diagnostic: how the running transport routes the engine output
 into the virtual output — on the aggregate transport the
@@ -623,7 +623,7 @@ only.
 
 ## virtual-output-routing-fail-closed
 
-Source: `crates/noican-coreaudio/src/lib.rs` lines 129–136.
+Source: `crates/noican-coreaudio/src/lib.rs`, `CoreAudioError::OutputRouting`.
 
 The engine output could not be routed to the virtual output's
 channels: inside the Aggregate Device the layout the control plane

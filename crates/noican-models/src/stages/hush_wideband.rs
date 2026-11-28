@@ -1,4 +1,4 @@
-//! See docs/adr/0007-dsp-stages.md.
+//! See docs/adr/0007-dsp-stages.md#hush-wideband-band-split.
 
 use std::collections::VecDeque;
 use std::ops::Range;
@@ -114,7 +114,7 @@ impl BandRecombiner {
     }
 }
 
-/// See docs/adr/0007-dsp-stages.md.
+/// See docs/adr/0007-dsp-stages.md#hush-wideband-band-split.
 pub struct HushWidebandStage {
     id: String,
     core: DfTractStage,
@@ -135,7 +135,7 @@ impl std::fmt::Debug for HushWidebandStage {
 }
 
 impl HushWidebandStage {
-    /// See docs/adr/0007-dsp-stages.md.
+    /// See docs/adr/0007-dsp-stages.md#hush-core-contract.
     ///
     /// # Errors
     ///

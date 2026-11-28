@@ -3,20 +3,20 @@
 Status: Accepted
 
 Moved from code comments on 2026-11-21 (the delete-comment pass).
-The original wording is preserved under each topic; the source
-location of each comment at the time of the move (commit 397e3df)
-is noted above its text.
+The original wording is preserved under each topic; the file and
+symbol each comment was attached to are noted above its text and
+checked by `scripts/adr-links.py`.
 
 ## buffer-presizing-contract
 
-Source: `crates/noican-models/src/factory.rs` lines 46–47.
+Source: `crates/noican-models/src/factory.rs`, `MAX_BLOCK_LEN`.
 
 Largest engine block the returned stages are pre-sized for (larger
 blocks still work at the cost of a reallocation).
 
 ## lock-free-worker-observability
 
-Source: `crates/noican-coreaudio/src/observe.rs` lines 1–12.
+Source: `crates/noican-coreaudio/src/observe.rs`.
 
 Lock-free peak level meters for the stream flowing through the
 inference worker.
@@ -31,7 +31,7 @@ locks — the meters are plain atomics.
 The preview monitor's worker-side machinery (tee + feedback guard)
 lives in [`crate::monitor`].
 
-Source: `crates/noican-coreaudio/src/observe.rs` lines 16–21.
+Source: `crates/noican-coreaudio/src/observe.rs`, `LEVEL_DECAY_PER_BLOCK`.
 
 Per-block decay applied to the stored peak (simple exponential
 ballistics on the engine side, so every reader sees the same motion).
@@ -40,7 +40,7 @@ full-scale peak falls below 1% (−40 dB) in about 440 ms — fast enough
 to track speech pauses, slow enough that a 20 Hz UI poll never misses
 a transient entirely.
 
-Source: `crates/noican-coreaudio/src/observe.rs` lines 24–30.
+Source: `crates/noican-coreaudio/src/observe.rs`, `StreamLevels`.
 
 Linear peak levels of the model input (pre-processing) and model
 output (post-processing), shared lock-free between the inference
@@ -50,7 +50,7 @@ Values are `f32` bit patterns in [`AtomicU32`]s; `Relaxed` ordering is
 sufficient because each value is independently meaningful and a
 slightly stale read is harmless for a meter.
 
-Source: `crates/noican-coreaudio/src/observe.rs` lines 74–80.
+Source: `crates/noican-coreaudio/src/observe.rs`, `BLOCK_BUDGET_NS`.
 
 The inference worker's per-block time budget in nanoseconds.
 
@@ -60,7 +60,7 @@ worker fall behind the device clock and eventually underruns the
 output ring (the render callback then fills silence — audible as
 dropouts in recordings from the virtual microphone).
 
-Source: `crates/noican-coreaudio/src/observe.rs` lines 83–94.
+Source: `crates/noican-coreaudio/src/observe.rs`, `WorkerBlockStats`.
 
 Lock-free per-block processing-time statistics of the inference
 worker, shared with the control plane for diagnostics.
@@ -75,21 +75,21 @@ Counters are cumulative since the last [`WorkerBlockStats::reset`]
 (worker start/exit, or an explicit reset from the control plane when
 the model changes and per-model attribution is wanted).
 
-Source: `crates/noican-coreaudio/src/observe.rs` lines 151–152.
+Source: `crates/noican-coreaudio/src/observe.rs`, `fold_peak`.
 
 NaN-proof: `f32::max` keeps the accumulator when the operand is NaN,
 so a corrupt sample cannot poison the meter.
 
 ## mach-time-constraint-policy
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 1408–1409.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `ThreadTimeConstraintPolicy`.
 
 `thread_time_constraint_policy` (`mach/thread_policy.h`): all times
 in mach absolute-time ticks; `preemptible` is a `boolean_t`.
 
 ## realtime-allocation-ban
 
-Source: `crates/noican-core/src/capture.rs` lines 162–166.
+Source: `crates/noican-core/src/capture.rs`, `InputResampler::process`.
 
 Converts one chunk of native-rate samples, appending 48 kHz
 samples to `output` (`input.len() × up / down` on average,
@@ -97,13 +97,13 @@ modulated by the drift correction). Allocation-free while `input`
 stays within the preallocated `max_input_len` and `output` has
 room for [`InputResampler::max_output_len`].
 
-Source: `crates/noican-core/src/resample.rs` lines 436–438.
+Source: `crates/noican-core/src/resample.rs`, `PolyphaseResampler::max_output_len`.
 
 Upper bound on the samples one `process` call appends for
 `input_len` input samples, at the largest drift correction. Reserve
 the output `Vec` to this to keep `process` allocation-free.
 
-Source: `crates/noican-coreaudio/src/callback.rs` lines 1–19.
+Source: `crates/noican-coreaudio/src/callback.rs`.
 
 Buffer geometry and ring hand-offs of the real-time callbacks.
 
@@ -125,7 +125,7 @@ rather than served from a fresh allocation. The hand-offs only move
 atomic counters: ring overrun drops samples, underrun renders silence,
 and neither ever blocks.
 
-Source: `crates/noican-models/src/stages/hush_wideband.rs` lines 170–172.
+Source: `crates/noican-models/src/stages/hush_wideband.rs`, `primed_deque`.
 
 A delay line holding `len` zeros with room for `capacity` samples, so
 the first frame's pushes (which precede the pops) never reallocate on
@@ -133,7 +133,7 @@ the inference thread.
 
 ## realtime-audio-rules
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 436–440.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `monitor_render_callback`.
 
 Render callback of the output-only monitor AUHAL. Real-time rules
 (docs/tech-research.md §9): it only moves `f32` samples from the
@@ -141,19 +141,19 @@ preallocated monitor ring into the device buffer — no allocation, no
 locks, no syscalls. Ring underrun renders silence and re-arms priming;
 it never blocks and never touches the meeting-facing path.
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 276–277.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `configure_capture_auhal`.
 
 Bound the callback size so the preallocated render buffer always
 suffices (the callback never allocates).
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 357–360.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `split_processing_loop`.
 
 Inference worker of the split transport: drains native-rate capture
 samples, converts them to 48 kHz with the drift-compensated
 resampler, and runs the unchanged engine in 10 ms blocks. All state
 is preallocated; the loop never locks (docs/tech-research.md §9).
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 434–439.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `capture_input_callback`.
 
 Input callback of the capture AUHAL: renders the microphone's frames
 into the preallocated buffer and pushes them to the capture ring
@@ -162,7 +162,7 @@ Real-time rules (docs/tech-research.md §9): no allocation, no locks;
 ring overrun drops samples; a render failure flags the fault and
 returns cleanly.
 
-Source: `crates/noican-coreaudio/src/macos/split.rs` lines 461–468.
+Source: `crates/noican-coreaudio/src/macos/split.rs`, `output_render_callback`.
 
 Render callback of the output-only AUHAL on the virtual output: pops
 engine-rate samples from the output ring into the device buffer,
@@ -175,7 +175,7 @@ underrun is prevented by the drift servo, not here.
 
 ## realtime-block-budget
 
-Source: `crates/noican-cli/src/process.rs` lines 26–34.
+Source: `crates/noican-cli/src/process.rs`, `run_stage_aligned_timed`.
 
 [`run_stage_aligned`] that also returns the wall-clock time of every
 `process_block` call in nanoseconds (one entry per [`BLOCK_LEN`]
@@ -187,7 +187,7 @@ show whether a candidate fits the live worker's budget.
 
 Propagates stage processing failures.
 
-Source: `crates/noican-models/examples/block_bench.rs` lines 1–16.
+Source: `crates/noican-models/examples/block_bench.rs`.
 
 Per-block processing-time measurement for one model stage.
 
@@ -206,14 +206,14 @@ NOICAN_MODELS_DIR=/tmp/noican-models \
   dpdfnet8 60
 ```
 
-Source: `crates/noican-models/examples/block_bench.rs` lines 29–30.
+Source: `crates/noican-models/examples/block_bench.rs`, `BUDGET_NS`.
 
 The real-time budget per block, mirroring
 `noican_coreaudio::BLOCK_BUDGET_NS`.
 
 ## realtime-cadence
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 1438–1452.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `WORKER_COMPUTATION_NS`.
 
 Guaranteed computation per period, sized on the heaviest model's
 typical block: p50 ≈ 4.2 ms on a modest 4-core x86-64 host
@@ -231,14 +231,14 @@ alongside underrun growth, so the device logged none for clean
 models) — the sub-5 ms steady-state figure itself is the
 `block_bench` measurement above.
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 1454–1455.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `WORKER_CONSTRAINT_NS`.
 
 Deadline within each period: the whole period, matching the audio
 cadence the output ring absorbs.
 
 ## realtime-thread-rules
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 545–547.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `WorkerLinks::run_block`.
 
 Timing the block on the worker (not a callback): `Instant::now`
 is a non-blocking clock read, fine on the inference thread that
@@ -246,7 +246,7 @@ runs whole models.
 
 ## realtime-wakeup-semaphore
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 208–212.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `DispatchSemaphore`.
 
 Owned libdispatch semaphore. Wakes the inference worker when the render
 callback has produced samples, so the worker blocks between device
@@ -254,12 +254,12 @@ callbacks instead of busy-spinning (`dispatch_semaphore_signal` is the
 mechanism Apple's audio-workgroup example uses from real-time threads:
 it never blocks or allocates).
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 216–217.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `DispatchSemaphore`.
 
 The semaphore handle is shared with the render callback and the worker
 thread; libdispatch semaphores are internally thread-safe.
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 1556–1559.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `processing_loop`.
 
 Block until the render callback signals more input (or the
 timeout elapses, so shutdown is always noticed). Busy-spinning
@@ -268,7 +268,7 @@ os_workgroup's power/deadline balancing.
 
 ## rosetta-budget-attribution
 
-Source: `macos/Sources/NoicanMenuBar/EngineDiagnostics.swift` lines 40–42.
+Source: `macos/Sources/NoicanMenuBar/EngineDiagnostics.swift`, `EngineDiagnostics.isTranslated`.
 
 True when the process runs translated under Rosetta 2 — inference
 would be silently slower, so hardware budget numbers must carry
@@ -276,14 +276,14 @@ this bit.
 
 ## threading-and-allocation-rules
 
-Source: `crates/noican-coreaudio/src/macos/monitor.rs` lines 328–329.
+Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `device_uid`.
 
 UID of a device, or an empty string when unreadable. Runs on the
 control thread only (allocates; `CFString` round-trip).
 
 ## worker-block-processing
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 538–543.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `WorkerLinks::run_block`.
 
 Runs the engine on one block and fans the result out to the
 meters, the preview tee, and the output ring — the per-block step
@@ -294,7 +294,7 @@ than blocking.
 
 ## worker-block-size
 
-Source: `crates/noican-coreaudio/src/lib.rs` lines 73–74.
+Source: `crates/noican-coreaudio/src/lib.rs`, `WORKER_BLOCK_SAMPLES`.
 
 Samples per engine block driven by the inference worker (10 ms at the
 48 kHz engine rate; matches the CLI comparison block size).
@@ -316,7 +316,7 @@ advancing, so the app showed "Running" over permanent silence.
 
 ## worker-realtime-promotion
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 449–454.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `Shared::worker_realtime`.
 
 Whether the inference worker's real-time promotion succeeded at
 loop start. False until the worker records it; afterwards it keeps
@@ -325,7 +325,7 @@ that start-time result — it is not live scheduling-band membership
 computation), and a stopped-but-not-dropped runtime retains the
 last start's value.
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 508–516.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `WorkerLinks::enter`.
 
 Worker setup shared by both loops, run on the worker thread:
 meters and statistics start from zero, the thread is promoted to
@@ -337,7 +337,7 @@ faults, and the stored value is the result at loop start (XNU may
 later demote a persistently overrunning thread, which the flag
 does not track). A failed join flags the fault.
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 879–885.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `Runtime::worker_realtime`.
 
 Diagnostic: whether the inference worker's mach time-constraint
 (real-time) promotion succeeded at loop start (see
@@ -347,7 +347,7 @@ scheduling, not model cost. This reports the start-time result,
 not live membership: XNU may later demote a persistently
 overrunning thread without this flag changing.
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 1458–1472.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `promote_current_thread_to_realtime`.
 
 Promotes the calling thread to mach time-constraint ("real-time")
 scheduling, the setup Apple's audio-workgroup guidance requires for
@@ -367,7 +367,7 @@ underrun numbers.
 
 ## worker-wait-timeout
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs` lines 1397–1399.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `WORKER_WAIT_NS`.
 
 Longest the worker sleeps waiting for the render callback's semaphore
 signal before re-checking the shutdown flag (a fraction of the ~5.3 ms
