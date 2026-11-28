@@ -67,6 +67,34 @@ A spec whose file needs no network: the pinned digest is the
 SHA-256 of `b"correct weights"`, and the URL is unroutable, so
 any real download attempt fails instantly and offline.
 
+## fetch-progress-events
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+Source: `crates/noican-models/src/fetch.rs`, `FetchEvent`.
+Source: `crates/noican-models/src/fetch.rs`, `FetchStep`.
+
+`fetch_model` reports what it does as typed events instead of
+finished English lines. An event names the model and the file and
+carries one step: the file was already present and verified, it is
+present but fails its digest and will be downloaded again, a
+download is about to be requested, a download advanced (bytes so
+far and the size the server announced, if any), or a download
+finished and matched its digest.
+
+The lines were enough for `noican fetch`, which only prints them,
+but a caller that wants to show progress could not read a byte
+count out of a sentence. The CLI now formats the same lines from
+the events and ignores the byte steps; the engine turns the byte
+steps into the progress of
+docs/adr/0009-model-catalog-fetch.md#model-preparation-status.
+
+The size is not pinned in the registry next to the digest. It would
+be one more value per file to keep true by hand, and it is only
+used for a progress display; the server's `Content-Length` is good
+enough for that, and a missing one shows as progress without a
+percentage.
+
 ## fetch-verification-tests
 
 Source: `crates/noican-models/src/fetch.rs`, `tests::fetch_verifies_present_files_against_the_pinned_digest`.
@@ -122,15 +150,15 @@ Source: `crates/noican-ffi/src/lib.rs`, `noican_model_count`.
 Number of runtime-selectable models (bypass included), taken from the
 registry catalog.
 
-Source: `crates/noican-ffi/src/lib.rs`, `noican_model_rating`.
+Source: `crates/noican-ffi/src/lib.rs`, `noican_model_ratings`.
 
-One picker rating for the model at `index`, 0–5 with "more is better".
+The four picker ratings of the model at `index`, each 0–5 with "more
+is better": noise removal, voice quality, responsiveness (inverse
+latency), and efficiency (inverse compute cost). One struct instead
+of a getter with a trait selector, so there is no selector numbering
+to keep in step between Rust, the header, and Swift.
 
-`trait_id` follows `NoicanModelTrait` in noican.h: 0 = noise removal,
-1 = voice quality, 2 = responsiveness (inverse latency),
-3 = efficiency (inverse compute cost).
-
-Returns -1 for an invalid index or trait selector.
+All zeros for an invalid index.
 
 ## model-catalog-single-source
 
@@ -171,6 +199,36 @@ Source: `crates/noican-models/src/manifest.rs`, `ALL_MODELS`.
 
 Runs the `hush` weights inside a 48 kHz band-split wrapper (see
 `stages::hush_wideband`); no files of its own.
+
+## model-descriptor-single-table
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+Everything the build knows about a model is one `ModelSpec` entry of
+`ALL_MODELS`: identity, files and digests, the picker profile
+(`traits`), and the function that builds its stage (`build`). Before
+this the same models were listed three times and joined by id string
+at run time: the registry in `manifest.rs`, a `PROFILES` table in
+`traits.rs`, and a `match` on the id in `factory::create_stage`.
+An entry missing from one of the three compiled, and was caught only
+by a unit test (a missing profile) or by a "registry inconsistency"
+error at load time (a missing stage). As fields, both are required by
+the compiler, so the unrated-profile fallback and the
+no-implementation branch no longer exist. Adding a model is one
+entry.
+
+The two fields are `pub(crate)`: other crates read a profile through
+`CatalogEntry::traits` and build a stage through `create_stage`,
+which verifies the weights first, so the builder cannot be reached
+around the digest check. The table stays in one file rather than
+next to each stage because the download URLs and digests are
+reviewed together (see `model-weight-pinning`), and because several
+entries share one stage implementation.
+
+The bypass is not an entry: it has no rate, licence, family, or
+files, and the CLI lists and fetches `ALL_MODELS` as "the
+downloadable models". `catalog` prepends it with
+`ModelTraits::PASSTHROUGH`.
 
 ## model-digest-verification
 
@@ -333,13 +391,8 @@ How natural the voice stays (native rate: 48 kHz high, 16 kHz low).
 
 Source: `crates/noican-models/src/traits.rs`, `ModelTraits::rated`.
 
-Compact profile constructor for the [`PROFILES`] table; ratings in
-removal / quality / responsiveness / efficiency order.
-
-Source: `crates/noican-models/src/traits.rs`, `ModelTraits::for_id`.
-
-The profile for a catalog id. Unknown ids (which the catalog never
-produces) fall back to an unrated profile rather than panicking.
+Compact profile constructor for the entries of `ALL_MODELS`; ratings
+in removal / quality / responsiveness / efficiency order.
 
 ## model-picker-revert-path
 
@@ -350,6 +403,63 @@ reverts write the reducer state directly and must not
 re-enter the apply path (they would wipe the failure
 message they accompany). Hover any row for the model's
 profile card.
+
+## model-preparation-status
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+Source: `crates/noican-engine/src/lib.rs`, `Engine::prepare_model`.
+Source: `crates/noican-engine/src/lib.rs`, `Preparation::run`.
+Source: `crates/noican-engine/src/lib.rs`, `Engine::model_status`.
+Source: `crates/noican-engine/src/lib.rs`, `ModelState`.
+Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_model_status`.
+Source: `macos/Sources/NoicanMenuBar/AppState.swift`, `AppState.refreshDownload`.
+
+Getting a model's weights onto disk is its own step,
+`Engine::prepare_model`, and its state can be read at any time with
+`Engine::model_status`. Before this the download happened inside
+the start and model-switch calls with nothing observable from
+outside: on a first run the app showed a spinner for as long as the
+download took and could not say why.
+
+A model is in one of four states. `Missing`: its files are not on
+disk. `Fetching`: a download for it is running, with the bytes
+received and the announced size of the current file. `Ready`: its
+files are on disk, or it needs none (bypass, the bundled model).
+`Corrupt`: the last preparation found a digest mismatch and did not
+repair it, either because the fresh download mismatched too or
+because the replacement failed (offline, say) and left the bad file
+in place; it stays until a preparation succeeds. A mismatch counts
+as repaired once the replacement of that file has finished, so a
+later failure on another file does not mark the model.
+
+`Ready` means present, not verified. Verifying hashes every file,
+which is too slow for a status read; the digests are checked when
+the model is prepared and again when its stage is built
+(docs/adr/0009-model-catalog-fetch.md#model-digest-verification).
+
+Starting and switching still prepare the model themselves, by
+calling the same step first, so the app's control flow is unchanged
+and no caller can start a session on unprepared weights. The split
+is in the engine's API, not in the app's state machine: the app
+does not gain a "preparing" phase, it reads the status while it is
+busy and shows "Downloading model… NN%" in place of the status
+text. Moving the wait itself into the reducer is left for when the
+app wants to download a model before the user turns the engine on.
+
+`noican_engine_model_status` is the only addition to the C ABI.
+`prepare_model` is not exported because the app has no call site
+for it yet. A null handle, a null id, and an unknown id all read as
+`Missing` with zero bytes.
+
+Preparations on one engine take turns. Two models can share a file
+(`hush-48k` has none of its own and depends on the tarball of
+`hush`), and a download writes to one temporary path per
+destination, so two fetches at once could write the same partial
+file. The app serialises control calls behind its busy flag, but
+the engine's API is safe Rust and must not rely on that. Because
+only one fetch runs at a time, one progress slot per engine is
+enough. Reading a status does not wait for the turn.
 
 ## model-selection-behaviour
 
@@ -440,7 +550,7 @@ positioning rects.
 
 ## model-switch-fade
 
-Source: `crates/noican-ffi/src/lib.rs`, `SWITCH_FADE_SAMPLES`.
+Source: `crates/noican-engine/src/lib.rs`, `SWITCH_FADE_SAMPLES`.
 
 Fade half-length for model switches: 5 ms at the 48 kHz engine rate.
 
@@ -504,13 +614,16 @@ Treated as a skip: weights are intentionally not part of the repo.
 
 ## registry-dispatch-completeness
 
-Source: `crates/noican-models/src/factory.rs`, `tests::every_registry_entry_has_a_stage_implementation`.
+Source: `crates/noican-models/src/factory.rs`, `tests::every_model_with_weights_refuses_to_build_without_them`.
 
 Every registry entry reaches the picker and the CLI defaults
-unfiltered, so each must dispatch to a stage: without weights the
-only acceptable failure is the missing file, never the
-no-implementation fallthrough. Embedded models (no files, no
-dependencies) are skipped because they would build for real.
+unfiltered, so each must dispatch to a stage. Since 2026-11-28 the
+compiler guarantees that (`ModelSpec::build` is a required field;
+see `model-descriptor-single-table`), so the test pins what is left:
+without weights the only acceptable outcome is the missing-file
+error from the digest check, never a stage. Embedded models (no
+files, no dependencies) are skipped because they would build for
+real.
 
 ## registry-driven-model-catalog
 
@@ -558,7 +671,7 @@ not re-instantiate the generic closure parameter).
 
 ## weight-digest-verification
 
-Source: `crates/noican-ffi/src/lib.rs`, `prepare_stage`.
+Source: `crates/noican-engine/src/lib.rs`, `Engine::prepare_model`.
 
 Registry stages may need weights; the bypass (not in the registry's
 ModelSpec list) needs nothing. fetch_model runs unconditionally,

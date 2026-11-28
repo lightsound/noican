@@ -1,3 +1,4 @@
+import CNoican
 import CoreAudio
 import Foundation
 
@@ -10,7 +11,7 @@ extension AppState {
         else {
             return
         }
-        let device = engine.monitorDeviceID
+        let device = engine.health.monitor_device
         guard device != AudioObjectID(kAudioObjectUnknown) else {
             return
         }
@@ -31,7 +32,7 @@ extension AppState {
             guard monitorSafetyListener == nil, let engine else {
                 return
             }
-            let device = engine.monitorDeviceID
+            let device = engine.health.monitor_device
             guard device != AudioObjectID(kAudioObjectUnknown) else {
                 return
             }

@@ -1,3 +1,4 @@
+import CNoican
 import Foundation
 import NoicanState
 import os
@@ -29,13 +30,18 @@ final class EngineDiagnostics {
         startupLogged = false
     }
 
-    func sample(_ engine: RustEngine, activeModelID: String, splitTransport: Bool) {
+    func sample(
+        _ health: NoicanHealth,
+        of engine: RustEngine,
+        activeModelID: String,
+        splitTransport: Bool
+    ) {
         if !startupLogged {
             startupLogged = true
             Self.log.info(
                 """
                 Engine transport diagnostics: worker realtime scheduling \
-                \(engine.workerRealtime, privacy: .public), \
+                \(health.worker_realtime, privacy: .public), \
                 Rosetta-translated process \
                 \(Self.isTranslated, privacy: .public)
                 """
@@ -45,12 +51,12 @@ final class EngineDiagnostics {
                 Self.log.info("\(prefix, privacy: .public): \(routing, privacy: .public)")
             }
         }
-        let underruns = engine.outputUnderruns
+        let underruns = health.output_underruns
         defer { lastUnderrunCount = underruns }
         if underruns > lastUnderrunCount {
-            let overBudget = engine.workerBlocksOverBudget
-            let blocks = engine.workerBlocks
-            let maxMs = Double(engine.workerBlockMaxNs) / 1_000_000
+            let overBudget = health.worker_blocks_over_budget
+            let blocks = health.worker_blocks
+            let maxMs = Double(health.worker_block_max_ns) / 1_000_000
             Self.log.warning(
                 """
                 Output underruns: \(underruns, privacy: .public) \
@@ -61,7 +67,7 @@ final class EngineDiagnostics {
                 """
             )
         }
-        let overruns = engine.inputOverruns
+        let overruns = health.input_overruns
         defer { lastInputOverrunCount = overruns }
         if overruns > lastInputOverrunCount {
             Self.log.warning(

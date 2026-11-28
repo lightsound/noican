@@ -58,7 +58,9 @@ allow = [
     # File-level weak copyleft (symphonia, CLI input decoding only). We do
     # not modify symphonia sources, so the only obligation is source
     # availability of the MPL-covered files themselves; it does not extend
-    # to the application (docs/tech-research.md §11).
+    # to the application (docs/tech-research.md §11). Also cbindgen, which
+    # only the noican-ffi header test runs; it is not part of any build
+    # that ships.
     "MPL-2.0",
 ]
 confidence-threshold = 0.8

@@ -43,7 +43,7 @@ struct MenuView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Noican")
                     .font(.headline)
-                Text(model.statusText)
+                Text(state.downloadText ?? model.statusText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

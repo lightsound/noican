@@ -19,14 +19,14 @@ use std::{
 use noican_core::SwitchingEngine;
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use crate::CoreAudioError;
 use crate::callback::{
     CaptureFeed, MAX_CALLBACK_FRAMES, OutputFeed, capture_byte_size, render_geometry,
-    shed_capture_backlog,
 };
 use crate::monitor::{MonitorTee, fourcc};
 use crate::observe::{StreamLevels, WorkerBlockStats};
+use crate::pump::{Pump, PumpLinks};
 use crate::routing::{VirtualOutputChannels, render_channel_map};
-use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
 
 mod monitor;
 mod split;
@@ -56,6 +56,7 @@ const AUDIO_OUTPUT_UNIT_PROPERTY_CHANNEL_MAP: u32 = 2_002;
 const AUDIO_OUTPUT_UNIT_PROPERTY_ENABLE_IO: u32 = 2_003;
 const AUDIO_OUTPUT_UNIT_PROPERTY_SET_INPUT_CALLBACK: u32 = 2_005;
 const AUDIO_OUTPUT_UNIT_PROPERTY_OS_WORKGROUP: u32 = 2_015;
+const AUDIO_DEVICE_PROPERTY_BUFFER_FRAME_SIZE: u32 = fourcc(*b"fsiz");
 const AUDIO_UNIT_PROPERTY_STREAM_FORMAT: u32 = 8;
 const AUDIO_UNIT_PROPERTY_MAXIMUM_FRAMES_PER_SLICE: u32 = 14;
 const AUDIO_UNIT_PROPERTY_SET_RENDER_CALLBACK: u32 = 23;
@@ -407,6 +408,26 @@ impl Shared {
         self.shutdown.store(true, Ordering::Release);
         self.samples_ready.signal();
     }
+
+    fn pump_links(
+        &self,
+        engine: SwitchingEngine,
+        input: Consumer<f32>,
+        output: Producer<f32>,
+        tee: MonitorTee,
+        levels: Arc<StreamLevels>,
+    ) -> PumpLinks {
+        PumpLinks {
+            engine,
+            input,
+            output,
+            tee,
+            levels,
+            faulted: Arc::clone(&self.faulted),
+            input_overruns: Arc::clone(&self.input_overruns),
+            block_stats: Arc::clone(&self.block_stats),
+        }
+    }
 }
 
 fn spawn_worker(body: impl FnOnce() + Send + 'static) -> Result<JoinHandle<()>, CoreAudioError> {
@@ -419,56 +440,6 @@ fn spawn_worker(body: impl FnOnce() + Send + 'static) -> Result<JoinHandle<()>, 
 fn stop_worker(shared: &Shared, worker: JoinHandle<()>) {
     shared.request_shutdown();
     let _ignored = worker.join();
-}
-
-struct WorkerLinks {
-    engine: SwitchingEngine,
-    input: Consumer<f32>,
-    output: Producer<f32>,
-    tee: MonitorTee,
-    levels: Arc<StreamLevels>,
-    shared: Shared,
-}
-
-impl WorkerLinks {
-    fn enter(&self, workgroup: usize) -> WorkgroupGuard {
-        self.levels.reset();
-        self.shared.block_stats.reset();
-        self.shared
-            .worker_realtime
-            .store(promote_current_thread_to_realtime(), Ordering::Release);
-        let membership = WorkgroupGuard::join(workgroup);
-        if !membership.joined() {
-            self.shared.faulted.store(true, Ordering::Release);
-        }
-        membership
-    }
-
-    fn exit(&self, membership: WorkgroupGuard) {
-        drop(membership);
-        self.levels.reset();
-        self.shared.block_stats.reset();
-    }
-
-    fn run_block(&mut self, input_block: &[f32], output_block: &mut [f32]) {
-        let started = std::time::Instant::now();
-        if self
-            .engine
-            .process_block(input_block, output_block)
-            .is_err()
-        {
-            output_block.fill(0.0);
-            self.shared.faulted.store(true, Ordering::Release);
-        }
-        self.levels.update(input_block, output_block);
-        let _teed = self.tee.feed(output_block);
-        for sample in output_block.iter().copied() {
-            let _ignored = self.output.push(sample);
-        }
-        self.shared
-            .block_stats
-            .record(saturating_elapsed_ns(started));
-    }
 }
 
 #[derive(Debug)]
@@ -573,15 +544,11 @@ impl Runtime {
 
         let workgroup = audio_workgroup(unit.raw())?;
         let (monitor, tee) = monitor::monitor_pair(monitor_state);
-        let links = WorkerLinks {
-            engine,
-            input: input_consumer,
-            output: output_producer,
-            tee,
-            levels,
-            shared: shared.clone(),
-        };
-        let worker = spawn_worker(move || processing_loop(links, workgroup))?;
+        let pump = Pump::new(
+            shared.pump_links(engine, input_consumer, output_producer, tee, levels),
+            None,
+        );
+        let worker = spawn_pump(pump, &shared, workgroup)?;
 
         if let Err(error) = start_output_unit(unit.raw(), "AudioOutputUnitStart") {
             stop_worker(&shared, worker);
@@ -811,6 +778,24 @@ fn set_max_frames_per_slice(
         &max_frames,
         operation,
     )
+}
+
+fn buffer_frames(unit: AudioUnit) -> Option<usize> {
+    let mut frames = 0_u32;
+    let mut size = size_u32::<u32>().ok()?;
+    let status = unsafe {
+        AudioUnitGetProperty(
+            unit,
+            AUDIO_DEVICE_PROPERTY_BUFFER_FRAME_SIZE,
+            AUDIO_UNIT_SCOPE_GLOBAL,
+            OUTPUT_BUS,
+            (&raw mut frames).cast(),
+            &raw mut size,
+        )
+    };
+    (status == NO_ERR)
+        .then(|| usize::try_from(frames).ok())
+        .flatten()
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1195,36 +1180,27 @@ impl Drop for WorkgroupGuard {
     }
 }
 
-fn processing_loop(mut worker: WorkerLinks, workgroup: usize) {
-    let membership = worker.enter(workgroup);
-    let mut input_block = [0.0_f32; WORKER_BLOCK_SAMPLES];
-    let mut output_block = [0.0_f32; WORKER_BLOCK_SAMPLES];
-    let mut position = 0;
-    while !worker.shared.shutdown.load(Ordering::Acquire) {
-        if position == 0 {
-            shed_capture_backlog(
-                &mut worker.input,
-                WORKER_BLOCK_SAMPLES,
-                &worker.shared.input_overruns,
-            );
+fn spawn_pump(
+    mut pump: Pump,
+    shared: &Shared,
+    workgroup: usize,
+) -> Result<JoinHandle<()>, CoreAudioError> {
+    let shared = shared.clone();
+    spawn_worker(move || {
+        shared
+            .worker_realtime
+            .store(promote_current_thread_to_realtime(), Ordering::Release);
+        let membership = WorkgroupGuard::join(workgroup);
+        if !membership.joined() {
+            shared.faulted.store(true, Ordering::Release);
         }
-        match worker.input.pop() {
-            Ok(sample) => {
-                input_block[position] = sample;
-                position += 1;
-                if position == WORKER_BLOCK_SAMPLES {
-                    worker.run_block(&input_block, &mut output_block);
-                    position = 0;
-                }
+        while !shared.shutdown.load(Ordering::Acquire) {
+            if !pump.step() {
+                shared.samples_ready.wait_ns(WORKER_WAIT_NS);
             }
-            Err(_empty) => worker.shared.samples_ready.wait_ns(WORKER_WAIT_NS),
         }
-    }
-    worker.exit(membership);
-}
-
-fn saturating_elapsed_ns(started: std::time::Instant) -> u64 {
-    u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
+        drop(membership);
+    })
 }
 
 unsafe fn render_samples<'a>(

@@ -8,6 +8,13 @@ struct ModelRatings: Hashable {
     let voiceQuality: Int
     let responsiveness: Int
     let efficiency: Int
+
+    init(_ ratings: NoicanModelRatings) {
+        noiseRemoval = Int(ratings.noise_removal)
+        voiceQuality = Int(ratings.voice_quality)
+        responsiveness = Int(ratings.responsiveness)
+        efficiency = Int(ratings.efficiency)
+    }
 }
 
 struct ModelInfo: Hashable, Identifiable {
@@ -70,8 +77,18 @@ final class RustEngine: @unchecked Sendable {
         try requireSuccess(noican_engine_set_monitor(handle, enabled ? 1 : 0))
     }
 
-    var monitorState: MonitorState {
-        MonitorState(rawValue: noican_engine_monitor_state(handle)) ?? .off
+    var health: NoicanHealth {
+        noican_engine_health(handle)
+    }
+
+    var levels: NoicanLevels {
+        noican_engine_levels(handle)
+    }
+
+    func modelStatus(_ model: String) -> NoicanModelStatus {
+        model.withCString { id in
+            noican_engine_model_status(handle, id)
+        }
     }
 
     static var monitorTargetError: String? {
@@ -80,62 +97,14 @@ final class RustEngine: @unchecked Sendable {
         }
     }
 
-    var monitorDeviceID: UInt32 {
-        noican_engine_monitor_device(handle)
-    }
-
     static func monitorDeviceError(_ deviceID: UInt32) -> String? {
         copyString { buffer, capacity in
             noican_monitor_device_error(deviceID, buffer, capacity)
         }
     }
 
-    var inputLevel: Float {
-        noican_engine_input_level(handle)
-    }
-
-    var outputLevel: Float {
-        noican_engine_output_level(handle)
-    }
-
     func setIntensity(_ value: Float) {
         _ = noican_engine_set_intensity(handle, value)
-    }
-
-    var isRunning: Bool {
-        noican_engine_is_running(handle) != 0
-    }
-
-    var isFaulted: Bool {
-        noican_engine_is_faulted(handle) != 0
-    }
-
-    var framesProcessed: UInt64 {
-        noican_engine_frames_processed(handle)
-    }
-
-    var outputUnderruns: UInt64 {
-        noican_engine_output_underruns(handle)
-    }
-
-    var inputOverruns: UInt64 {
-        noican_engine_input_overruns(handle)
-    }
-
-    var workerBlocks: UInt64 {
-        noican_engine_worker_blocks(handle)
-    }
-
-    var workerBlocksOverBudget: UInt64 {
-        noican_engine_worker_blocks_over_budget(handle)
-    }
-
-    var workerBlockMaxNs: UInt64 {
-        noican_engine_worker_block_max_ns(handle)
-    }
-
-    var workerRealtime: Bool {
-        noican_engine_worker_realtime(handle) != 0
     }
 
     func resetDebugStats() {
@@ -169,18 +138,9 @@ final class RustEngine: @unchecked Sendable {
                 details: copyString { buffer, capacity in
                     noican_model_details(index, buffer, capacity)
                 } ?? "",
-                ratings: ModelRatings(
-                    noiseRemoval: rating(index, NOICAN_TRAIT_NOISE_REMOVAL),
-                    voiceQuality: rating(index, NOICAN_TRAIT_VOICE_QUALITY),
-                    responsiveness: rating(index, NOICAN_TRAIT_RESPONSIVENESS),
-                    efficiency: rating(index, NOICAN_TRAIT_EFFICIENCY)
-                )
+                ratings: ModelRatings(noican_model_ratings(index))
             )
         }
-    }
-
-    private static func rating(_ index: Int, _ trait: NoicanModelTrait) -> Int {
-        max(0, Int(noican_model_rating(index, Int32(trait.rawValue))))
     }
 
     private var lastError: String {
@@ -216,12 +176,6 @@ final class RustEngine: @unchecked Sendable {
             return String(cString: baseAddress)
         }
     }
-}
-
-enum MonitorState: Int32 {
-    case off = 0
-    case playing = 1
-    case tripped = 2
 }
 
 enum RustEngineError: LocalizedError {

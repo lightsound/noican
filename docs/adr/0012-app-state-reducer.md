@@ -155,13 +155,9 @@ without tearing the transport down; the next user action does).
 
 ## engine-fault-semantics
 
-Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_is_faulted`.
+Source: `crates/noican-ffi/src/lib.rs`, `NoicanHealth::faulted`.
 
-Returns 1 after an audio callback, workgroup, or inference fault.
-
-# Safety
-
-`handle` must be null or a live engine handle.
+Set after an audio callback, workgroup, or inference fault.
 
 ## engine-fault-vs-runtime-stop
 

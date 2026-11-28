@@ -546,7 +546,7 @@ any width.
 
 ## split-output-stall-detection
 
-Source: `crates/noican-coreaudio/src/macos/split.rs`, `OUTPUT_STALL_BLOCKS`.
+Source: `crates/noican-coreaudio/src/pump.rs`, `OUTPUT_STALL_BLOCKS`.
 
 Consecutive engine blocks the output callback may stay silent before
 the worker flags a fault (3 s of processed capture at 10 ms blocks,
@@ -567,7 +567,7 @@ atomic add is real-time safe). The worker watches it to detect a
 virtual-output side that stopped calling back (see
 [`OUTPUT_STALL_BLOCKS`]).
 
-Source: `crates/noican-coreaudio/src/macos/split.rs`, `split_processing_loop`.
+Source: `crates/noican-coreaudio/src/pump.rs`, `ClockBridge::follow`.
 
 Output-side heartbeat (see OUTPUT_STALL_BLOCKS): blocks
 only run while capture delivers, so a pulse counter that

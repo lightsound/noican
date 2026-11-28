@@ -50,6 +50,7 @@ as a whole and resolve here.
 | [real-time-audit.md](hardware-test/real-time-audit.md) | Real-time audit | — (the "callback audit" of the result record; also cited by native-rate criterion 8) |
 | [output-underrun-diagnostics.md](hardware-test/output-underrun-diagnostics.md) | Output-underrun diagnostics (real-time budget) | Acceptance checklist (output-underrun diagnostics) |
 | [clock-drift-and-endurance.md](hardware-test/clock-drift-and-endurance.md) | Clock drift and endurance | — (the "endurance" of the result record) |
+| [split-transport-experiment.md](hardware-test/split-transport-experiment.md) | Split transport on 48 kHz microphones (experiment) | — (measurement only; the criteria are not decided) |
 
 ## Result record
 

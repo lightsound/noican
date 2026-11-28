@@ -1,0 +1,14 @@
+language = "C"
+header = "/* Generated from crates/noican-ffi/src/lib.rs by cbindgen; do not edit.\n * Regenerate: NOICAN_UPDATE_HEADER=1 cargo test -p noican-ffi header */"
+include_guard = "NOICAN_H"
+cpp_compat = true
+no_includes = true
+usize_is_size_t = true
+sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
+documentation = false
+line_length = 100
+tab_width = 2
+
+[enum]
+prefix_with_name = true
+rename_variants = "ScreamingSnakeCase"

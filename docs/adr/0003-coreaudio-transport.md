@@ -235,6 +235,8 @@ which the compiler (rightly) warns about.
 Source: `crates/noican-coreaudio/src/macos/mod.rs`.
 
 Audited AUHAL FFI and real-time callbacks for the main transport.
+The worker loop itself is portable and lives outside this module
+tree (see `worker-pump`).
 
 The preview monitor's AUHAL lifecycle lives in the [`monitor`]
 submodule; shared plumbing (unit creation, property setting, render
@@ -376,6 +378,101 @@ Owns a heap-allocated callback context during setup, reclaiming it
 on any early error return (safe because the audio unit is never started
 on those paths, so no callback can observe the pointer).
 
+## split-cushion-experiment
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+Source: `crates/noican-coreaudio/src/cushion.rs`, `requested`.
+
+Whether the split transport can also serve 48 kHz microphones, and
+with how little added delay, can only be measured on hardware, and
+hardware sessions are scarce. One environment variable,
+`NOICAN_SPLIT_CUSHION_MS`, turns a single session into a sweep
+without a rebuild: when it is set, every microphone takes the split
+transport and the output cushion is that many milliseconds; when it
+is unset nothing changes. The variable carries both the switch and
+the value so the two cannot disagree. It is read once per start, on
+the starting thread. A value that is not a whole number from 1 to
+500 refuses the start by name instead of falling back, because a
+silent fallback would attribute a measurement to the wrong cushion.
+This is an experiment switch, not a setting: remove it with the
+decision on the aggregate transport.
+
+Source: `macos/Sources/NoicanMenuBar/AppState.swift`, `AppState.shouldUseAggregate`.
+
+The Swift side only tests whether the variable is present, before
+any device fact is read; the value is parsed in one place, in Rust.
+A present but malformed value therefore reaches the split start and
+is refused there.
+
+Source: `crates/noican-coreaudio/src/cushion.rs`, `SHIPPED_SAMPLES`.
+
+The cushion every split start uses when the variable is unset:
+50 ms, chosen for Bluetooth burst jitter and accepted on hardware.
+It is added latency of the split path only.
+
+Source: `crates/noican-coreaudio/src/cushion.rs`, `phase_estimate`.
+
+A rough estimate of the cushion a split session needs before any
+scheduling jitter: one capture burst (in engine samples), one
+render buffer and one block. The reasoning behind it: the worker
+can only push whole 480-sample blocks, and only when a capture
+callback delivers; the render callback takes a whole buffer at
+once; between two pushes up to a burst plus a block less a sample
+can be consumed, and the render that follows still needs a full
+buffer; two free-running clocks drift through every relative
+phase, so an unlucky alignment always comes around.
+
+It is an estimate, not a bound. The servo regulates a smoothed
+total (output ring, pending samples and queued input), so the
+ring's level right after a push moves independently of the target,
+and the largest residue and the longest wait need not coincide.
+The simulator's smallest gap-free cushion (table below, 240-sample
+grid) falls between about 110 samples under the estimate and 350
+over it: under it for 44.1 kHz at 512 frames (1,440 against 1,550)
+and 96 kHz at 512 frames (1,200 against 1,248), over it elsewhere.
+The servo's proportional residual (0.48 samples per ppm of drift)
+and real scheduling jitter come on top. A hardware sweep must not
+use the estimate to rule a cushion out.
+
+The aggregate transport needs none of this because capture and
+render are the same callback: only the 480-against-buffer-size
+quantization remains, which the simulator settles at 448 samples.
+For a 48 kHz microphone with 512-frame buffers the simulator clips
+at 1,440 samples and is gap-free at 1,680, so the split path costs
+roughly 21 to 26 ms more delay than the aggregate path at that
+buffer size, before any jitter margin. Smaller device buffers
+lower it (gap-free at 960 samples with 128 frames).
+
+Source: `crates/noican-coreaudio/src/cushion.rs`, `describe`.
+
+The routing line the app logs at start carries the cushion, both
+device buffer sizes and the estimate, so a hardware run records
+which cushion it measured and how that cushion relates to the
+estimate. An unreadable buffer size is reported as such and leaves
+the estimate unknown; it never fails the start.
+
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `buffer_frames`.
+
+AUHAL forwards the device's I/O buffer size as a global-scope
+property of the unit bound to it. Read after the device is
+selected; any failure reads as absent.
+
+Source: `crates/noican-coreaudio/src/pump.rs`, `tests::gaps_over_forty_seconds`.
+
+The simulator, at ±300 ppm over 40 simulated seconds, with ideal
+scheduling and capture callbacks placed right before the render
+they precede; a different callback schedule can move these numbers. Smallest gap-free cushion on a 240-sample grid, by
+capture rate and buffer size: 48 kHz at 512 frames 1,680; at 256
+frames 1,200; at 128 frames 960; 44.1 kHz at 512 frames 1,440;
+96 kHz at 512 frames 1,200; 24 kHz at 512 frames 2,160; 16 kHz at
+256 frames 1,680; 16 kHz at 512 frames 2,880. The last one is
+above the shipped 2,400, where the simulator clips 32 samples per
+pass through the worst phase: if a Bluetooth telephony device
+really delivers 512-frame callbacks at 16 kHz, the shipped cushion
+may be too small. Which buffer size it delivers is a hardware fact
+the routing line now shows.
+
 ## split-transport-architecture
 
 Source: `crates/noican-coreaudio/src/macos/split.rs`.
@@ -411,9 +508,10 @@ whose fractional phase step carries the drift correction — exact
 clock domains once per block — native-ring occupancy converted to
 engine samples through the same ratio — and steers the resampler a
 few hundred ppm to cancel clock drift (docs/tech-research.md §4.2).
-The output ring is primed with [`OUTPUT_PRIME_SAMPLES`] of silence,
-which is both the initial jitter cushion and the servo's occupancy
-target; neither the servo nor the cushion depends on the ratio.
+The output ring is primed with a cushion of silence (see
+`split-cushion-experiment`), which is both the initial jitter
+cushion and the servo's occupancy target; the servo does not depend
+on the ratio.
 
 Real-time rules (docs/tech-research.md §9) hold as on the aggregate
 path: the capture callback only calls `AudioUnitRender` into a
@@ -422,7 +520,7 @@ worker's semaphore; the output callback only pops the output ring
 (silence on underrun); all resampling runs on the worker with state
 preallocated at start.
 
-Source: `crates/noican-coreaudio/src/macos/split.rs`, `NATIVE_CHUNK_SAMPLES`.
+Source: `crates/noican-coreaudio/src/pump.rs`, `NATIVE_CHUNK_SAMPLES`.
 
 Native-rate samples drained from the capture ring per worker pass
 (also the resampler's preallocation unit): 480 native samples cover
@@ -435,12 +533,11 @@ separate tuning.
 
 Source: `crates/noican-coreaudio/src/macos/split.rs`, `OutputContext::feed`.
 
-The output ring and its underrun counter, with the same
-complete-starvation definition as the aggregate path. On this
-transport the ring is primed with [`OUTPUT_PRIME_SAMPLES`] of
-silence, so the feed counts from the first callback on, and a
-fully drained ring means the worker (or the capture side) fell
-behind by more than the whole cushion.
+The output ring and its underrun counter. On this transport the
+ring is primed with the cushion, so the feed counts from the first
+callback on and counts every callback it cannot fill completely
+(see `output-underrun-counting`): a short callback means the worker
+(or the capture side) fell behind by more than the whole cushion.
 
 Source: `crates/noican-coreaudio/src/macos/split.rs`, `start`.
 
@@ -464,15 +561,10 @@ Registers `context` as the capture unit's input callback (the
 input-only AUHAL notification slot, distinct from the render-callback
 slot used by output units).
 
-Source: `crates/noican-coreaudio/src/macos/split.rs`, `split_processing_loop`.
+Source: `crates/noican-coreaudio/src/pump.rs`, `ClockBridge::new`.
 
 Converted samples per pass, bounded by the resampler at the
 largest drift correction so the buffer never grows afterwards.
-
-Source: `crates/noican-coreaudio/src/macos/split.rs`, `split_processing_loop`.
-
-Block until the capture callback signals more input (or
-the timeout elapses, so shutdown is always noticed).
 
 ## split-transport-contract
 
@@ -666,3 +758,67 @@ fail a device the reducer already approved for native capture —
 while unknown or non-native snapshots keep Phase 0's fail-open
 behavior (a device idling at 48 kHz with an unreadable rate list
 therefore still reaches `ensure48k`, which returns immediately).
+
+## worker-pump
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+Source: `crates/noican-coreaudio/src/pump.rs`, `Pump`.
+
+Both transports used to carry their own worker loop, written against
+macOS types, so neither loop could run anywhere but on a Mac with
+audio hardware, and every timing question (a clock that drifts, a
+capture that drops out, an output device that goes silent) could
+only be answered in a hardware session. The loop is now one portable
+type that owns the worker's buffers and the engine, and one method,
+`Pump::step`, that drains at most one chunk from the capture ring
+and runs every block that chunk completes. It reports whether it
+found anything, which is all the macOS thread needs to decide
+between calling it again and sleeping on the semaphore. Thread
+promotion, the workgroup and the semaphore stay in
+`crates/noican-coreaudio/src/macos/mod.rs`; nothing in the pump
+names a macOS type.
+
+Source: `crates/noican-coreaudio/src/pump.rs`, `ClockBridge`.
+
+The two transports differ in one fact: whether capture and render
+share a clock. That fact is the optional bridge. Without it the
+pump is the aggregate worker, which sheds a stale backlog at block
+boundaries (see `capture-backlog-shedding`) and feeds the engine
+the samples as they arrive. With it the pump is the split worker:
+each chunk passes the resampler, the drift servo is fed after every
+block, and the output-side heartbeat is watched. A transport cannot
+shed and resample at once because there is no bridge state in which
+both branches run.
+
+Source: `crates/noican-coreaudio/src/pump.rs`, `Pump::new`.
+
+The pump clears the level meters and block statistics when it is
+built and again when it is dropped, which the worker thread does on
+its way out. The two former loops did the same at entry and exit;
+tying it to the value's lifetime leaves no path that forgets one.
+
+Source: `crates/noican-coreaudio/src/pump.rs`, `tests::Rig`.
+
+The tests drive the pump with the real capture and output feeds
+over real rings, in one thread, with the order of capture, worker
+and render callbacks chosen by the test. Time is a count of
+callbacks: an own-clock capture is given a rate and a drift in ppm,
+and an integer accumulator decides how many capture callbacks fall
+between two render callbacks. That makes hours of drift, a dropout
+or a dead output a deterministic unit test. What the simulator does
+not model is scheduling: callbacks never preempt the worker and
+never arrive late, so it bounds the logic, not the jitter margin,
+and the hardware gate for retiring the aggregate path still stands.
+
+Source: `crates/noican-coreaudio/src/pump.rs`, `tests::the_pump_matches_the_loops_it_replaced`.
+
+The test module keeps a copy of the two loops the pump replaced
+(`tests::FormerLoops`) and requires bit-identical rendered samples
+and identical overrun, underrun and fault readings under a
+pseudo-random schedule that includes stalls, floods and starved
+phases, for a shared clock and for 44.1 and 48 kHz own-clock
+capture. It is the evidence that the move changed no behavior
+while no hardware run exists for it. Delete the copy and this test
+with the first change that alters the pump's behavior on purpose;
+from then on the scenario tests carry the contract.

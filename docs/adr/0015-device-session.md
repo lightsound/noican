@@ -33,7 +33,7 @@ the remaining refusal case (an unreadable rate reads as 0 Hz).
 
 ## capture-rate-validation
 
-Source: `crates/noican-ffi/src/lib.rs`, `validate_capture_rate`.
+Source: `crates/noican-engine/src/lib.rs`, `validate_capture_rate`.
 
 Validates a native capture rate: finite, whole hertz (Core Audio
 nominal rates are exact integers in f64 — 44100.0, never 44100.3 —
