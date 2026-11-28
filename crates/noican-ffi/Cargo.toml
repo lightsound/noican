@@ -10,8 +10,7 @@ publish.workspace = true
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-noican-core = { workspace = true }
-noican-coreaudio = { workspace = true }
+noican-engine = { workspace = true }
 noican-models = { workspace = true }
 
 [lints]

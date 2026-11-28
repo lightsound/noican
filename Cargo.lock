@@ -794,11 +794,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "noican-ffi"
+name = "noican-engine"
 version = "0.1.0"
 dependencies = [
  "noican-core",
  "noican-coreaudio",
+ "noican-models",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "noican-ffi"
+version = "0.1.0"
+dependencies = [
+ "noican-engine",
  "noican-models",
 ]
 

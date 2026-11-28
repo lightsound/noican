@@ -465,7 +465,7 @@ positioning rects.
 
 ## model-switch-fade
 
-Source: `crates/noican-ffi/src/lib.rs`, `SWITCH_FADE_SAMPLES`.
+Source: `crates/noican-engine/src/lib.rs`, `SWITCH_FADE_SAMPLES`.
 
 Fade half-length for model switches: 5 ms at the 48 kHz engine rate.
 
@@ -586,7 +586,7 @@ not re-instantiate the generic closure parameter).
 
 ## weight-digest-verification
 
-Source: `crates/noican-ffi/src/lib.rs`, `prepare_stage`.
+Source: `crates/noican-engine/src/lib.rs`, `prepare_stage`.
 
 Registry stages may need weights; the bypass (not in the registry's
 ModelSpec list) needs nothing. fetch_model runs unconditionally,

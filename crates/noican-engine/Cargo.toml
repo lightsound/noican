@@ -1,0 +1,16 @@
+[package]
+name = "noican-engine"
+description = "Live audio session: model preparation, transport lifecycle, and engine status"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+noican-core = { workspace = true }
+noican-coreaudio = { workspace = true }
+noican-models = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

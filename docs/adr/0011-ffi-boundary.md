@@ -7,6 +7,37 @@ The original wording is preserved under each topic; the file and
 symbol each comment was attached to are noted above its text and
 checked by `scripts/adr-links.py`.
 
+## engine-crate
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+The live session (model preparation, the control state and its
+epoch, the transport lifecycle, and the status readers) is the
+`noican-engine` crate, a safe Rust API (`Engine`). `noican-ffi`
+only translates: C strings in, a `Result` out as a status code plus
+the `last_error` string. Before this the session logic lived inside
+the `extern "C"` functions, so it could be driven only through raw
+pointers: no Rust caller (the CLI, a test with a simulated
+transport) could start a session, and every test of the control
+flow had to go through the C ABI.
+
+Errors are a typed `EngineError`. Its `Display` text is exactly the
+string the C ABI recorded before, so what the app shows is
+unchanged. `last_error` is a C idiom and stays in the FFI handle
+behind its own lock. One consequence: a poisoned control lock now
+yields `EngineError::Poisoned` with a message, where before the
+call failed without recording one because the message lived behind
+the poisoned lock.
+
+`Engine::health` reads every status and counter of the running
+transport under one acquisition of the control lock, and
+`Engine::levels` reads the meters and the monitor state from
+atomics without it. They match the app's two polling rates: health
+at 1 Hz, meters at 20 Hz.
+
+`ControlState::active_model` was written on every start and model
+switch and never read; it is gone.
+
 ## engine-ffi-threading-contract
 
 Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine`.
@@ -53,22 +84,26 @@ The model catalog is projected from `noican-models`'
 [`noican_models::catalog`] at call time — neither this crate nor the UI
 hardcodes model identifiers or names.
 
-Source: `crates/noican-ffi/src/lib.rs`, `ControlState::epoch`.
+Since 2026-11-28 the control state, its lock and the epoch live in
+`noican-engine` (see `engine-crate`); the discipline above is
+unchanged and is now `Engine`'s.
+
+Source: `crates/noican-engine/src/lib.rs`, `ControlState::epoch`.
 
 Bumped by every `start`/`stop`; slow operations only commit when the
 epoch they claimed is still current.
 
-Source: `crates/noican-ffi/src/lib.rs`, `EngineHandle::state`.
+Source: `crates/noican-engine/src/lib.rs`, `Engine::state`.
 
 Locked only for short transitions (see the crate docs). If a panic
-poisons it, calls that need it fail or return their fallback value
-without recording an error, since `last_error` lives behind the
-same lock.
+poisons it, control calls fail with `EngineError::Poisoned` and the
+readers return their fallback value (`Engine::health` reports a
+fault).
 
-Source: `crates/noican-ffi/src/lib.rs`, `start_with`.
+Source: `crates/noican-engine/src/lib.rs`, `Engine::start_with`.
 
-Shared start flow behind [`noican_engine_start`] and
-[`noican_engine_start_native`]: claims an epoch (tearing down any
+Shared start flow behind `Engine::start_aggregate` and
+`Engine::start_native`: claims an epoch (tearing down any
 running transport), prepares the stage and engine unlocked, starts
 the runtime through `start_runtime`, and commits unless a newer
 control operation superseded the epoch.
@@ -86,14 +121,19 @@ lock).
 `handle` must be a live engine handle and `model_id` must point to a
 valid NUL-terminated string for the duration of this call.
 
-Source: `crates/noican-ffi/src/lib.rs`, `with_runtime`.
+Source: `crates/noican-engine/src/lib.rs`, `Engine::health`.
 
-Runs `read` on the running runtime under the control lock, or returns
-`None` when there is none to read: a null handle, a stopped engine, or
-a poisoned lock. The shared shape of the status and diagnostic
-getters, each of which maps `None` to its stopped value. Holds the
+Reads the running runtime under the control lock, or returns the
+stopped values (`Health::default`) when there is none to read: a
+stopped engine or, with `faulted` set, a poisoned lock. Holds the
 control mutex, so it serves event-driven and 1 Hz callers, not the
 20 Hz meter path.
+
+Source: `crates/noican-ffi/src/lib.rs`, `health`.
+
+The shared shape of the status and diagnostic getters of the C ABI:
+`Engine::health` for a live handle, the stopped values for a null
+one.
 
 # Safety
 
@@ -101,7 +141,7 @@ control mutex, so it serves event-driven and 1 Hz callers, not the
 
 ## ffi-fields-outside-mutex
 
-Source: `crates/noican-ffi/src/lib.rs`, `EngineHandle::levels`.
+Source: `crates/noican-engine/src/lib.rs`, `Engine::levels`.
 
 Peak meters shared with each runtime's inference worker. Kept
 outside the control mutex so level polling reads plain atomics and
@@ -109,7 +149,7 @@ never waits on slow control work (weight downloads, model loads).
 The worker resets it to silence on start and exit, so readers see
 0 whenever the engine is stopped.
 
-Source: `crates/noican-ffi/src/lib.rs`, `EngineHandle::monitor_state`.
+Source: `crates/noican-engine/src/lib.rs`, `Engine::monitor_state`.
 
 The [`MonitorState`] cell shared with each runtime's monitor
 control and inference worker. Kept outside the control mutex for
@@ -118,7 +158,7 @@ never wait on a slow monitor start. Monitor toggles move it
 between off and playing, the worker's feedback guard moves it to
 tripped, and it reads off whenever no runtime is up.
 
-Source: `crates/noican-ffi/src/lib.rs`, `EngineHandle::intensity`.
+Source: `crates/noican-engine/src/lib.rs`, `Engine::intensity`.
 
 The dry/wet ("strength") control shared with each runtime's
 [`SwitchingEngine`]. One atomic, kept outside the control mutex:
@@ -169,14 +209,14 @@ while the borrow lasts (no caller keeps it past its own call).
 
 ## ffi-panic-guard
 
-Source: `crates/noican-ffi/src/lib.rs`, `guard_panics`.
+Source: `crates/noican-engine/src/lib.rs`, `guard_panics`.
 
 Runs slow, panic-capable work (ONNX session construction, tar
 extraction, ...) behind a panic guard: a Rust panic crossing the C ABI
 would abort the whole app, so it is converted into an error string
 instead.
 
-Source: `crates/noican-ffi/src/lib.rs`, `guard_panics`.
+Source: `crates/noican-engine/src/lib.rs`, `guard_panics`.
 
 Nothing observes the closure's state after a panic; the result is
 discarded wholesale, so broken invariants cannot leak.
