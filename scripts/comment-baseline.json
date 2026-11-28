@@ -17,7 +17,7 @@
  "crates/noican-coreaudio/src/observe.rs": 19,
  "crates/noican-coreaudio/src/routing.rs": 31,
  "crates/noican-engine/src/lib.rs": 65,
- "crates/noican-ffi/src/lib.rs": 186,
+ "crates/noican-ffi/src/lib.rs": 127,
  "crates/noican-models/examples/block_bench.rs": 1,
  "crates/noican-models/src/dsp.rs": 17,
  "crates/noican-models/src/factory.rs": 15,

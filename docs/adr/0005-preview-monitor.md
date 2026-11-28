@@ -295,7 +295,7 @@ Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `MonitorControl::state`.
 The shared [`MonitorState`] cell: this control half moves it
 between `Off` and `Playing`; the worker's [`MonitorTee`] gates on
 it and moves it to `Tripped`. Also read lock-free by the FFI
-layer, which owns the `Arc` (`noican_engine_monitor_state`).
+layer, which owns the `Arc` (`noican_engine_levels`).
 
 Source: `crates/noican-coreaudio/src/macos/monitor.rs`, `MonitorControl::enable`.
 
@@ -313,7 +313,7 @@ worker (which trips), and the UI (which polls at 20 Hz). One
 including while a slow monitor start holds it.
 
 The values cross the C ABI verbatim
-(`noican_engine_monitor_state`), so the discriminants are fixed.
+(`NoicanLevels::monitor`), so the discriminants are fixed.
 
 Source: `crates/noican-coreaudio/src/monitor.rs`, `MonitorState::Off`.
 
@@ -354,13 +354,14 @@ output is a virtual loopback; the meeting-facing path is never
 affected. The monitor does not survive an engine stop/start, so
 callers re-enable it after `start`.
 
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `MonitorState`.
+Source: `crates/noican-ffi/src/lib.rs`, `NoicanMonitorState`.
 
-Preview monitor state as reported by `noican_engine_monitor_state`.
-Raw values mirror the C `NoicanMonitorState` enum (noican.h) and the
-Rust `MonitorState`; they are frozen.
+Preview monitor state as it crosses the C ABI in
+`NoicanLevels::monitor`. The C enum in noican.h is generated from
+this one and the app compares against the generated constants, so
+the numbering has a single definition.
 
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `MonitorState.tripped`.
+Source: `crates/noican-ffi/src/lib.rs`, `NoicanMonitorState::Tripped`.
 
 The feedback guard silenced the preview: the monitor AUHAL is
 still up but renders silence. Cleared by the next monitor toggle
@@ -581,7 +582,7 @@ output device can take a moment, so callers should serialize their own
 control calls behind a busy flag while a toggle is in flight (the
 level and monitor-state getters stay lock-free and are always safe to
 poll). A toggle in either direction clears a pending feedback trip
-(see [`noican_engine_monitor_state`]).
+(see `NoicanLevels::monitor`).
 
 # Safety
 
@@ -612,7 +613,7 @@ preview.
 The same vetting as [`noican_monitor_target_error`], but against a
 caller-chosen device instead of the current default output.
 The UI runs it against the device the running monitor actually plays
-on (see [`noican_engine_monitor_device`]): after enable time the
+on (see `NoicanHealth::monitor_device`): after enable time the
 default output can move on while the monitor stays put, and a
 built-in device can flip its data source from the headphone jack to
 the internal speakers without any device-list or default-output
@@ -629,7 +630,7 @@ byte count including the terminating NUL.
 
 A non-null `buffer` must be writable for `capacity` bytes.
 
-Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_monitor_device`.
+Source: `crates/noican-ffi/src/lib.rs`, `NoicanHealth::monitor_device`.
 
 Device ID the running preview monitor plays on, or 0 while no monitor
 AUHAL is up (stopped engine, preview off).
@@ -639,14 +640,11 @@ fixed until the next toggle, so this is how the UI learns which
 device to watch for losing its safety
 (`noican_monitor_device_error`, device-list changes).
 
-Reads the control mutex (never held across slow work), so it is meant
-for event-driven and low-rate callers — not the 20 Hz poll path.
+Reads the control mutex (never held across slow work), so it is part of
+the health snapshot for event-driven and low-rate callers — not of
+the 20 Hz levels snapshot.
 
-# Safety
-
-`handle` must be null or a live engine handle.
-
-Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_monitor_state`.
+Source: `crates/noican-ffi/src/lib.rs`, `NoicanLevels::monitor`.
 
 The preview monitor's state as one value.
 
@@ -663,10 +661,6 @@ device and tell the user why; the meeting-facing path is unaffected.
 
 Reads one atomic without taking the control lock, so it never blocks —
 safe to poll at UI rates even while a monitor start is in progress.
-
-# Safety
-
-`handle` must be null or a live engine handle.
 
 Source: `crates/noican-ffi/src/lib.rs`, `tests::monitor_target_check_is_null_safe_and_consistent`.
 

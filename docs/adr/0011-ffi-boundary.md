@@ -47,21 +47,6 @@ Thin wrapper over the Rust C ABI. The handle is internally synchronized
 any thread; long operations (weight download, model construction) are
 expected to run off the main actor.
 
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine.monitorState`.
-
-Preview monitor state, one lock-free read — never waits on the
-engine's control lock, so it is safe to poll at 20 Hz even while
-a monitor start is in progress. The tripped protocol (AUHAL still
-up but silenced; cleared by the next toggle) is defined on the
-enum itself.
-
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine.monitorDeviceID`.
-
-Device the running preview monitor plays on (resolved on the Rust
-side at enable time), or 0 while no monitor is up. Reads the
-control mutex — meant for event-driven and 1 Hz callers, not the
-20 Hz poll path.
-
 ## ffi-control-locking-and-epoch
 
 Source: `crates/noican-ffi/src/lib.rs`.
@@ -128,16 +113,6 @@ stopped values (`Health::default`) when there is none to read: a
 stopped engine or, with `faulted` set, a poisoned lock. Holds the
 control mutex, so it serves event-driven and 1 Hz callers, not the
 20 Hz meter path.
-
-Source: `crates/noican-ffi/src/lib.rs`, `health`.
-
-The shared shape of the status and diagnostic getters of the C ABI:
-`Engine::health` for a live handle, the stopped values for a null
-one.
-
-# Safety
-
-`handle` must be null or a live engine handle.
 
 ## ffi-fields-outside-mutex
 
@@ -221,12 +196,50 @@ Source: `crates/noican-engine/src/lib.rs`, `guard_panics`.
 Nothing observes the closure's state after a panic; the result is
 discarded wholesale, so broken invariants cannot leak.
 
-## ffi-return-value-contracts
+## ffi-status-snapshots
 
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine.rating`.
+Decided 2026-11-28; recorded here because code comments are banned.
 
-One registry rating, clamped into the displayable 0–5 range (the
-FFI returns -1 only for arguments this caller never passes).
+Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_health`.
+Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_levels`.
+Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine.health`.
+
+The app reads the engine through two snapshot calls instead of one
+getter per value. `noican_engine_health` returns `NoicanHealth` (the
+running and fault flags, the monitor device, the heartbeat, and the
+diagnostic counters) and `noican_engine_levels` returns
+`NoicanLevels` (the two peak meters and the monitor state). Before
+this the C ABI had thirteen status getters, each mirrored by hand in
+the header and wrapped by a Swift property: adding a counter meant
+four edits in three files, and one health tick took the control lock
+once per value, so the values of one tick could come from different
+moments.
+
+There are two snapshots, not one, because the readers differ in what
+they may wait for. Health is read under the control lock, which the
+control plane holds across a monitor start; the 1 Hz health tick and
+event-driven callers can wait for that. Levels are polled at 20 Hz
+on the main actor and must never wait, so they come from atomics
+only. The monitor state travels with the levels because the feedback
+trip has to be seen at meter rate; the monitor device travels with
+health because it is only needed when a device event fires.
+
+Both calls return the stopped values for a null handle or a stopped
+engine: zeros, `false`, and `NOICAN_MONITOR_STATE_OFF`. A poisoned
+control lock reports `faulted`.
+
+The structs are returned by value. Their fields are private on the
+Rust side: nothing in Rust reads a `NoicanHealth` back, and private
+fields need no doc comment, which keeps the meaning of each field in
+one place (docs/adr/0002-engine-diagnostics.md#engine-diagnostics,
+docs/adr/0002-engine-diagnostics.md#level-meters,
+docs/adr/0005-preview-monitor.md#preview-monitor-contract,
+docs/adr/0012-app-state-reducer.md#engine-fault-semantics).
+
+Not done here: numeric error codes. Calls still return 0 or -1 with
+the text in `noican_engine_last_error`, because the app only shows
+the text. Codes are worth adding when the app starts to branch on
+the kind of failure.
 
 ## ffi-string-copy
 
@@ -235,6 +248,31 @@ Source: `crates/noican-ffi/src/lib.rs`, `copy_string`.
 A truncated copy must end on a UTF-8 char boundary — a multibyte
 sequence cut in the middle yields invalid UTF-8 for the caller
 even though it is NUL-terminated.
+
+## generated-header
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+Source: `crates/noican-ffi/src/lib.rs`, `tests::the_checked_in_header_matches_the_abi`.
+
+`macos/Sources/CNoican/include/noican.h` is generated from
+`crates/noican-ffi/src/lib.rs` by cbindgen (configuration in
+`crates/noican-ffi/cbindgen.toml`) and checked in. A unit test
+regenerates it in memory and fails when the checked-in file
+differs; `NOICAN_UPDATE_HEADER=1 cargo test -p noican-ffi header`
+rewrites the file. A hand-written header was a second
+definition of every signature and enum value that nothing compared
+with the first.
+
+cbindgen is a dev-dependency used as a library from the test, not a
+build script and not a CLI installed in CI. A build script would run
+on every build of the app and write into the source tree; a CI-only
+tool would leave a local `cargo test` unable to tell that the header
+is stale. As a test it runs wherever the tests run, including the
+macOS job that then compiles the Swift code against the same file.
+
+The header carries no documentation: the meaning of each call is
+recorded in these ADRs, keyed to the Rust symbol.
 
 ## split-transport-ffi-contract
 

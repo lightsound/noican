@@ -60,20 +60,16 @@ how far it actually moves.
 
 ## engine-diagnostics
 
-Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_frames_processed`.
+Source: `crates/noican-ffi/src/lib.rs`, `NoicanHealth::frames_processed`.
 
 Heartbeat: total input frames delivered since the engine started.
 
-Returns 0 while stopped. A value that stops advancing while
-`noican_engine_is_running` reports 1 means the device stopped calling
+Reads 0 while stopped. A value that stops advancing while
+`NoicanHealth::running` is set means the device stopped calling
 back (unplugged microphone, coreaudiod restart, post-sleep stall); the
 UI polls this once per second.
 
-# Safety
-
-`handle` must be null or a live engine handle.
-
-Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_output_underruns`.
+Source: `crates/noican-ffi/src/lib.rs`, `NoicanHealth::output_underruns`.
 
 Diagnostic: output callbacks that delivered no real audio at all —
 the output ring was dry for the entire I/O period.
@@ -81,7 +77,7 @@ the output ring was dry for the entire I/O period.
 Counted only after the ring first carried real audio (the start-up
 ramp is latency, not underrun), and partial zero-fills are not
 counted (benign block-quantization jitter — see the render
-callbacks). Returns 0 while stopped. A growing
+callbacks). Reads 0 while stopped. A growing
 count means the inference worker misses its 10 ms block budget for
 the active model — audible as dropouts in recordings from the
 virtual microphone, while the preview monitor masks it behind its
@@ -91,11 +87,7 @@ split).
 Cumulative since start or the last [`noican_engine_reset_debug_stats`];
 reset after a model switch to attribute underruns to one model.
 
-# Safety
-
-`handle` must be null or a live engine handle.
-
-Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_input_overruns`.
+Source: `crates/noican-ffi/src/lib.rs`, `NoicanHealth::input_overruns`.
 
 Diagnostic: input samples the capture ring dropped because it was
 full.
@@ -104,50 +96,34 @@ A full ring means the inference worker (or the capture side) fell
 behind by more than the whole ring — audible as clipped input
 reaching the models. Counted on both transports (aggregate and
 split), cumulative since start or the last
-[`noican_engine_reset_debug_stats`]; returns 0 while stopped.
+[`noican_engine_reset_debug_stats`]; reads 0 while stopped.
 
-# Safety
-
-`handle` must be null or a live engine handle.
-
-Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_worker_blocks`.
+Source: `crates/noican-ffi/src/lib.rs`, `NoicanHealth::worker_blocks`.
 
 Diagnostic: engine blocks the inference worker has processed since
 start or the last [`noican_engine_reset_debug_stats`] (the
-denominator for the over-budget count). Returns 0 while stopped.
+denominator for the over-budget count). Reads 0 while stopped.
 
-# Safety
-
-`handle` must be null or a live engine handle.
-
-Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_worker_blocks_over_budget`.
+Source: `crates/noican-ffi/src/lib.rs`, `NoicanHealth::worker_blocks_over_budget`.
 
 Diagnostic: worker blocks whose processing exceeded the 10 ms budget.
 
 Counted since start or the last [`noican_engine_reset_debug_stats`].
-Returns 0 while stopped. Blocks over budget are what drain the
+Reads 0 while stopped. Blocks over budget are what drain the
 output ring into underrun.
 
-# Safety
+Source: `crates/noican-ffi/src/lib.rs`, `NoicanHealth::worker_realtime`.
 
-`handle` must be null or a live engine handle.
-
-Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_worker_realtime`.
-
-Diagnostic: 1 when the inference worker's mach time-constraint
-(real-time) promotion succeeded at engine start, 0 otherwise
+Diagnostic: set when the inference worker's mach time-constraint
+(real-time) promotion succeeded at engine start, clear otherwise
 (including while stopped and for a null handle).
 
-0 while running means the promotion failed and the worker runs at
+Clear while running means the promotion failed and the worker runs at
 default priority — budget misses in that state may be scheduling,
 not model cost, and hardware underrun numbers should be read with
 that in mind. The value is the start-time promotion result, not
 live membership: the kernel may later demote a persistently
 overrunning thread without this flag changing.
-
-# Safety
-
-`handle` must be null or a live engine handle.
 
 Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_reset_debug_stats`.
 
@@ -167,54 +143,6 @@ Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine.setModel`.
 Zero the underrun/block-time diagnostics on every successful
 switch, so the health poll attributes what follows to the
 newly published model (see EngineDiagnostics).
-
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine.inputLevel`.
-
-Decayed linear peak (0–1) of the model input, measured per 10 ms
-block by the inference worker; 0 while stopped. Reads one atomic —
-never blocks, so it is safe to poll from the UI.
-
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine.framesProcessed`.
-
-Heartbeat: input frames delivered by the audio device since start.
-Stops advancing when the device stops calling back.
-
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine.outputUnderruns`.
-
-Diagnostic: output callbacks that delivered no real audio at all
-— the output ring dry for an entire I/O period (the start-up
-ramp and benign partial zero-fills are excluded on the Rust
-side). A growing count means the inference worker misses its
-10 ms block budget for the active model — audible as dropouts in
-recordings from the virtual microphone. Cumulative since engine
-start or the last `resetDebugStats()`.
-
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine.inputOverruns`.
-
-Diagnostic: input samples the capture ring dropped because it
-was full — the inference worker (or the capture side) fell
-behind by more than the whole ring, audible as clipped input
-reaching the models. Cumulative since engine start or the last
-`resetDebugStats()`.
-
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine.workerBlocks`.
-
-Diagnostic: engine blocks the inference worker has processed
-since start or the last `resetDebugStats()` (the denominator for
-`workerBlocksOverBudget`).
-
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine.workerBlocksOverBudget`.
-
-Diagnostic: worker blocks whose processing exceeded the 10 ms
-block budget — what drains the output ring into underrun.
-
-Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine.workerRealtime`.
-
-Diagnostic: whether the inference worker's mach time-constraint
-(real-time) promotion succeeded at engine start. False while
-running means the promotion failed — budget misses in that state
-may be scheduling, not model cost. Start-time result only; the
-kernel may demote a persistently overrunning thread later.
 
 Source: `macos/Sources/NoicanMenuBar/RustEngine.swift`, `RustEngine.resetDebugStats`.
 
@@ -258,7 +186,7 @@ Source: `macos/Sources/NoicanMenuBar/EngineDiagnostics.swift`, `EngineDiagnostic
 
 Input-side counterpart: capture-ring overruns drop real
 audio before it ever reaches the engine — underruns alone
-cannot show it, and `framesProcessed` still advances.
+cannot show it, and `frames_processed` still advances.
 
 ## engine-diagnostics-logging
 
@@ -314,7 +242,7 @@ offline alignment; defaults to zero.
 
 ## level-meters
 
-Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_input_level`.
+Source: `crates/noican-ffi/src/lib.rs`, `NoicanLevels::input`.
 
 Decayed linear peak (0.0–1.0) of the model input (pre-processing),
 measured per 10 ms worker block; 0.0 while the engine is stopped.
@@ -322,21 +250,13 @@ measured per 10 ms worker block; 0.0 while the engine is stopped.
 Reads one atomic without taking the control lock, so it never blocks —
 regardless of what the control plane is doing.
 
-# Safety
-
-`handle` must be null or a live engine handle.
-
-Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_output_level`.
+Source: `crates/noican-ffi/src/lib.rs`, `NoicanLevels::output`.
 
 Decayed linear peak (0.0–1.0) of the model output (post-processing),
 measured per 10 ms worker block; 0.0 while the engine is stopped.
 
 Reads one atomic without taking the control lock, so it never blocks —
 regardless of what the control plane is doing.
-
-# Safety
-
-`handle` must be null or a live engine handle.
 
 ## meters-outside-reducer
 

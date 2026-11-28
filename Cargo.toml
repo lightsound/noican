@@ -47,6 +47,9 @@ deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet.git", tag = "v0
 # Matches the ndarray version of deep_filter's public API.
 ndarray = "0.15"
 anyhow = "1.0"
+# Generates macos/Sources/CNoican/include/noican.h from noican-ffi; used
+# only by that crate's header test, as a library (no `clap` CLI).
+cbindgen = { version = "0.29", default-features = false }
 clap = { version = "4.6", features = ["derive"] }
 hound = "3.5"
 rubato = "5.0"

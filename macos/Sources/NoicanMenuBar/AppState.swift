@@ -1,3 +1,4 @@
+import CNoican
 import Combine
 import CoreAudio
 import Foundation
@@ -68,7 +69,7 @@ final class AppState: ObservableObject {
         dispatch(.modeSelected(
             newMode,
             monitorTargetError: newMode == .preview ? RustEngine.monitorTargetError : nil,
-            isEngineRunning: engine.isRunning
+            isEngineRunning: engine.health.running
         ))
     }
 
@@ -325,18 +326,19 @@ extension AppState {
         guard model.mode != .off, !model.isBusy, let engine else {
             return
         }
-        checkMonitorTrip()
+        checkMonitorTrip(engine.levels.monitor)
         checkMonitorSafety()
         checkInputRate()
-        if engine.isFaulted {
+        let health = engine.health
+        if health.faulted {
             dispatch(.engineFaulted)
             return
         }
-        if !engine.isRunning {
+        if !health.running {
             dispatch(.engineStoppedUnexpectedly)
             return
         }
-        let frames = engine.framesProcessed
+        let frames = health.frames_processed
         if frames == lastFrameCount {
             stalledTicks += 1
             if stalledTicks >= 3 {
@@ -346,7 +348,12 @@ extension AppState {
             lastFrameCount = frames
             stalledTicks = 0
         }
-        diagnostics.sample(engine, activeModelID: model.selectedModelID, splitTransport: activeCaptureRate != nil)
+        diagnostics.sample(
+            health,
+            of: engine,
+            activeModelID: model.selectedModelID,
+            splitTransport: activeCaptureRate != nil
+        )
     }
 }
 
@@ -370,16 +377,14 @@ extension AppState {
             if outputLevel != 0 { outputLevel = 0 }
             return
         }
-        inputLevel = engine.inputLevel
-        outputLevel = engine.outputLevel
-        checkMonitorTrip()
+        let levels = engine.levels
+        inputLevel = levels.input
+        outputLevel = levels.output
+        checkMonitorTrip(levels.monitor)
     }
 
-    private func checkMonitorTrip() {
-        guard
-            model.mode != .off, !model.isBusy, let engine,
-            engine.monitorState == .tripped
-        else {
+    private func checkMonitorTrip(_ monitor: NoicanMonitorState) {
+        guard model.mode != .off, !model.isBusy, monitor == NOICAN_MONITOR_STATE_TRIPPED else {
             return
         }
         dispatch(.monitorTripped)

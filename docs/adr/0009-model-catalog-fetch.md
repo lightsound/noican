@@ -122,15 +122,15 @@ Source: `crates/noican-ffi/src/lib.rs`, `noican_model_count`.
 Number of runtime-selectable models (bypass included), taken from the
 registry catalog.
 
-Source: `crates/noican-ffi/src/lib.rs`, `noican_model_rating`.
+Source: `crates/noican-ffi/src/lib.rs`, `noican_model_ratings`.
 
-One picker rating for the model at `index`, 0–5 with "more is better".
+The four picker ratings of the model at `index`, each 0–5 with "more
+is better": noise removal, voice quality, responsiveness (inverse
+latency), and efficiency (inverse compute cost). One struct instead
+of a getter with a trait selector, so there is no selector numbering
+to keep in step between Rust, the header, and Swift.
 
-`trait_id` follows `NoicanModelTrait` in noican.h: 0 = noise removal,
-1 = voice quality, 2 = responsiveness (inverse latency),
-3 = efficiency (inverse compute cost).
-
-Returns -1 for an invalid index or trait selector.
+All zeros for an invalid index.
 
 ## model-catalog-single-source
 

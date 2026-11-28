@@ -48,6 +48,53 @@ impl EngineHandle {
     }
 }
 
+/// See docs/adr/0005-preview-monitor.md#monitor-state-protocol.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoicanMonitorState {
+    /// No preview monitor is up.
+    Off = 0,
+    /// The preview monitor is playing.
+    Playing = 1,
+    /// The feedback guard silenced the preview.
+    Tripped = 2,
+}
+
+/// See docs/adr/0011-ffi-boundary.md#ffi-status-snapshots.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NoicanHealth {
+    running: bool,
+    faulted: bool,
+    worker_realtime: bool,
+    monitor_device: u32,
+    frames_processed: u64,
+    output_underruns: u64,
+    input_overruns: u64,
+    worker_blocks: u64,
+    worker_blocks_over_budget: u64,
+    worker_block_max_ns: u64,
+}
+
+/// See docs/adr/0011-ffi-boundary.md#ffi-status-snapshots.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NoicanLevels {
+    input: f32,
+    output: f32,
+    monitor: NoicanMonitorState,
+}
+
+/// See docs/adr/0009-model-catalog-fetch.md#model-catalog-projection.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NoicanModelRatings {
+    noise_removal: u8,
+    voice_quality: u8,
+    responsiveness: u8,
+    efficiency: u8,
+}
+
 /// See docs/adr/0011-ffi-boundary.md#ffi-handle-lifecycle.
 ///
 /// # Safety
@@ -177,24 +224,53 @@ pub unsafe extern "C" fn noican_engine_set_model(
     handle.record(handle.engine.set_model(model))
 }
 
-/// Returns 1 while AUHAL is running, otherwise 0.
+/// See docs/adr/0011-ffi-boundary.md#ffi-status-snapshots.
 ///
 /// # Safety
 ///
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn noican_engine_is_running(handle: *const c_void) -> i32 {
-    i32::from(unsafe { health(handle) }.running)
+pub unsafe extern "C" fn noican_engine_health(handle: *const c_void) -> NoicanHealth {
+    let health = unsafe { engine_handle(handle) }
+        .map_or_else(Health::default, |handle| handle.engine.health());
+    NoicanHealth {
+        running: health.running,
+        faulted: health.faulted,
+        worker_realtime: health.worker_realtime,
+        monitor_device: health.monitor_device.unwrap_or(0),
+        frames_processed: health.frames_processed,
+        output_underruns: health.output_underruns,
+        input_overruns: health.input_overruns,
+        worker_blocks: health.worker_blocks,
+        worker_blocks_over_budget: health.worker_blocks_over_budget,
+        worker_block_max_ns: health.worker_block_max_ns,
+    }
 }
 
-/// See docs/adr/0012-app-state-reducer.md#engine-fault-semantics.
+/// See docs/adr/0011-ffi-boundary.md#ffi-status-snapshots.
 ///
 /// # Safety
 ///
 /// `handle` must be null or a live engine handle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn noican_engine_is_faulted(handle: *const c_void) -> i32 {
-    i32::from(unsafe { health(handle) }.faulted)
+pub unsafe extern "C" fn noican_engine_levels(handle: *const c_void) -> NoicanLevels {
+    let Some(handle) = (unsafe { engine_handle(handle) }) else {
+        return NoicanLevels {
+            input: 0.0,
+            output: 0.0,
+            monitor: NoicanMonitorState::Off,
+        };
+    };
+    let levels = handle.engine.levels();
+    NoicanLevels {
+        input: levels.input,
+        output: levels.output,
+        monitor: match levels.monitor {
+            MonitorState::Off => NoicanMonitorState::Off,
+            MonitorState::Playing => NoicanMonitorState::Playing,
+            MonitorState::Tripped => NoicanMonitorState::Tripped,
+        },
+    }
 }
 
 /// See docs/adr/0005-preview-monitor.md#preview-monitor-contract.
@@ -243,16 +319,6 @@ pub unsafe extern "C" fn noican_monitor_device_error(
     }
 }
 
-/// See docs/adr/0005-preview-monitor.md#preview-monitor-contract.
-///
-/// # Safety
-///
-/// `handle` must be null or a live engine handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn noican_engine_monitor_device(handle: *const c_void) -> u32 {
-    unsafe { health(handle) }.monitor_device.unwrap_or(0)
-}
-
 /// See docs/adr/0004-aggregate-output-routing.md#transport-routing-diagnostics.
 ///
 /// # Safety
@@ -276,91 +342,6 @@ pub unsafe extern "C" fn noican_engine_routing_description(
     }
 }
 
-/// See docs/adr/0005-preview-monitor.md#preview-monitor-contract.
-///
-/// # Safety
-///
-/// `handle` must be null or a live engine handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn noican_engine_monitor_state(handle: *const c_void) -> i32 {
-    let Some(handle) = (unsafe { engine_handle(handle) }) else {
-        return MonitorState::Off.as_raw();
-    };
-    handle.engine.levels().monitor.as_raw()
-}
-
-/// See docs/adr/0002-engine-diagnostics.md#engine-diagnostics.
-///
-/// # Safety
-///
-/// `handle` must be null or a live engine handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn noican_engine_frames_processed(handle: *const c_void) -> u64 {
-    unsafe { health(handle) }.frames_processed
-}
-
-/// See docs/adr/0002-engine-diagnostics.md#engine-diagnostics.
-///
-/// # Safety
-///
-/// `handle` must be null or a live engine handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn noican_engine_output_underruns(handle: *const c_void) -> u64 {
-    unsafe { health(handle) }.output_underruns
-}
-
-/// See docs/adr/0002-engine-diagnostics.md#engine-diagnostics.
-///
-/// # Safety
-///
-/// `handle` must be null or a live engine handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn noican_engine_input_overruns(handle: *const c_void) -> u64 {
-    unsafe { health(handle) }.input_overruns
-}
-
-/// See docs/adr/0002-engine-diagnostics.md#engine-diagnostics.
-///
-/// # Safety
-///
-/// `handle` must be null or a live engine handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn noican_engine_worker_blocks(handle: *const c_void) -> u64 {
-    unsafe { health(handle) }.worker_blocks
-}
-
-/// See docs/adr/0002-engine-diagnostics.md#engine-diagnostics.
-///
-/// # Safety
-///
-/// `handle` must be null or a live engine handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn noican_engine_worker_blocks_over_budget(handle: *const c_void) -> u64 {
-    unsafe { health(handle) }.worker_blocks_over_budget
-}
-
-/// Diagnostic: the longest single worker block since start or the last
-/// [`noican_engine_reset_debug_stats`], in nanoseconds. Returns 0 while
-/// stopped.
-///
-/// # Safety
-///
-/// `handle` must be null or a live engine handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn noican_engine_worker_block_max_ns(handle: *const c_void) -> u64 {
-    unsafe { health(handle) }.worker_block_max_ns
-}
-
-/// See docs/adr/0002-engine-diagnostics.md#engine-diagnostics.
-///
-/// # Safety
-///
-/// `handle` must be null or a live engine handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn noican_engine_worker_realtime(handle: *const c_void) -> i32 {
-    i32::from(unsafe { health(handle) }.worker_realtime)
-}
-
 /// See docs/adr/0002-engine-diagnostics.md#engine-diagnostics.
 ///
 /// # Safety
@@ -371,32 +352,6 @@ pub unsafe extern "C" fn noican_engine_reset_debug_stats(handle: *mut c_void) {
     if let Some(handle) = unsafe { engine_handle(handle) } {
         handle.engine.reset_debug_stats();
     }
-}
-
-/// See docs/adr/0002-engine-diagnostics.md#level-meters.
-///
-/// # Safety
-///
-/// `handle` must be null or a live engine handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn noican_engine_input_level(handle: *const c_void) -> f32 {
-    let Some(handle) = (unsafe { engine_handle(handle) }) else {
-        return 0.0;
-    };
-    handle.engine.levels().input
-}
-
-/// See docs/adr/0002-engine-diagnostics.md#level-meters.
-///
-/// # Safety
-///
-/// `handle` must be null or a live engine handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn noican_engine_output_level(handle: *const c_void) -> f32 {
-    let Some(handle) = (unsafe { engine_handle(handle) }) else {
-        return 0.0;
-    };
-    handle.engine.levels().output
 }
 
 /// See docs/adr/0007-dsp-stages.md#intensity-dry-wet-mix.
@@ -411,23 +366,6 @@ pub unsafe extern "C" fn noican_engine_set_intensity(handle: *mut c_void, intens
     };
     handle.engine.set_intensity(intensity);
     SUCCESS
-}
-
-/// Reads the current dry/wet intensity (0.0–1.0; 1.0 for a null handle,
-/// matching the default).
-///
-/// One atomic load — never blocks, regardless of what the control plane
-/// is doing.
-///
-/// # Safety
-///
-/// `handle` must be null or a live engine handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn noican_engine_intensity(handle: *const c_void) -> f32 {
-    let Some(handle) = (unsafe { engine_handle(handle) }) else {
-        return 1.0;
-    };
-    handle.engine.intensity()
 }
 
 /// Copies the latest control-plane error as UTF-8.
@@ -542,18 +480,13 @@ pub unsafe extern "C" fn noican_model_details(
 
 /// See docs/adr/0009-model-catalog-fetch.md#model-catalog-projection.
 #[unsafe(no_mangle)]
-pub extern "C" fn noican_model_rating(index: usize, trait_id: i32) -> i32 {
-    let Some(entry) = catalog_entry(index) else {
-        return -1;
-    };
-    let rating = match trait_id {
-        0 => entry.traits.noise_removal,
-        1 => entry.traits.voice_quality,
-        2 => entry.traits.responsiveness,
-        3 => entry.traits.efficiency,
-        _ => return -1,
-    };
-    i32::from(rating)
+pub extern "C" fn noican_model_ratings(index: usize) -> NoicanModelRatings {
+    catalog_entry(index).map_or_else(NoicanModelRatings::default, |entry| NoicanModelRatings {
+        noise_removal: entry.traits.noise_removal,
+        voice_quality: entry.traits.voice_quality,
+        responsiveness: entry.traits.responsiveness,
+        efficiency: entry.traits.efficiency,
+    })
 }
 
 unsafe fn model_id_str<'a>(model_id: *const c_char) -> Result<&'a str, String> {
@@ -567,10 +500,6 @@ unsafe fn model_id_str<'a>(model_id: *const c_char) -> Result<&'a str, String> {
 
 const unsafe fn engine_handle<'a>(handle: *const c_void) -> Option<&'a EngineHandle> {
     unsafe { handle.cast::<EngineHandle>().as_ref() }
-}
-
-unsafe fn health(handle: *const c_void) -> Health {
-    unsafe { engine_handle(handle) }.map_or_else(Health::default, |handle| handle.engine.health())
 }
 
 unsafe fn copy_string(value: &str, buffer: *mut c_char, capacity: usize) -> usize {
@@ -591,9 +520,39 @@ unsafe fn copy_string(value: &str, buffer: *mut c_char, capacity: usize) -> usiz
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use noican_models::{ALL_MODELS, PASSTHROUGH_ID};
 
     use super::*;
+
+    const HEADER: &str = "../../macos/Sources/CNoican/include/noican.h";
+
+    #[test]
+    fn the_checked_in_header_matches_the_abi() {
+        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let config = cbindgen::Config::from_file(crate_dir.join("cbindgen.toml"))
+            .expect("cbindgen.toml loads");
+        let mut generated = Vec::new();
+        cbindgen::Builder::new()
+            .with_src(crate_dir.join("src/lib.rs"))
+            .with_config(config)
+            .generate()
+            .expect("the C ABI is expressible in C")
+            .write(&mut generated);
+        let generated = String::from_utf8(generated).expect("the header is UTF-8");
+        let path = crate_dir.join(HEADER);
+        if std::env::var_os("NOICAN_UPDATE_HEADER").is_some() {
+            std::fs::write(&path, &generated).expect("the header is writable");
+        }
+        let checked_in = std::fs::read_to_string(&path).expect("the header exists");
+        assert!(
+            checked_in == generated,
+            "{} is out of date; regenerate it with \
+             `NOICAN_UPDATE_HEADER=1 cargo test -p noican-ffi header`",
+            path.display()
+        );
+    }
 
     fn read_string(copy: impl Fn(*mut c_char, usize) -> usize) -> Option<String> {
         let mut buffer: [c_char; 64] = [0; 64];
@@ -678,48 +637,52 @@ mod tests {
         unsafe { noican_engine_destroy(handle) };
     }
 
+    const STOPPED: NoicanHealth = NoicanHealth {
+        running: false,
+        faulted: false,
+        worker_realtime: false,
+        monitor_device: 0,
+        frames_processed: 0,
+        output_underruns: 0,
+        input_overruns: 0,
+        worker_blocks: 0,
+        worker_blocks_over_budget: 0,
+        worker_block_max_ns: 0,
+    };
+
+    fn assert_silent(levels: NoicanLevels) {
+        assert!(levels.input.abs() < f32::EPSILON);
+        assert!(levels.output.abs() < f32::EPSILON);
+        assert_eq!(levels.monitor, NoicanMonitorState::Off);
+    }
+
     #[test]
     fn monitor_calls_are_safe_while_stopped() {
         let handle = unsafe { noican_engine_create(ptr::null()) };
         assert!(!handle.is_null());
-        assert_eq!(
-            unsafe { noican_engine_monitor_state(handle) },
-            MonitorState::Off.as_raw()
-        );
+        assert_silent(unsafe { noican_engine_levels(handle) });
         assert_eq!(unsafe { noican_engine_set_monitor(handle, 0) }, SUCCESS);
-        assert_eq!(
-            unsafe { noican_engine_monitor_state(handle) },
-            MonitorState::Off.as_raw()
-        );
+        assert_silent(unsafe { noican_engine_levels(handle) });
         assert_eq!(unsafe { noican_engine_set_monitor(handle, 1) }, FAILURE);
         let error = read_string(|buffer, capacity| unsafe {
             noican_engine_last_error(handle, buffer, capacity)
         })
         .expect("enable failure records an error");
         assert!(error.contains("not running"), "unhelpful message: {error}");
-        assert_eq!(
-            unsafe { noican_engine_monitor_state(handle) },
-            MonitorState::Off.as_raw()
-        );
+        assert_silent(unsafe { noican_engine_levels(handle) });
         unsafe { noican_engine_destroy(handle) };
     }
 
     #[test]
-    fn monitor_state_getter_is_null_safe() {
-        assert_eq!(
-            unsafe { noican_engine_monitor_state(ptr::null()) },
-            MonitorState::Off.as_raw()
-        );
-    }
-
-    #[test]
-    fn levels_read_zero_without_blocking_while_stopped() {
+    fn snapshots_read_the_stopped_values_for_a_null_or_stopped_handle() {
+        assert_eq!(unsafe { noican_engine_health(ptr::null()) }, STOPPED);
+        assert_silent(unsafe { noican_engine_levels(ptr::null()) });
         let handle = unsafe { noican_engine_create(ptr::null()) };
         assert!(!handle.is_null());
-        assert!(unsafe { noican_engine_input_level(handle) }.abs() < f32::EPSILON);
-        assert!(unsafe { noican_engine_output_level(handle) }.abs() < f32::EPSILON);
-        assert!(unsafe { noican_engine_input_level(ptr::null()) }.abs() < f32::EPSILON);
-        assert!(unsafe { noican_engine_output_level(ptr::null()) }.abs() < f32::EPSILON);
+        assert_eq!(unsafe { noican_engine_health(handle) }, STOPPED);
+        assert_silent(unsafe { noican_engine_levels(handle) });
+        unsafe { noican_engine_stop(handle) };
+        assert_eq!(unsafe { noican_engine_health(handle) }, STOPPED);
         unsafe { noican_engine_destroy(handle) };
     }
 
@@ -734,15 +697,6 @@ mod tests {
         }
         #[cfg(not(target_os = "macos"))]
         assert!(required > 0, "portable builds always refuse");
-    }
-
-    #[test]
-    fn monitor_device_reads_zero_and_null_safe_while_stopped() {
-        let handle = unsafe { noican_engine_create(ptr::null()) };
-        assert!(!handle.is_null());
-        assert_eq!(unsafe { noican_engine_monitor_device(handle) }, 0);
-        assert_eq!(unsafe { noican_engine_monitor_device(ptr::null()) }, 0);
-        unsafe { noican_engine_destroy(handle) };
     }
 
     #[test]
@@ -771,24 +725,28 @@ mod tests {
             })
             .expect("every entry has details");
             assert!(!details.is_empty(), "entry {index}: empty details");
-            for trait_id in 0..4 {
-                let rating = noican_model_rating(index, trait_id);
-                assert!(
-                    (0..=5).contains(&rating),
-                    "entry {index} trait {trait_id}: rating {rating} out of range"
-                );
+            let ratings = noican_model_ratings(index);
+            for rating in [
+                ratings.noise_removal,
+                ratings.voice_quality,
+                ratings.responsiveness,
+                ratings.efficiency,
+            ] {
+                assert!(rating <= 5, "entry {index}: rating {rating} out of range");
             }
         }
-        assert_eq!(noican_model_rating(0, 0), 0);
-        assert_eq!(noican_model_rating(0, 1), 5);
+        let bypass = noican_model_ratings(0);
+        assert_eq!(bypass.noise_removal, 0);
+        assert_eq!(bypass.voice_quality, 5);
     }
 
     #[test]
-    fn model_trait_getters_reject_invalid_indices_and_selectors() {
+    fn model_getters_reject_invalid_indices() {
         let out_of_range = noican_model_count();
-        assert_eq!(noican_model_rating(out_of_range, 0), -1);
-        assert_eq!(noican_model_rating(0, 4), -1);
-        assert_eq!(noican_model_rating(0, -1), -1);
+        assert_eq!(
+            noican_model_ratings(out_of_range),
+            NoicanModelRatings::default()
+        );
         assert_eq!(
             unsafe { noican_model_tagline(out_of_range, ptr::null_mut(), 0) },
             0
@@ -800,39 +758,18 @@ mod tests {
     }
 
     #[test]
-    fn intensity_defaults_to_full_clamps_and_round_trips() {
-        let handle = unsafe { noican_engine_create(ptr::null()) };
-        assert!(!handle.is_null());
-        assert!((unsafe { noican_engine_intensity(handle) } - 1.0).abs() < f32::EPSILON);
-        assert_eq!(unsafe { noican_engine_set_intensity(handle, 0.3) }, SUCCESS);
-        assert!((unsafe { noican_engine_intensity(handle) } - 0.3).abs() < f32::EPSILON);
-        assert_eq!(unsafe { noican_engine_set_intensity(handle, 5.0) }, SUCCESS);
-        assert!((unsafe { noican_engine_intensity(handle) } - 1.0).abs() < f32::EPSILON);
-        assert_eq!(
-            unsafe { noican_engine_set_intensity(handle, -1.0) },
-            SUCCESS
-        );
-        assert!(unsafe { noican_engine_intensity(handle) }.abs() < f32::EPSILON);
-        assert_eq!(
-            unsafe { noican_engine_set_intensity(handle, f32::NAN) },
-            SUCCESS
-        );
-        assert!(unsafe { noican_engine_intensity(handle) }.abs() < f32::EPSILON);
-        unsafe { noican_engine_destroy(handle) };
-    }
-
-    #[test]
-    fn intensity_calls_are_null_safe_and_value_survives_while_stopped() {
+    fn intensity_setter_is_null_safe() {
         assert_eq!(
             unsafe { noican_engine_set_intensity(ptr::null_mut(), 0.5) },
             FAILURE
         );
-        assert!((unsafe { noican_engine_intensity(ptr::null()) } - 1.0).abs() < f32::EPSILON);
         let handle = unsafe { noican_engine_create(ptr::null()) };
         assert!(!handle.is_null());
         assert_eq!(unsafe { noican_engine_set_intensity(handle, 0.7) }, SUCCESS);
-        unsafe { noican_engine_stop(handle) };
-        assert!((unsafe { noican_engine_intensity(handle) } - 0.7).abs() < f32::EPSILON);
+        assert_eq!(
+            unsafe { noican_engine_set_intensity(handle, f32::NAN) },
+            SUCCESS
+        );
         unsafe { noican_engine_destroy(handle) };
     }
 
@@ -927,35 +864,12 @@ mod tests {
     }
 
     #[test]
-    fn debug_stats_read_zero_and_null_safe_while_stopped() {
-        assert_eq!(unsafe { noican_engine_output_underruns(ptr::null()) }, 0);
-        assert_eq!(unsafe { noican_engine_worker_blocks(ptr::null()) }, 0);
-        assert_eq!(
-            unsafe { noican_engine_worker_blocks_over_budget(ptr::null()) },
-            0
-        );
-        assert_eq!(unsafe { noican_engine_worker_block_max_ns(ptr::null()) }, 0);
-        assert_eq!(unsafe { noican_engine_worker_realtime(ptr::null()) }, 0);
-        let handle = unsafe { noican_engine_create(ptr::null()) };
-        assert!(!handle.is_null());
-        assert_eq!(unsafe { noican_engine_output_underruns(handle) }, 0);
-        assert_eq!(unsafe { noican_engine_worker_blocks(handle) }, 0);
-        assert_eq!(
-            unsafe { noican_engine_worker_blocks_over_budget(handle) },
-            0
-        );
-        assert_eq!(unsafe { noican_engine_worker_block_max_ns(handle) }, 0);
-        assert_eq!(unsafe { noican_engine_worker_realtime(handle) }, 0);
-        unsafe { noican_engine_destroy(handle) };
-    }
-
-    #[test]
     fn debug_stats_reset_is_null_safe_and_a_no_op_while_stopped() {
         unsafe { noican_engine_reset_debug_stats(ptr::null_mut()) };
         let handle = unsafe { noican_engine_create(ptr::null()) };
         assert!(!handle.is_null());
         unsafe { noican_engine_reset_debug_stats(handle) };
-        assert_eq!(unsafe { noican_engine_output_underruns(handle) }, 0);
+        assert_eq!(unsafe { noican_engine_health(handle) }, STOPPED);
         unsafe { noican_engine_stop(handle) };
         unsafe { noican_engine_reset_debug_stats(handle) };
         unsafe { noican_engine_destroy(handle) };

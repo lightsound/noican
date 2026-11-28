@@ -13,5 +13,8 @@ crate-type = ["staticlib", "rlib"]
 noican-engine = { workspace = true }
 noican-models = { workspace = true }
 
+[dev-dependencies]
+cbindgen = { workspace = true }
+
 [lints]
 workspace = true
