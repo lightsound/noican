@@ -308,15 +308,21 @@ Second pass, with the video stopped:
   restart, no fault, no red text; the status stays green and
   "Running" and both level bars keep moving.
 - **Observed:** at each change `coreaudiod` stops and restarts the
-  aggregate's IO within about 40 ms (five times in a row for 96000)
-  and, for a change away from 48000, logs that it allocates sample
-  rate conversion. **Inferred:** Core Audio converts the out-of-rate
+  aggregate's IO (five times in a row for 96000); the logged gap
+  between stop and start was 30 to 40 ms for the microphone changes
+  and 84 to 93 ms for the virtual-output change (B3). The gaps are
+  log timestamps, not a measurement of how long audio was
+  interrupted. For a change away from 48000 it also logs that it
+  allocates sample rate conversion. **Inferred:** Core Audio converts the out-of-rate
   sub-device to the aggregate's 48 kHz, which is why the operator
   heard no change in pitch or speed.
-- **Observed:** a change of the microphone to 44100 costs one input
-  overrun of 837 samples (about 17 ms at 48 kHz), three times out of
-  three. The changes to 96000 and the change of the virtual output
-  logged none; why is not known.
+- **Observed:** at each change of the microphone to 44100 the app's
+  input-drop counter rose by 837 samples, three times out of three
+  (837 samples are 17 ms of audio at 48 kHz). The counter is
+  cumulative and counts every kind of capture loss, so this is not a
+  measurement of one contiguous dropout, and the audible interruption
+  during the restart was not measured. The changes to 96000 and the
+  change of the virtual output raised no counter; why is not known.
 - **Observed and read:** every start resets the microphone to 48000
   (`ensure48k`), so the aggregate transport does not start on a
   microphone left at another rate.
@@ -325,12 +331,18 @@ Second pass, with the video stopped:
 - **Answer to the finding's question:** in this run a rate change on
   the aggregate transport did not leave the app in a state the user
   could not notice or could not recover from. The missing observer is
-  real, but its visible cost here was one dropout of about 17 ms at
-  the moment of the change.
-- **Not settled:** the SRC line says drift correction is not enabled
-  for the conversion. Whether a session that stays at a foreign rate
-  for hours drifts into dropouts was not tested; the longest hold was
-  about 80 s.
+  real, but its recorded cost here was that counter increase and a
+  restart of the aggregate's IO at the moment of the change; the
+  operator reported no interruption.
+- **Not settled:** the SRC line is a statement about Core Audio's
+  default ("sample rate conversion no longer enables drift correction
+  by default"), not about this session. Read
+  (`AggregateDevice.swift`, `create`): the app requests drift
+  compensation for the virtual output sub-device and not for the
+  microphone, which is the aggregate's clock. Whether drift
+  correction was in effect during any conversion was not verified,
+  and whether a session that stays at a foreign rate for hours runs
+  into dropouts was not tested; the longest hold was about 80 s.
 
 ## Other observations
 
