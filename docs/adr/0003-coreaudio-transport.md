@@ -180,9 +180,11 @@ of failed capture.
 100 ms matches the stall the aggregate worker absorbs before it
 sheds (see `capture-backlog-shedding`): shorter gaps are treated as
 dropouts on both sides of the capture ring. A render that keeps
-failing still faults within 100 ms or two cycles, whichever is
-longer (about one second at the largest buffer at 8 kHz), in step
-with the one-second health poll that reports it. The frames of every failed cycle,
+failing faults on the first failed cycle at which both conditions
+hold, so up to one cycle past 100 ms (the tenth failed cycle of 512
+frames at 48 kHz, about 107 ms) and at worst after two cycles of
+the largest buffer (about one second at 8 kHz), in step with the
+one-second health poll that reports it. The frames of every failed cycle,
 tolerated or not, are added to the input-overrun counter ("captured
 audio that never reached the models"), so a tolerated failure still
 leaves a trace in the log. Clearing the flag after a success instead
