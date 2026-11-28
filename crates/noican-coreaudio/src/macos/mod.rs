@@ -190,6 +190,7 @@ unsafe extern "C" {
 unsafe extern "C" {
     fn os_workgroup_join(workgroup: *mut c_void, token: *mut WorkgroupJoinToken) -> i32;
     fn os_workgroup_leave(workgroup: *mut c_void, token: *mut WorkgroupJoinToken);
+    fn os_release(object: *mut c_void);
 }
 
 const DISPATCH_TIME_NOW: u64 = 0;
@@ -1063,7 +1064,20 @@ fn set_property<T>(
     )
 }
 
-fn audio_workgroup(unit: AudioUnit) -> Result<usize, CoreAudioError> {
+#[derive(Debug)]
+struct AudioWorkgroup(*mut c_void);
+
+unsafe impl Send for AudioWorkgroup {}
+
+impl Drop for AudioWorkgroup {
+    fn drop(&mut self) {
+        unsafe {
+            os_release(self.0);
+        }
+    }
+}
+
+fn audio_workgroup(unit: AudioUnit) -> Result<AudioWorkgroup, CoreAudioError> {
     let mut workgroup: *mut c_void = ptr::null_mut();
     let mut size = size_u32::<*mut c_void>()?;
     check_status(
@@ -1084,7 +1098,7 @@ fn audio_workgroup(unit: AudioUnit) -> Result<usize, CoreAudioError> {
             "AUHAL returned a null audio workgroup".to_owned(),
         ));
     }
-    Ok(workgroup as usize)
+    Ok(AudioWorkgroup(workgroup))
 }
 
 const WORKER_WAIT_NS: i64 = 2_000_000;
@@ -1161,8 +1175,8 @@ struct WorkgroupGuard {
 }
 
 impl WorkgroupGuard {
-    fn join(workgroup: usize) -> Self {
-        let workgroup = workgroup as *mut c_void;
+    fn join(workgroup: &AudioWorkgroup) -> Self {
+        let workgroup = workgroup.0;
         let mut token = WorkgroupJoinToken::default();
         let joined = unsafe { os_workgroup_join(workgroup, &raw mut token) } == 0;
         Self {
@@ -1190,14 +1204,14 @@ impl Drop for WorkgroupGuard {
 fn spawn_pump(
     mut pump: Pump,
     shared: &Shared,
-    workgroup: usize,
+    workgroup: AudioWorkgroup,
 ) -> Result<JoinHandle<()>, CoreAudioError> {
     let shared = shared.clone();
     spawn_worker(move || {
         shared
             .worker_realtime
             .store(promote_current_thread_to_realtime(), Ordering::Release);
-        let membership = WorkgroupGuard::join(workgroup);
+        let membership = WorkgroupGuard::join(&workgroup);
         if !membership.joined() {
             shared.faulted.store(true, Ordering::Release);
         }
@@ -1207,6 +1221,7 @@ fn spawn_pump(
             }
         }
         drop(membership);
+        drop(workgroup);
     })
 }
 

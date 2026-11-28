@@ -57,7 +57,16 @@ if [[ ! -f "$STATICLIB" ]]; then
   exit 1
 fi
 
-SWIFT_BINARY="$ROOT/macos/.build/arm64-apple-macosx/$CONFIGURATION/NoicanMenuBar"
+SWIFT_BUILD_ARGS=(
+  --package-path "$ROOT/macos"
+  --configuration "$CONFIGURATION"
+  --arch arm64
+)
+# Ask SwiftPM where the product lands instead of spelling the path: the
+# layout depends on the build system (Swift 6.4 defaults to swiftbuild,
+# which writes to .build/out/Products/<Configuration>/, not to
+# .build/arm64-apple-macosx/<configuration>/; observed 2026-11-28).
+SWIFT_BINARY="$(swift build "${SWIFT_BUILD_ARGS[@]}" --show-bin-path)/NoicanMenuBar"
 
 # SwiftPM does not track the staticlib as an input of the link step: when
 # only the Rust side changed, `swift build` reports "Build complete" and
@@ -69,11 +78,7 @@ SWIFT_BINARY="$ROOT/macos/.build/arm64-apple-macosx/$CONFIGURATION/NoicanMenuBar
 rm -f "$SWIFT_BINARY"
 
 # Warnings are errors, matching the Rust side of the quality gates.
-swift build \
-  --package-path "$ROOT/macos" \
-  --configuration "$CONFIGURATION" \
-  --arch arm64 \
-  -Xswiftc -warnings-as-errors
+swift build "${SWIFT_BUILD_ARGS[@]}" -Xswiftc -warnings-as-errors
 
 if [[ ! -x "$SWIFT_BINARY" ]]; then
   echo "error: swift build finished but $SWIFT_BINARY does not exist" >&2
