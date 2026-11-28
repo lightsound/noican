@@ -9,24 +9,22 @@ use std::sync::{
 use noican_core::{DriftServo, InputResampler, SwitchingEngine};
 use rtrb::RingBuffer;
 
-use crate::CoreAudioError;
 use crate::callback::OutputFeed;
 use crate::observe::StreamLevels;
 use crate::pump::{ClockBridge, NATIVE_CHUNK_SAMPLES, Pump};
 use crate::routing::split_render_channels;
+use crate::{CoreAudioError, cushion};
 
 use super::{
     AUDIO_OUTPUT_UNIT_PROPERTY_SET_INPUT_CALLBACK, AUDIO_UNIT_SCOPE_GLOBAL, AUDIO_UNIT_SCOPE_INPUT,
     AudioBufferList, AudioDeviceId, AudioUnit, AudioUnitRenderActionFlags, AudioUnitRenderCallback,
     AudioUnitSetProperty, AuhalUnit, Capture, ContextGuard, Direction, NO_ERR, OSStatus,
     OUTPUT_BUS, PARAM_ERR, RING_CAPACITY, Runtime, Shared, Transport, attach_render_callback,
-    audio_workgroup, check_status, device_output_channels, monitor, pcm_format, pcm_format_at,
-    render_samples, set_client_format, set_current_device, set_io_enabled,
+    audio_workgroup, buffer_frames, check_status, device_output_channels, monitor, pcm_format,
+    pcm_format_at, render_samples, set_client_format, set_current_device, set_io_enabled,
     set_max_frames_per_slice, size_u32, spawn_pump, start_output_unit, stop_output_unit,
     stop_worker, stream_format_channels,
 };
-
-const OUTPUT_PRIME_SAMPLES: usize = 2_400;
 
 pub(super) struct OutputContext {
     feed: OutputFeed,
@@ -43,11 +41,14 @@ pub(super) fn start(
 ) -> Result<Runtime, CoreAudioError> {
     let resampler = InputResampler::new(capture_rate, NATIVE_CHUNK_SAMPLES)
         .map_err(|error| CoreAudioError::Worker(error.to_string()))?;
+    let requested = std::env::var_os(cushion::VARIABLE);
+    let requested = requested.as_deref().map(std::ffi::OsStr::to_string_lossy);
+    let cushion = cushion::requested(requested.as_deref()).map_err(CoreAudioError::Worker)?;
     let shared = Shared::new()?;
 
     let (input_producer, input_consumer) = RingBuffer::new(RING_CAPACITY);
     let (mut output_producer, output_consumer) = RingBuffer::new(RING_CAPACITY);
-    for _ in 0..OUTPUT_PRIME_SAMPLES {
+    for _ in 0..cushion {
         let _ignored = output_producer.push(0.0);
     }
 
@@ -62,16 +63,25 @@ pub(super) fn start(
     let output_pulses = Arc::new(AtomicU64::new(0));
     let (output_unit, output_context, routing) = build_output_half(
         output_device,
-        OutputFeed::new(output_consumer, Arc::clone(&shared.underruns)),
+        OutputFeed::primed_ring(output_consumer, Arc::clone(&shared.underruns)),
         &output_pulses,
     )?;
+    let routing = format!(
+        "{routing}, {}",
+        cushion::describe(
+            cushion,
+            capture_rate,
+            buffer_frames(capture_unit.raw()),
+            buffer_frames(output_unit.raw()),
+        )
+    );
 
     let (monitor, tee) = monitor::monitor_pair(monitor_state);
     let pump = Pump::new(
         shared.pump_links(engine, input_consumer, output_producer, tee, levels),
         Some(ClockBridge::new(
             resampler,
-            DriftServo::new(OUTPUT_PRIME_SAMPLES),
+            DriftServo::new(cushion),
             output_pulses,
         )),
     );

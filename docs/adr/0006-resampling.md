@@ -86,12 +86,14 @@ Proportional residual (drift × horizon ≈ 96 samples at
 
 ## drift-compensation-servo
 
-Source: `crates/noican-coreaudio/src/macos/split.rs`, `OUTPUT_PRIME_SAMPLES`.
+Source: `crates/noican-coreaudio/src/cushion.rs`, `SHIPPED_SAMPLES`.
 
 Silence pushed into the output ring before the units start: the
 initial cushion absorbing Bluetooth burst jitter, and the drift
-servo's occupancy target (50 ms at 48 kHz). This is added latency of
-the split path only; the aggregate path is untouched.
+servo's occupancy target (50 ms at 48 kHz unless the experiment
+variable of `split-cushion-experiment` says otherwise). This is
+added latency of the split path only; the aggregate path is
+untouched.
 
 Source: `crates/noican-coreaudio/src/macos/split.rs`, `start`.
 

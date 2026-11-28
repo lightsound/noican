@@ -418,6 +418,9 @@ extension AppState {
         for device: AudioObjectID,
         snapshot: CaptureSupport?
     ) -> Bool {
+        if ProcessInfo.processInfo.environment["NOICAN_SPLIT_CUSHION_MS"] != nil {
+            return false
+        }
         if let advertises48k = AudioDeviceCatalog.advertisesSampleRate(device, 48_000) {
             return advertises48k
         }

@@ -9,6 +9,8 @@ use std::sync::Arc;
 use noican_core::SwitchingEngine;
 
 pub mod callback;
+#[cfg(any(target_os = "macos", test))]
+mod cushion;
 pub mod monitor;
 pub mod observe;
 #[cfg(any(target_os = "macos", test))]

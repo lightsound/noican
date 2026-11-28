@@ -378,6 +378,89 @@ Owns a heap-allocated callback context during setup, reclaiming it
 on any early error return (safe because the audio unit is never started
 on those paths, so no callback can observe the pointer).
 
+## split-cushion-experiment
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+Source: `crates/noican-coreaudio/src/cushion.rs`, `requested`.
+
+Whether the split transport can also serve 48 kHz microphones, and
+with how little added delay, can only be measured on hardware, and
+hardware sessions are scarce. One environment variable,
+`NOICAN_SPLIT_CUSHION_MS`, turns a single session into a sweep
+without a rebuild: when it is set, every microphone takes the split
+transport and the output cushion is that many milliseconds; when it
+is unset nothing changes. The variable carries both the switch and
+the value so the two cannot disagree. It is read once per start, on
+the starting thread. A value that is not a whole number from 1 to
+500 refuses the start by name instead of falling back, because a
+silent fallback would attribute a measurement to the wrong cushion.
+This is an experiment switch, not a setting: remove it with the
+decision on the aggregate transport.
+
+Source: `macos/Sources/NoicanMenuBar/AppState.swift`, `AppState.shouldUseAggregate`.
+
+The Swift side only tests whether the variable is present, before
+any device fact is read; the value is parsed in one place, in Rust.
+A present but malformed value therefore reaches the split start and
+is refused there.
+
+Source: `crates/noican-coreaudio/src/cushion.rs`, `SHIPPED_SAMPLES`.
+
+The cushion every split start uses when the variable is unset:
+50 ms, chosen for Bluetooth burst jitter and accepted on hardware.
+It is added latency of the split path only.
+
+Source: `crates/noican-coreaudio/src/cushion.rs`, `phase_floor`.
+
+A cushion below this cannot stay gap-free, however good the
+scheduling. The worker can only push whole 480-sample blocks, and
+only when a capture callback delivers; the render callback takes a
+whole buffer at once. Right after a push the occupancy the servo
+regulates is the cushion. Until the next push up to one capture
+burst (in engine samples) plus one block less a sample can be
+consumed, and the render that follows still needs a full buffer.
+Two free-running clocks drift through every relative phase, so the
+worst alignment always comes around: the floor is one capture
+burst, one render buffer and one block. It is a necessary bound,
+not a sufficient one. The servo's proportional residual (0.48
+samples per ppm of drift) and real scheduling jitter come on top.
+
+The aggregate transport needs none of this because capture and
+render are the same callback: only the 480-against-buffer-size
+quantization remains, which settles at about 450 samples. For a
+48 kHz microphone with 512-frame buffers the floor is 1,504
+samples, so the split path costs at least 22 ms more delay than the
+aggregate path at that buffer size, before any jitter margin.
+Smaller device buffers lower the floor (736 samples at 128 frames).
+
+Source: `crates/noican-coreaudio/src/cushion.rs`, `describe`.
+
+The routing line the app logs at start carries the cushion, both
+device buffer sizes and the floor, so a hardware run records which
+cushion it measured and whether that cushion was above the floor.
+An unreadable buffer size is reported as such and leaves the floor
+unknown; it never fails the start.
+
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `buffer_frames`.
+
+AUHAL forwards the device's I/O buffer size as a global-scope
+property of the unit bound to it. Read after the device is
+selected; any failure reads as absent.
+
+Source: `crates/noican-coreaudio/src/pump.rs`, `tests::a_cushion_under_the_phase_floor_leaves_gaps`.
+
+The simulator, at ±300 ppm over 40 simulated seconds, with ideal
+scheduling. Smallest gap-free cushion on a 240-sample grid, by
+capture rate and buffer size: 48 kHz at 512 frames 1,680; at 256
+frames 1,200; at 128 frames 960; 44.1 kHz at 512 frames 1,440;
+96 kHz at 512 frames 1,200; 24 kHz at 512 frames 2,160; 16 kHz at
+256 frames 1,680; 16 kHz at 512 frames 2,880. The last one is
+above the shipped 2,400: if a Bluetooth telephony device really
+delivers 512-frame callbacks at 16 kHz, the shipped cushion clips
+32 samples each time the clocks pass the worst phase. Whether it
+does is a hardware fact the routing line now shows.
+
 ## split-transport-architecture
 
 Source: `crates/noican-coreaudio/src/macos/split.rs`.
@@ -413,9 +496,10 @@ whose fractional phase step carries the drift correction — exact
 clock domains once per block — native-ring occupancy converted to
 engine samples through the same ratio — and steers the resampler a
 few hundred ppm to cancel clock drift (docs/tech-research.md §4.2).
-The output ring is primed with [`OUTPUT_PRIME_SAMPLES`] of silence,
-which is both the initial jitter cushion and the servo's occupancy
-target; neither the servo nor the cushion depends on the ratio.
+The output ring is primed with a cushion of silence (see
+`split-cushion-experiment`), which is both the initial jitter
+cushion and the servo's occupancy target; the servo does not depend
+on the ratio.
 
 Real-time rules (docs/tech-research.md §9) hold as on the aggregate
 path: the capture callback only calls `AudioUnitRender` into a
@@ -437,12 +521,11 @@ separate tuning.
 
 Source: `crates/noican-coreaudio/src/macos/split.rs`, `OutputContext::feed`.
 
-The output ring and its underrun counter, with the same
-complete-starvation definition as the aggregate path. On this
-transport the ring is primed with [`OUTPUT_PRIME_SAMPLES`] of
-silence, so the feed counts from the first callback on, and a
-fully drained ring means the worker (or the capture side) fell
-behind by more than the whole cushion.
+The output ring and its underrun counter. On this transport the
+ring is primed with the cushion, so the feed counts from the first
+callback on and counts every callback it cannot fill completely
+(see `output-underrun-counting`): a short callback means the worker
+(or the capture side) fell behind by more than the whole cushion.
 
 Source: `crates/noican-coreaudio/src/macos/split.rs`, `start`.
 

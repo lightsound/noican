@@ -127,6 +127,7 @@ pub struct OutputFeed {
     ring: Consumer<f32>,
     underruns: Arc<AtomicU64>,
     primed: bool,
+    counts_shortfalls: bool,
 }
 
 impl OutputFeed {
@@ -138,15 +139,31 @@ impl OutputFeed {
             ring,
             underruns,
             primed: false,
+            counts_shortfalls: false,
+        }
+    }
+
+    #[cfg(any(target_os = "macos", test))]
+    pub(crate) const fn primed_ring(ring: Consumer<f32>, underruns: Arc<AtomicU64>) -> Self {
+        Self {
+            ring,
+            underruns,
+            primed: true,
+            counts_shortfalls: true,
         }
     }
 
     /// See docs/adr/0002-engine-diagnostics.md#output-underrun-counting.
     pub fn render(&mut self, samples: &mut [f32], channels: usize) {
         let ring = &mut self.ring;
-        if fill_dual_mono(samples, channels, || ring.pop().ok()) {
-            self.primed = true;
-        } else if self.primed {
+        let mut short = false;
+        let delivered = fill_dual_mono(samples, channels, || {
+            let sample = ring.pop().ok();
+            short |= sample.is_none();
+            sample
+        });
+        self.primed |= delivered;
+        if self.primed && (!delivered || (short && self.counts_shortfalls)) {
             self.underruns.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -328,6 +345,28 @@ mod tests {
         producer.push(-0.25).expect("ring has room");
         feed.render(&mut stereo, 2);
         assert_samples(&stereo, &[0.25, 0.25, -0.25, -0.25]);
+        assert_eq!(underruns.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn a_feed_over_a_primed_ring_counts_every_shortfall() {
+        let (mut producer, consumer) = RingBuffer::new(8);
+        let underruns = Arc::new(AtomicU64::new(0));
+        let mut feed = OutputFeed::primed_ring(consumer, Arc::clone(&underruns));
+        let mut stereo = [9.0_f32; 4];
+
+        producer.push(0.5).expect("ring has room");
+        producer.push(0.5).expect("ring has room");
+        feed.render(&mut stereo, 2);
+        assert_eq!(underruns.load(Ordering::Relaxed), 0);
+
+        producer.push(0.25).expect("ring has room");
+        feed.render(&mut stereo, 2);
+        assert_samples(&stereo, &[0.25, 0.25, 0.0, 0.0]);
+        assert_eq!(underruns.load(Ordering::Relaxed), 1);
+
+        feed.render(&mut stereo, 2);
+        assert_samples(&stereo, &[0.0; 4]);
         assert_eq!(underruns.load(Ordering::Relaxed), 2);
     }
 }

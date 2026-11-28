@@ -273,9 +273,11 @@ Source: `crates/noican-coreaudio/src/callback.rs`, `OutputFeed`.
 
 The output side of a render callback on either transport: pops the
 worker's output ring into the device buffer as dual mono
-([`fill_dual_mono`]) and counts complete starvation as underrun.
+([`fill_dual_mono`]) and counts underruns, by one of two rules chosen
+when the feed is built.
 
-A callback counts as an underrun only when it delivered no real sample
+On a ring that starts empty (the aggregate transport) a callback
+counts as an underrun only when it delivered no real sample
 at all *after* the ring first produced audio. The ramp-up before that
 is start-up latency, not underrun: the aggregate transport's ring
 starts empty (the worker needs one full block of input before it
@@ -291,6 +293,22 @@ Source: `crates/noican-coreaudio/src/callback.rs`, `OutputFeed::primed`.
 
 Whether any sample has ever been popped. Callback-thread-only
 state, hence no atomic.
+
+Source: `crates/noican-coreaudio/src/callback.rs`, `OutputFeed::primed_ring`.
+
+Decided 2026-11-28; recorded here because code comments are banned.
+The split transport fills its ring with the whole cushion before the
+units start, so it has no ramp-up to excuse: a callback that finds
+the ring short has run through the cushion, and the listener hears
+the zero-fill. A cushion that is slightly too small never starves a
+whole callback; it clips the end of one each time the two clocks
+drift through the worst phase. The complete-starvation rule reads
+zero for exactly that failure, which the simulator shows for a
+16 kHz capture with 512-frame callbacks at the shipped 50 ms (see
+`split-cushion-experiment`). A feed over a primed ring therefore
+counts every callback it could not fill completely. Readings taken
+on the split transport before this date used the stricter rule and
+are not comparable.
 
 Source: `crates/noican-coreaudio/src/callback.rs`, `OutputFeed::render`.
 

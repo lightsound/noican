@@ -330,6 +330,15 @@ mod tests {
         }
 
         fn build(stage: Box<dyn Stage>, capture_rate: Option<u32>, former: bool) -> Self {
+            Self::with_cushion(stage, capture_rate, former, PRIME_SAMPLES)
+        }
+
+        fn with_cushion(
+            stage: Box<dyn Stage>,
+            capture_rate: Option<u32>,
+            former: bool,
+            cushion: usize,
+        ) -> Self {
             let (input_producer, input) = RingBuffer::new(RING_CAPACITY);
             let (mut output, output_consumer) = RingBuffer::new(RING_CAPACITY);
             let (monitor_producer, _monitor_consumer) = RingBuffer::new(RING_CAPACITY);
@@ -346,12 +355,12 @@ mod tests {
             let block_stats = Arc::new(WorkerBlockStats::new());
             let pulses = Arc::new(AtomicU64::new(0));
             let bridge = capture_rate.map(|rate| {
-                for _ in 0..PRIME_SAMPLES {
+                for _ in 0..cushion {
                     output.push(0.0).expect("room to prime");
                 }
                 ClockBridge::new(
                     InputResampler::new(rate, NATIVE_CHUNK_SAMPLES).expect("resampler"),
-                    DriftServo::new(PRIME_SAMPLES),
+                    DriftServo::new(cushion),
                     Arc::clone(&pulses),
                 )
             });
@@ -385,7 +394,11 @@ mod tests {
             Self {
                 worker,
                 capture: CaptureFeed::new(input_producer, Arc::clone(&overruns)),
-                render: OutputFeed::new(output_consumer, Arc::clone(&underruns)),
+                render: if capture_rate.is_some() {
+                    OutputFeed::primed_ring(output_consumer, Arc::clone(&underruns))
+                } else {
+                    OutputFeed::new(output_consumer, Arc::clone(&underruns))
+                },
                 pulses,
                 faulted,
                 overruns,
@@ -422,17 +435,27 @@ mod tests {
         }
 
         fn own_clock_tick(&mut self, rate: u32, drift_ppm: i32, capturing: bool) {
+            self.own_clock_callbacks(rate, drift_ppm, CALLBACK_FRAMES, capturing);
+        }
+
+        fn own_clock_callbacks(
+            &mut self,
+            rate: u32,
+            drift_ppm: i32,
+            frames: usize,
+            capturing: bool,
+        ) {
             const PERIOD: u64 = 48_000 * 1_000_000;
             self.owed +=
                 u64::from(rate) * u64::from(1_000_000_u32.saturating_add_signed(drift_ppm));
             while self.owed >= PERIOD {
                 self.owed -= PERIOD;
                 if capturing {
-                    self.capture(CALLBACK_FRAMES);
+                    self.capture(frames);
                     self.work();
                 }
             }
-            self.render(CALLBACK_FRAMES);
+            self.render(frames);
         }
 
         fn occupancy(&self) -> usize {
@@ -497,6 +520,8 @@ mod tests {
         }
         let settled = &rig.rendered[100 * CALLBACK_FRAMES..];
         assert!(settled.iter().all(|sample| sample.to_bits() != 0));
+        let silence = rig.rendered.len() - rig.audible().len();
+        assert_eq!(silence, 448, "start-up silence");
         assert_eq!((rig.overruns(), rig.underruns()), (0, 0));
         assert_eq!(rig.block_stats.blocks(), 213);
         assert!(!rig.faulted());
@@ -541,6 +566,37 @@ mod tests {
             assert_eq!((rig.overruns(), rig.underruns()), (0, 0), "{case}");
             assert!(!rig.faulted(), "{case}");
         }
+    }
+
+    fn gaps_over_forty_seconds(rate: u32, frames: usize, cushion: usize) -> u64 {
+        let mut gaps = 0;
+        for drift_ppm in [-300, 300] {
+            let mut rig = Rig::with_cushion(Box::new(Passthrough), Some(rate), false, cushion);
+            for _ in 0..40 * 48_000 / frames {
+                rig.own_clock_callbacks(rate, drift_ppm, frames, true);
+                if rig.underruns() > 0 {
+                    break;
+                }
+            }
+            gaps += rig.underruns();
+        }
+        gaps
+    }
+
+    #[test]
+    fn a_cushion_under_the_phase_floor_leaves_gaps() {
+        for (rate, frames) in [(48_000, 512), (48_000, 128), (16_000, 512)] {
+            let cushion =
+                crate::cushion::phase_floor(rate, frames, frames) - WORKER_BLOCK_SAMPLES / 2;
+            let gaps = gaps_over_forty_seconds(rate, frames, cushion);
+            assert!(gaps > 0, "{rate} Hz, {frames} frames, cushion {cushion}");
+        }
+    }
+
+    #[test]
+    fn a_48_khz_capture_at_512_frames_is_gap_free_from_35_ms_of_cushion() {
+        assert_eq!(gaps_over_forty_seconds(48_000, CALLBACK_FRAMES, 1_680), 0);
+        assert!(crate::cushion::phase_floor(48_000, CALLBACK_FRAMES, CALLBACK_FRAMES) > 1_440);
     }
 
     #[test]

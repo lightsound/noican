@@ -8,10 +8,13 @@ A worker that misses its 10 ms block budget drains the output ring;
 the virtual-microphone callback then zero-fills — audible as dropouts
 and a lower average level in recordings — while Preview masks it
 behind the monitor ring's re-priming cushion. The engine counts these
-events on both transports: output callbacks that were fully starved —
+events on both transports: on the aggregate transport, output
+callbacks that were fully starved —
 zero real samples available for an entire I/O period (the start-up
 ramp and benign partial shortfalls from 480-sample block quantization
-are excluded by design) — and the worker's per-block processing
+are excluded by design); on the split transport, since 2026-11-28,
+every callback the primed ring could not fill completely — and the
+worker's per-block processing
 times (total blocks / blocks over 10 ms / maximum). Counters reset on
 engine start and on every model switch, so readings are attributable
 to the active model. The dated records

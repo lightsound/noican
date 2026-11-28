@@ -56,6 +56,7 @@ const AUDIO_OUTPUT_UNIT_PROPERTY_CHANNEL_MAP: u32 = 2_002;
 const AUDIO_OUTPUT_UNIT_PROPERTY_ENABLE_IO: u32 = 2_003;
 const AUDIO_OUTPUT_UNIT_PROPERTY_SET_INPUT_CALLBACK: u32 = 2_005;
 const AUDIO_OUTPUT_UNIT_PROPERTY_OS_WORKGROUP: u32 = 2_015;
+const AUDIO_DEVICE_PROPERTY_BUFFER_FRAME_SIZE: u32 = fourcc(*b"fsiz");
 const AUDIO_UNIT_PROPERTY_STREAM_FORMAT: u32 = 8;
 const AUDIO_UNIT_PROPERTY_MAXIMUM_FRAMES_PER_SLICE: u32 = 14;
 const AUDIO_UNIT_PROPERTY_SET_RENDER_CALLBACK: u32 = 23;
@@ -777,6 +778,24 @@ fn set_max_frames_per_slice(
         &max_frames,
         operation,
     )
+}
+
+fn buffer_frames(unit: AudioUnit) -> Option<usize> {
+    let mut frames = 0_u32;
+    let mut size = size_u32::<u32>().ok()?;
+    let status = unsafe {
+        AudioUnitGetProperty(
+            unit,
+            AUDIO_DEVICE_PROPERTY_BUFFER_FRAME_SIZE,
+            AUDIO_UNIT_SCOPE_GLOBAL,
+            OUTPUT_BUS,
+            (&raw mut frames).cast(),
+            &raw mut size,
+        )
+    };
+    (status == NO_ERR)
+        .then(|| usize::try_from(frames).ok())
+        .flatten()
 }
 
 #[derive(Debug, Clone, Copy)]

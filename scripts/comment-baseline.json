@@ -9,6 +9,7 @@
  "crates/noican-core/src/stage.rs": 26,
  "crates/noican-core/src/switch.rs": 18,
  "crates/noican-coreaudio/src/callback.rs": 19,
+ "crates/noican-coreaudio/src/cushion.rs": 1,
  "crates/noican-coreaudio/src/lib.rs": 58,
  "crates/noican-coreaudio/src/macos/mod.rs": 49,
  "crates/noican-coreaudio/src/macos/monitor.rs": 15,
