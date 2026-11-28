@@ -16,12 +16,13 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use noican_core::SwitchingEngine;
+use noican_core::{ENGINE_SAMPLE_RATE, SwitchingEngine};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::CoreAudioError;
 use crate::callback::{
-    CaptureFeed, MAX_CALLBACK_FRAMES, OutputFeed, capture_byte_size, render_geometry,
+    CaptureFeed, MAX_CALLBACK_FRAMES, OutputFeed, RenderFailures, capture_byte_size,
+    render_geometry,
 };
 use crate::monitor::{MonitorTee, fourcc};
 use crate::observe::{StreamLevels, WorkerBlockStats};
@@ -315,17 +316,19 @@ struct Capture {
     unit: AudioUnit,
     buffer: Vec<f32>,
     feed: CaptureFeed,
+    failures: RenderFailures,
     faulted: Arc<AtomicBool>,
     samples_ready: Arc<DispatchSemaphore>,
     frames: Arc<AtomicU64>,
 }
 
 impl Capture {
-    fn new(unit: AudioUnit, input: Producer<f32>, shared: &Shared) -> Self {
+    fn new(unit: AudioUnit, input: Producer<f32>, sample_rate: u32, shared: &Shared) -> Self {
         Self {
             unit,
             buffer: vec![0.0; MAX_CALLBACK_FRAMES],
             feed: CaptureFeed::new(input, Arc::clone(&shared.input_overruns)),
+            failures: RenderFailures::new(sample_rate),
             faulted: Arc::clone(&shared.faulted),
             samples_ready: Arc::clone(&shared.samples_ready),
             frames: Arc::clone(&shared.frames),
@@ -362,9 +365,13 @@ impl Capture {
             )
         };
         if status != NO_ERR {
-            self.faulted.store(true, Ordering::Release);
+            self.feed.lose(frames);
+            if self.failures.failed(frames) {
+                self.faulted.store(true, Ordering::Release);
+            }
             return Err(NO_ERR);
         }
+        self.failures.recovered();
         self.feed.push(&self.buffer[..frames]);
         self.frames
             .fetch_add(u64::from(frame_count), Ordering::Relaxed);
@@ -527,7 +534,7 @@ impl Runtime {
         let (input_producer, input_consumer) = RingBuffer::new(RING_CAPACITY);
         let (output_producer, output_consumer) = RingBuffer::new(RING_CAPACITY);
         let context = ContextGuard::new(CallbackContext {
-            capture: Capture::new(unit.raw(), input_producer, &shared),
+            capture: Capture::new(unit.raw(), input_producer, ENGINE_SAMPLE_RATE, &shared),
             output: OutputFeed::new(output_consumer, Arc::clone(&shared.underruns)),
         });
         attach_render_callback(

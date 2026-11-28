@@ -126,11 +126,13 @@ Source: `crates/noican-coreaudio/src/macos/mod.rs`, `Capture::capture`.
 
 Captures this cycle's `frame_count` frames and wakes the worker.
 
-On failure the fault flag is set and the error is the status the
-callback returns: `paramErr` for a cycle larger than the landing
-buffer (cannot happen while `kAudioUnitProperty_MaximumFramesPerSlice`
-holds; the callback never allocates to compensate), `noErr` for a
-failed `AudioUnitRender` (the fault flag is the report).
+On failure the error is the status the callback returns: `paramErr`
+for a cycle larger than the landing buffer (cannot happen while
+`kAudioUnitProperty_MaximumFramesPerSlice` holds; the callback never
+allocates to compensate; the fault flag is set), `noErr` for a failed
+`AudioUnitRender`. Since 2026-11-28 a failed render sets the fault
+flag only once failures persist, see `render-failure-tolerance`; its
+frames are added to the input-overrun counter either way.
 
 # Safety
 
@@ -151,6 +153,35 @@ Source: `crates/noican-coreaudio/src/macos/mod.rs`, `set_max_frames_per_slice`.
 Bounds the unit's callback size to [`MAX_CALLBACK_FRAMES`] so the
 preallocated capture landing buffer always suffices (the callback
 never allocates; see [`crate::callback`]).
+
+## render-failure-tolerance
+
+Source: `crates/noican-coreaudio/src/callback.rs`, `RenderFailures`.
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+A failed `AudioUnitRender` in the capture path used to set the fault
+flag at once, and the flag never clears: one failed cycle left the
+app showing "Audio fault" for the rest of the session although audio
+kept flowing from the next cycle on. The flag exists to tell the
+user that the microphone path is broken, and a single lost cycle is
+a dropout, not a broken path. Failed cycles are therefore counted by
+the frames they cover, in a run that any successful cycle ends, and
+the fault is flagged only when one run reaches 100 ms of capture
+(4800 frames at 48 kHz, 1600 at a 16 kHz telephony microphone). The
+tolerance is measured in audio time, not in cycles, because one
+cycle is anything from 3 ms to 85 ms depending on the device buffer.
+100 ms matches the stall the aggregate worker absorbs before it
+sheds (see `capture-backlog-shedding`): shorter gaps are treated as
+dropouts on both sides of the capture ring. A render that keeps
+failing still faults within 100 ms, well inside the one-second
+health poll that reports it. The frames of every failed cycle,
+tolerated or not, are added to the input-overrun counter ("captured
+audio that never reached the models"), so a tolerated failure still
+leaves a trace in the log. Clearing the flag after a success instead
+was rejected: the app reads it once a second and would miss a fault
+that came and went, and a session it already marked failed would
+not recover anyway. Every other fault source stays immediate.
 
 ## capture-non-finite-samples
 
