@@ -35,10 +35,10 @@ worker block statistics) so a model switch can be measured in
 isolation. Plain relaxed stores — safe while the callbacks and
 the worker run.
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs`, `saturating_elapsed_ns`.
+Source: `crates/noican-coreaudio/src/pump.rs`, `Pump::run_block`.
 
-Nanoseconds since `started`, saturated into a `u64` (585 years —
-unreachable in practice, but the stats must never panic).
+The block duration is saturated into a `u64` of nanoseconds (585
+years — unreachable in practice, but the stats must never panic).
 
 ## diagnostics-counter-baseline
 

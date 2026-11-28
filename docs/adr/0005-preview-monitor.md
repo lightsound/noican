@@ -518,7 +518,7 @@ start that may still fail nor disappears during a model switch.
 
 ## preview-monitor
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs`, `WorkerLinks::run_block`.
+Source: `crates/noican-coreaudio/src/pump.rs`, `Pump::run_block`.
 
 Preview branch: the tee only copies into its preallocated monitor
 ring (skipped entirely while disarmed) and disarms itself on

@@ -146,12 +146,14 @@ Source: `crates/noican-coreaudio/src/macos/split.rs`, `configure_capture_auhal`.
 Bound the callback size so the preallocated render buffer always
 suffices (the callback never allocates).
 
-Source: `crates/noican-coreaudio/src/macos/split.rs`, `split_processing_loop`.
+Source: `crates/noican-coreaudio/src/pump.rs`, `Pump::step`.
 
-Inference worker of the split transport: drains native-rate capture
-samples, converts them to 48 kHz with the drift-compensated
-resampler, and runs the unchanged engine in 10 ms blocks. All state
-is preallocated; the loop never locks (docs/tech-research.md §9).
+One pass of the inference worker. On the split transport it drains
+native-rate capture samples, converts them to 48 kHz with the
+drift-compensated resampler, and runs the unchanged engine in 10 ms
+blocks; on the aggregate transport the samples already arrive at
+48 kHz and skip the conversion. All state is preallocated; the pass
+never locks (docs/tech-research.md §9).
 
 Source: `crates/noican-coreaudio/src/macos/split.rs`, `capture_input_callback`.
 
@@ -238,7 +240,7 @@ cadence the output ring absorbs.
 
 ## realtime-thread-rules
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs`, `WorkerLinks::run_block`.
+Source: `crates/noican-coreaudio/src/pump.rs`, `Pump::run_block`.
 
 Timing the block on the worker (not a callback): `Instant::now`
 is a non-blocking clock read, fine on the inference thread that
@@ -259,9 +261,9 @@ Source: `crates/noican-coreaudio/src/macos/mod.rs`, `DispatchSemaphore`.
 The semaphore handle is shared with the render callback and the worker
 thread; libdispatch semaphores are internally thread-safe.
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs`, `processing_loop`.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `spawn_pump`.
 
-Block until the render callback signals more input (or the
+Block until a device callback signals more input (or the
 timeout elapses, so shutdown is always noticed). Busy-spinning
 here would burn a core for the whole session and distort the
 os_workgroup's power/deadline balancing.
@@ -283,11 +285,11 @@ control thread only (allocates; `CFString` round-trip).
 
 ## worker-block-processing
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs`, `WorkerLinks::run_block`.
+Source: `crates/noican-coreaudio/src/pump.rs`, `Pump::run_block`.
 
 Runs the engine on one block and fans the result out to the
 meters, the preview tee, and the output ring — the per-block step
-shared by the aggregate and split worker loops — and records its
+of both transports — and records its
 duration in the block statistics. An engine failure emits silence
 and flags the fault; output-ring overrun drops samples rather
 than blocking.
@@ -325,11 +327,13 @@ that start-time result — it is not live scheduling-band membership
 computation), and a stopped-but-not-dropped runtime retains the
 last start's value.
 
-Source: `crates/noican-coreaudio/src/macos/mod.rs`, `WorkerLinks::enter`.
+Source: `crates/noican-coreaudio/src/macos/mod.rs`, `spawn_pump`.
 
-Worker setup shared by both loops, run on the worker thread:
-meters and statistics start from zero, the thread is promoted to
-real-time scheduling, and it joins the device's audio workgroup.
+Worker setup shared by both transports, run on the worker thread:
+the thread is promoted to real-time scheduling and joins the
+device's audio workgroup. Meters and statistics start from zero
+because the pump clears them when it is built and again when the
+worker drops it.
 
 The promotion must precede the join (see
 [`promote_current_thread_to_realtime`]); its failure degrades, not

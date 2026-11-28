@@ -15,6 +15,7 @@
  "crates/noican-coreaudio/src/macos/split.rs": 1,
  "crates/noican-coreaudio/src/monitor.rs": 34,
  "crates/noican-coreaudio/src/observe.rs": 19,
+ "crates/noican-coreaudio/src/pump.rs": 1,
  "crates/noican-coreaudio/src/routing.rs": 31,
  "crates/noican-engine/src/lib.rs": 80,
  "crates/noican-ffi/src/lib.rs": 139,

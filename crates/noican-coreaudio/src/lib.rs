@@ -11,6 +11,8 @@ use noican_core::SwitchingEngine;
 pub mod callback;
 pub mod monitor;
 pub mod observe;
+#[cfg(any(target_os = "macos", test))]
+mod pump;
 pub mod routing;
 
 pub use observe::{StreamLevels, WorkerBlockStats};

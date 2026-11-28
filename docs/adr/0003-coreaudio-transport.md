@@ -235,6 +235,8 @@ which the compiler (rightly) warns about.
 Source: `crates/noican-coreaudio/src/macos/mod.rs`.
 
 Audited AUHAL FFI and real-time callbacks for the main transport.
+The worker loop itself is portable and lives outside this module
+tree (see `worker-pump`).
 
 The preview monitor's AUHAL lifecycle lives in the [`monitor`]
 submodule; shared plumbing (unit creation, property setting, render
@@ -422,7 +424,7 @@ worker's semaphore; the output callback only pops the output ring
 (silence on underrun); all resampling runs on the worker with state
 preallocated at start.
 
-Source: `crates/noican-coreaudio/src/macos/split.rs`, `NATIVE_CHUNK_SAMPLES`.
+Source: `crates/noican-coreaudio/src/pump.rs`, `NATIVE_CHUNK_SAMPLES`.
 
 Native-rate samples drained from the capture ring per worker pass
 (also the resampler's preallocation unit): 480 native samples cover
@@ -464,15 +466,10 @@ Registers `context` as the capture unit's input callback (the
 input-only AUHAL notification slot, distinct from the render-callback
 slot used by output units).
 
-Source: `crates/noican-coreaudio/src/macos/split.rs`, `split_processing_loop`.
+Source: `crates/noican-coreaudio/src/pump.rs`, `ClockBridge::new`.
 
 Converted samples per pass, bounded by the resampler at the
 largest drift correction so the buffer never grows afterwards.
-
-Source: `crates/noican-coreaudio/src/macos/split.rs`, `split_processing_loop`.
-
-Block until the capture callback signals more input (or
-the timeout elapses, so shutdown is always noticed).
 
 ## split-transport-contract
 
@@ -666,3 +663,67 @@ fail a device the reducer already approved for native capture —
 while unknown or non-native snapshots keep Phase 0's fail-open
 behavior (a device idling at 48 kHz with an unreadable rate list
 therefore still reaches `ensure48k`, which returns immediately).
+
+## worker-pump
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+Source: `crates/noican-coreaudio/src/pump.rs`, `Pump`.
+
+Both transports used to carry their own worker loop, written against
+macOS types, so neither loop could run anywhere but on a Mac with
+audio hardware, and every timing question (a clock that drifts, a
+capture that drops out, an output device that goes silent) could
+only be answered in a hardware session. The loop is now one portable
+type that owns the worker's buffers and the engine, and one method,
+`Pump::step`, that drains at most one chunk from the capture ring
+and runs every block that chunk completes. It reports whether it
+found anything, which is all the macOS thread needs to decide
+between calling it again and sleeping on the semaphore. Thread
+promotion, the workgroup and the semaphore stay in
+`crates/noican-coreaudio/src/macos/mod.rs`; nothing in the pump
+names a macOS type.
+
+Source: `crates/noican-coreaudio/src/pump.rs`, `ClockBridge`.
+
+The two transports differ in one fact: whether capture and render
+share a clock. That fact is the optional bridge. Without it the
+pump is the aggregate worker, which sheds a stale backlog at block
+boundaries (see `capture-backlog-shedding`) and feeds the engine
+the samples as they arrive. With it the pump is the split worker:
+each chunk passes the resampler, the drift servo is fed after every
+block, and the output-side heartbeat is watched. A transport cannot
+shed and resample at once because there is no bridge state in which
+both branches run.
+
+Source: `crates/noican-coreaudio/src/pump.rs`, `Pump::new`.
+
+The pump clears the level meters and block statistics when it is
+built and again when it is dropped, which the worker thread does on
+its way out. The two former loops did the same at entry and exit;
+tying it to the value's lifetime leaves no path that forgets one.
+
+Source: `crates/noican-coreaudio/src/pump.rs`, `tests::Rig`.
+
+The tests drive the pump with the real capture and output feeds
+over real rings, in one thread, with the order of capture, worker
+and render callbacks chosen by the test. Time is a count of
+callbacks: an own-clock capture is given a rate and a drift in ppm,
+and an integer accumulator decides how many capture callbacks fall
+between two render callbacks. That makes hours of drift, a dropout
+or a dead output a deterministic unit test. What the simulator does
+not model is scheduling: callbacks never preempt the worker and
+never arrive late, so it bounds the logic, not the jitter margin,
+and the hardware gate for retiring the aggregate path still stands.
+
+Source: `crates/noican-coreaudio/src/pump.rs`, `tests::the_pump_matches_the_loops_it_replaced`.
+
+The test module keeps a copy of the two loops the pump replaced
+(`tests::FormerLoops`) and requires bit-identical rendered samples
+and identical overrun, underrun and fault readings under a
+pseudo-random schedule that includes stalls, floods and starved
+phases, for a shared clock and for 44.1 and 48 kHz own-clock
+capture. It is the evidence that the move changed no behavior
+while no hardware run exists for it. Delete the copy and this test
+with the first change that alters the pump's behavior on purpose;
+from then on the scenario tests carry the contract.

@@ -98,7 +98,7 @@ Source: `crates/noican-coreaudio/src/macos/split.rs`, `start`.
 Prime the output ring at the servo's occupancy target so playback
 starts with the jitter cushion in place.
 
-Source: `crates/noican-coreaudio/src/macos/split.rs`, `split_processing_loop`.
+Source: `crates/noican-coreaudio/src/pump.rs`, `ClockBridge::follow`.
 
 Drift servo: total samples buffered between the capture
 clock (producer) and the output clock (consumer), in

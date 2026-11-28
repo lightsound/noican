@@ -9,38 +9,28 @@ use std::sync::{
 use noican_core::{DriftServo, InputResampler, SwitchingEngine};
 use rtrb::RingBuffer;
 
+use crate::CoreAudioError;
 use crate::callback::OutputFeed;
 use crate::observe::StreamLevels;
+use crate::pump::{ClockBridge, NATIVE_CHUNK_SAMPLES, Pump};
 use crate::routing::split_render_channels;
-use crate::{CoreAudioError, WORKER_BLOCK_SAMPLES};
 
 use super::{
     AUDIO_OUTPUT_UNIT_PROPERTY_SET_INPUT_CALLBACK, AUDIO_UNIT_SCOPE_GLOBAL, AUDIO_UNIT_SCOPE_INPUT,
     AudioBufferList, AudioDeviceId, AudioUnit, AudioUnitRenderActionFlags, AudioUnitRenderCallback,
     AudioUnitSetProperty, AuhalUnit, Capture, ContextGuard, Direction, NO_ERR, OSStatus,
-    OUTPUT_BUS, PARAM_ERR, RING_CAPACITY, Runtime, Shared, Transport, WORKER_WAIT_NS, WorkerLinks,
-    attach_render_callback, audio_workgroup, check_status, device_output_channels, monitor,
-    pcm_format, pcm_format_at, render_samples, set_client_format, set_current_device,
-    set_io_enabled, set_max_frames_per_slice, size_u32, spawn_worker, start_output_unit,
-    stop_output_unit, stop_worker, stream_format_channels,
+    OUTPUT_BUS, PARAM_ERR, RING_CAPACITY, Runtime, Shared, Transport, attach_render_callback,
+    audio_workgroup, check_status, device_output_channels, monitor, pcm_format, pcm_format_at,
+    render_samples, set_client_format, set_current_device, set_io_enabled,
+    set_max_frames_per_slice, size_u32, spawn_pump, start_output_unit, stop_output_unit,
+    stop_worker, stream_format_channels,
 };
 
-const NATIVE_CHUNK_SAMPLES: usize = 480;
-
 const OUTPUT_PRIME_SAMPLES: usize = 2_400;
-
-const OUTPUT_STALL_BLOCKS: usize = 300;
 
 pub(super) struct OutputContext {
     feed: OutputFeed,
     pulses: Arc<AtomicU64>,
-}
-
-struct SplitWorkerLinks {
-    worker: WorkerLinks,
-    resampler: InputResampler,
-    servo: DriftServo,
-    output_pulses: Arc<AtomicU64>,
 }
 
 pub(super) fn start(
@@ -77,20 +67,15 @@ pub(super) fn start(
     )?;
 
     let (monitor, tee) = monitor::monitor_pair(monitor_state);
-    let links = SplitWorkerLinks {
-        worker: WorkerLinks {
-            engine,
-            input: input_consumer,
-            output: output_producer,
-            tee,
-            levels,
-            shared: shared.clone(),
-        },
-        resampler,
-        servo: DriftServo::new(OUTPUT_PRIME_SAMPLES),
-        output_pulses,
-    };
-    let worker = spawn_worker(move || split_processing_loop(links, workgroup))?;
+    let pump = Pump::new(
+        shared.pump_links(engine, input_consumer, output_producer, tee, levels),
+        Some(ClockBridge::new(
+            resampler,
+            DriftServo::new(OUTPUT_PRIME_SAMPLES),
+            output_pulses,
+        )),
+    );
+    let worker = spawn_pump(pump, &shared, workgroup)?;
 
     if let Err(error) = start_output_unit(capture_unit.raw(), "AudioOutputUnitStart(capture)") {
         stop_worker(&shared, worker);
@@ -218,66 +203,6 @@ fn attach_input_callback(unit: AudioUnit, context: *mut c_void) -> Result<(), Co
         },
         "AudioUnitSetProperty(capture input callback)",
     )
-}
-
-fn split_processing_loop(links: SplitWorkerLinks, workgroup: usize) {
-    let SplitWorkerLinks {
-        mut worker,
-        mut resampler,
-        mut servo,
-        output_pulses,
-    } = links;
-    let membership = worker.enter(workgroup);
-    let output_capacity = worker.output.buffer().capacity();
-    let mut native_chunk = [0.0_f32; NATIVE_CHUNK_SAMPLES];
-    let max_converted = resampler.max_output_len(NATIVE_CHUNK_SAMPLES);
-    let mut converted: Vec<f32> = Vec::with_capacity(max_converted);
-    let mut pending: std::collections::VecDeque<f32> =
-        std::collections::VecDeque::with_capacity(max_converted + WORKER_BLOCK_SAMPLES);
-    let mut input_block = [0.0_f32; WORKER_BLOCK_SAMPLES];
-    let mut output_block = [0.0_f32; WORKER_BLOCK_SAMPLES];
-    let mut last_output_pulses = 0_u64;
-    let mut output_idle_blocks = 0_usize;
-    while !worker.shared.shutdown.load(Ordering::Acquire) {
-        let mut popped = 0;
-        while popped < NATIVE_CHUNK_SAMPLES {
-            match worker.input.pop() {
-                Ok(sample) => {
-                    native_chunk[popped] = sample;
-                    popped += 1;
-                }
-                Err(_empty) => break,
-            }
-        }
-        if popped == 0 {
-            worker.shared.samples_ready.wait_ns(WORKER_WAIT_NS);
-            continue;
-        }
-        converted.clear();
-        resampler.process(&native_chunk[..popped], &mut converted);
-        pending.extend(converted.iter().copied());
-        while pending.len() >= WORKER_BLOCK_SAMPLES {
-            for slot in &mut input_block {
-                *slot = pending.pop_front().unwrap_or(0.0);
-            }
-            worker.run_block(&input_block, &mut output_block);
-            let buffered = (output_capacity - worker.output.slots())
-                + pending.len()
-                + resampler.to_engine_samples(worker.input.slots());
-            resampler.set_drift_ppm(servo.update(buffered));
-            let pulses = output_pulses.load(Ordering::Relaxed);
-            if pulses == last_output_pulses {
-                output_idle_blocks = output_idle_blocks.saturating_add(1);
-                if output_idle_blocks >= OUTPUT_STALL_BLOCKS {
-                    worker.shared.faulted.store(true, Ordering::Release);
-                }
-            } else {
-                last_output_pulses = pulses;
-                output_idle_blocks = 0;
-            }
-        }
-    }
-    worker.exit(membership);
 }
 
 unsafe extern "C" fn capture_input_callback(
