@@ -169,13 +169,20 @@ a dropout, not a broken path. Failed cycles are therefore counted by
 the frames they cover, in a run that any successful cycle ends, and
 the fault is flagged only when one run reaches 100 ms of capture
 (4800 frames at 48 kHz, 1600 at a 16 kHz telephony microphone). The
-tolerance is measured in audio time, not in cycles, because one
-cycle is anything from 3 ms to 85 ms depending on the device buffer.
+tolerance is measured in audio time, not in cycles alone, because
+one cycle is anything from 3 ms to 85 ms at 48 kHz depending on the
+device buffer. A run of one cycle never faults, whatever it covers:
+on the split transport a microphone running at 8 kHz can deliver
+1024 frames (128 ms) or more in a single cycle, and one such failed
+cycle followed by a success is still an isolated dropout. The fault
+therefore needs both a second consecutive failed cycle and 100 ms
+of failed capture.
 100 ms matches the stall the aggregate worker absorbs before it
 sheds (see `capture-backlog-shedding`): shorter gaps are treated as
 dropouts on both sides of the capture ring. A render that keeps
-failing still faults within 100 ms, well inside the one-second
-health poll that reports it. The frames of every failed cycle,
+failing still faults within 100 ms or two cycles, whichever is
+longer (about one second at the largest buffer at 8 kHz), in step
+with the one-second health poll that reports it. The frames of every failed cycle,
 tolerated or not, are added to the input-overrun counter ("captured
 audio that never reached the models"), so a tolerated failure still
 leaves a trace in the log. Clearing the flag after a success instead

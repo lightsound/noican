@@ -112,6 +112,7 @@ const RENDER_FAILURE_TOLERANCE_MS: usize = 100;
 #[derive(Debug)]
 pub(crate) struct RenderFailures {
     run: usize,
+    cycles: usize,
     limit: usize,
 }
 
@@ -121,17 +122,20 @@ impl RenderFailures {
         let rate = usize::try_from(sample_rate).unwrap_or(usize::MAX);
         Self {
             run: 0,
+            cycles: 0,
             limit: (rate.saturating_mul(RENDER_FAILURE_TOLERANCE_MS) / 1000).max(1),
         }
     }
 
     pub(crate) fn failed(&mut self, frames: usize) -> bool {
         self.run = self.run.saturating_add(frames.max(1));
-        self.run >= self.limit
+        self.cycles = self.cycles.saturating_add(1);
+        self.cycles > 1 && self.run >= self.limit
     }
 
     pub(crate) const fn recovered(&mut self) {
         self.run = 0;
+        self.cycles = 0;
     }
 }
 
@@ -335,6 +339,20 @@ mod tests {
             assert!(!failures.failed(4_096), "one failure between successes");
             failures.recovered();
         }
+    }
+
+    #[test]
+    fn one_failed_cycle_longer_than_the_tolerance_is_tolerated() {
+        let mut narrowband = RenderFailures::new(8_000);
+        for _ in 0..1_000 {
+            assert!(
+                !narrowband.failed(MAX_CALLBACK_FRAMES),
+                "512 ms in one cycle"
+            );
+            narrowband.recovered();
+        }
+        assert!(!narrowband.failed(1_024), "128 ms in one cycle");
+        assert!(narrowband.failed(1_024), "the next cycle failed as well");
     }
 
     #[test]
