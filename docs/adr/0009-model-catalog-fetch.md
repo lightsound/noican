@@ -409,6 +409,7 @@ profile card.
 Decided 2026-11-28; recorded here because code comments are banned.
 
 Source: `crates/noican-engine/src/lib.rs`, `Engine::prepare_model`.
+Source: `crates/noican-engine/src/lib.rs`, `Preparation::run`.
 Source: `crates/noican-engine/src/lib.rs`, `Engine::model_status`.
 Source: `crates/noican-engine/src/lib.rs`, `ModelState`.
 Source: `crates/noican-ffi/src/lib.rs`, `noican_engine_model_status`.
@@ -425,9 +426,12 @@ A model is in one of four states. `Missing`: its files are not on
 disk. `Fetching`: a download for it is running, with the bytes
 received and the announced size of the current file. `Ready`: its
 files are on disk, or it needs none (bypass, the bundled model).
-`Corrupt`: the last preparation ended in a digest mismatch that a
-fresh download did not repair; it stays until a preparation
-succeeds.
+`Corrupt`: the last preparation found a digest mismatch and did not
+repair it, either because the fresh download mismatched too or
+because the replacement failed (offline, say) and left the bad file
+in place; it stays until a preparation succeeds. A mismatch counts
+as repaired once the replacement of that file has finished, so a
+later failure on another file does not mark the model.
 
 `Ready` means present, not verified. Verifying hashes every file,
 which is too slow for a status read; the digests are checked when
@@ -448,11 +452,14 @@ app wants to download a model before the user turns the engine on.
 for it yet. A null handle, a null id, and an unknown id all read as
 `Missing` with zero bytes.
 
-The progress slot is per engine, not per model: one download is
-expected at a time, because the app serialises control calls behind
-its busy flag. Two overlapping preparations would both write the
-same byte counters; the states would still be right, the percentage
-would not.
+Preparations on one engine take turns. Two models can share a file
+(`hush-48k` has none of its own and depends on the tarball of
+`hush`), and a download writes to one temporary path per
+destination, so two fetches at once could write the same partial
+file. The app serialises control calls behind its busy flag, but
+the engine's API is safe Rust and must not rely on that. Because
+only one fetch runs at a time, one progress slot per engine is
+enough. Reading a status does not wait for the turn.
 
 ## model-selection-behaviour
 

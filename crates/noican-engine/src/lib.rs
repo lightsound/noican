@@ -129,6 +129,7 @@ pub struct ModelStatus {
 
 #[derive(Default)]
 struct Preparation {
+    turn: Mutex<()>,
     log: Mutex<PreparationLog>,
     received: AtomicU64,
     total: AtomicU64,
@@ -137,12 +138,25 @@ struct Preparation {
 #[derive(Default)]
 struct PreparationLog {
     fetching: Option<String>,
+    repairing: bool,
     corrupt: BTreeSet<String>,
 }
 
 impl Preparation {
     fn log(&self) -> MutexGuard<'_, PreparationLog> {
         self.log.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn run(
+        &self,
+        model: &str,
+        fetch: impl FnOnce(&mut dyn FnMut(FetchEvent<'_>)) -> Result<(), FetchError>,
+    ) -> Result<(), FetchError> {
+        let turn = self.turn.lock().unwrap_or_else(PoisonError::into_inner);
+        let outcome = fetch(&mut |event| self.observe(model, event));
+        self.conclude(model, &outcome);
+        drop(turn);
+        outcome
     }
 
     fn observe(&self, model: &str, event: FetchEvent<'_>) {
@@ -156,7 +170,9 @@ impl Preparation {
                 self.received.store(bytes, Ordering::Relaxed);
                 self.total.store(total.unwrap_or(0), Ordering::Relaxed);
             }
-            FetchStep::Present | FetchStep::Repairing | FetchStep::Finished(_) => {}
+            FetchStep::Repairing => self.log().repairing = true,
+            FetchStep::Finished(_) => self.log().repairing = false,
+            FetchStep::Present => {}
         }
     }
 
@@ -165,11 +181,15 @@ impl Preparation {
         if log.fetching.as_deref() == Some(model) {
             log.fetching = None;
         }
+        let unrepaired = std::mem::take(&mut log.repairing);
         match outcome {
             Ok(()) => {
                 log.corrupt.remove(model);
             }
             Err(FetchError::Checksum { .. }) => {
+                log.corrupt.insert(model.to_owned());
+            }
+            Err(_) if unrepaired => {
                 log.corrupt.insert(model.to_owned());
             }
             Err(_) => {}
@@ -279,11 +299,11 @@ impl Engine {
         let Some(spec) = ModelSpec::find(model) else {
             return Ok(());
         };
-        let outcome = noican_models::fetch::fetch_model(&self.models_dir, spec, |event| {
-            self.preparation.observe(model, event);
-        });
-        self.preparation.conclude(model, &outcome);
-        outcome.map_err(|error| EngineError::Fetch(model.to_owned(), error))
+        self.preparation
+            .run(model, |report| {
+                noican_models::fetch::fetch_model(&self.models_dir, spec, report)
+            })
+            .map_err(|error| EngineError::Fetch(model.to_owned(), error))
     }
 
     /// See docs/adr/0004-aggregate-output-routing.md#aggregate-channel-routing.
@@ -686,6 +706,102 @@ mod tests {
 
         preparation.conclude("model", &Ok(()));
         assert_eq!(preparation.status("model", true).state, ModelState::Ready);
+    }
+
+    #[test]
+    fn a_failed_repair_leaves_the_model_corrupt_until_a_repair_finishes() {
+        let preparation = Preparation::default();
+        let event = |step| FetchEvent {
+            model: "model",
+            file: "weights.bin",
+            step,
+        };
+        let offline = || {
+            Err(FetchError::Io {
+                path: PathBuf::from("weights.bin.part"),
+                source: std::io::Error::other("offline"),
+            })
+        };
+
+        let outcome = preparation.run("model", |report| {
+            report(event(FetchStep::Repairing));
+            report(event(FetchStep::Started));
+            assert_eq!(
+                preparation.status("model", true).state,
+                ModelState::Fetching
+            );
+            offline()
+        });
+        assert!(outcome.is_err());
+        assert_eq!(preparation.status("model", true).state, ModelState::Corrupt);
+
+        let outcome = preparation.run("model", |report| {
+            report(event(FetchStep::Repairing));
+            report(event(FetchStep::Started));
+            report(event(FetchStep::Finished(8)));
+            report(event(FetchStep::Started));
+            offline()
+        });
+        assert!(outcome.is_err());
+        assert_eq!(preparation.status("model", true).state, ModelState::Corrupt);
+
+        let outcome = preparation.run("model", |report| {
+            report(event(FetchStep::Repairing));
+            report(event(FetchStep::Started));
+            report(event(FetchStep::Finished(8)));
+            Ok(())
+        });
+        assert!(outcome.is_ok());
+        assert_eq!(preparation.status("model", true).state, ModelState::Ready);
+
+        let outcome = preparation.run("model", |report| {
+            report(event(FetchStep::Repairing));
+            report(event(FetchStep::Started));
+            report(event(FetchStep::Finished(8)));
+            report(event(FetchStep::Started));
+            offline()
+        });
+        assert!(outcome.is_err());
+        assert_eq!(preparation.status("model", true).state, ModelState::Ready);
+    }
+
+    #[test]
+    fn overlapping_preparations_take_turns_and_stay_readable() {
+        let preparation = Preparation::default();
+        let active = AtomicU64::new(0);
+        let overlaps = AtomicU64::new(0);
+        std::thread::scope(|scope| {
+            for model in ["hush", "hush-48k", "dfn3-ll", "dpdfnet2"] {
+                let (preparation, active, overlaps) = (&preparation, &active, &overlaps);
+                scope.spawn(move || {
+                    let outcome = preparation.run(model, |report| {
+                        if active.fetch_add(1, Ordering::SeqCst) > 0 {
+                            overlaps.fetch_add(1, Ordering::SeqCst);
+                        }
+                        report(FetchEvent {
+                            model,
+                            file: "weights.bin",
+                            step: FetchStep::Started,
+                        });
+                        for bytes in 1..=50 {
+                            report(FetchEvent {
+                                model,
+                                file: "weights.bin",
+                                step: FetchStep::Received(bytes, Some(50)),
+                            });
+                            std::thread::yield_now();
+                            let status = preparation.status(model, false);
+                            assert_eq!(status.state, ModelState::Fetching);
+                            assert_eq!(status.received_bytes, bytes);
+                        }
+                        active.fetch_sub(1, Ordering::SeqCst);
+                        Ok(())
+                    });
+                    assert!(outcome.is_ok());
+                });
+            }
+        });
+        assert_eq!(overlaps.load(Ordering::SeqCst), 0);
     }
 
     #[test]
