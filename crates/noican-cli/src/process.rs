@@ -150,10 +150,10 @@ mod tests {
     fn two_names_for_one_directory_are_refused() {
         let out_dir = scratch_dir(line!());
         std::fs::create_dir_all(out_dir.join("take")).expect("temp dir");
-        std::os::unix::fs::symlink(out_dir.join("take"), out_dir.join("Take")).expect("alias");
-        let inputs = [PathBuf::from("take.wav"), PathBuf::from("Take.wav")];
+        std::os::unix::fs::symlink(out_dir.join("take"), out_dir.join("alias")).expect("alias");
+        let inputs = [PathBuf::from("take.wav"), PathBuf::from("alias.wav")];
         let error = ensure_distinct_outputs(&inputs, &out_dir).expect_err("one directory");
-        assert!(error.to_string().contains("Take.wav"), "{error}");
+        assert!(error.to_string().contains("alias.wav"), "{error}");
         std::fs::remove_dir_all(&out_dir).expect("cleanup");
     }
 }
