@@ -313,19 +313,11 @@ mod tests {
             std::path::PathBuf::from,
         );
         let spec = crate::manifest::ModelSpec::find("hush").expect("hush is in the registry");
-        if !crate::fetch::is_fetched(&models_dir, spec) {
-            #[expect(
-                clippy::print_stderr,
-                reason = "test skip notices must be visible in the test log"
-            )]
-            {
-                eprintln!(
-                    "[skip] hush: weights not fetched under {}",
-                    models_dir.display()
-                );
-            }
-            return;
-        }
+        assert!(
+            crate::fetch::is_fetched(&models_dir, spec),
+            "hush: weights not fetched under {} (run: noican fetch hush)",
+            models_dir.display()
+        );
         let tarball = crate::fetch::model_dir(&models_dir, spec).join(spec.files[0].name);
         let mut gained = DfTractStage::hush("hush", &tarball).expect("stage should load");
         let params = DfParams::new(tarball).expect("tarball should load");

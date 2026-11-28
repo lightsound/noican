@@ -84,21 +84,24 @@ final class LicenseModel: ObservableObject {
         return "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)"
     }
 
-    private static func thisMac() -> DeviceDescriptor {
-        DeviceDescriptor(
-            id: hardwareID(),
+    private static func thisMac() -> DeviceDescriptor? {
+        guard let id = hardwareID() else {
+            return nil
+        }
+        return DeviceDescriptor(
+            id: id,
             label: SCDynamicStoreCopyComputerName(nil, nil) as String? ?? "Mac",
             metadata: ["app_version": appVersion, "macos_version": macOSVersion]
         )
     }
 
-    private static func hardwareID() -> String {
+    private static func hardwareID() -> String? {
         let platform = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPlatformExpertDevice"))
         defer { IOObjectRelease(platform) }
         guard let uuid = IORegistryEntryCreateCFProperty(platform, "IOPlatformUUID" as CFString, kCFAllocatorDefault, 0)?
             .takeRetainedValue() as? String
         else {
-            return UUID().uuidString
+            return nil
         }
         let digest = SHA256.hash(data: Data("com.lightsound.noican.license:\(uuid)".utf8))
         return digest.map { String(format: "%02x", $0) }.joined()

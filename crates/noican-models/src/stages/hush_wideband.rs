@@ -470,7 +470,7 @@ mod tests {
         assert_eq!(rec.high_delay.capacity(), high_cap);
     }
 
-    fn hush_tarball() -> Option<std::path::PathBuf> {
+    fn hush_tarball() -> std::path::PathBuf {
         let models_dir = std::env::var_os("NOICAN_MODELS_DIR").map_or_else(
             || {
                 std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -480,20 +480,12 @@ mod tests {
             std::path::PathBuf::from,
         );
         let spec = crate::manifest::ModelSpec::find("hush").expect("hush is in the registry");
-        if !crate::fetch::is_fetched(&models_dir, spec) {
-            #[expect(
-                clippy::print_stderr,
-                reason = "test skip notices must be visible in the test log"
-            )]
-            {
-                eprintln!(
-                    "[skip] hush: weights not fetched under {}",
-                    models_dir.display()
-                );
-            }
-            return None;
-        }
-        Some(crate::fetch::model_dir(&models_dir, spec).join(spec.files[0].name))
+        assert!(
+            crate::fetch::is_fetched(&models_dir, spec),
+            "hush: weights not fetched under {} (run: noican fetch hush)",
+            models_dir.display()
+        );
+        crate::fetch::model_dir(&models_dir, spec).join(spec.files[0].name)
     }
 
     #[test]
@@ -501,9 +493,7 @@ mod tests {
     fn gate_closes_when_the_core_hears_nothing() {
         use noican_core::{FramedStage, Stage as _};
 
-        let Some(tarball) = hush_tarball() else {
-            return;
-        };
+        let tarball = hush_tarball();
         let mut stage = HushWidebandStage::new("hush-48k", &tarball).expect("stage should load");
         let tone: Vec<f32> = (0..60 * FRAME)
             .map(|n| {
@@ -553,9 +543,7 @@ mod tests {
     #[test]
     #[ignore = "requires downloaded model weights (run: noican fetch hush-48k)"]
     fn band_gain_is_bounded_and_zero_on_silence() {
-        let Some(tarball) = hush_tarball() else {
-            return;
-        };
+        let tarball = hush_tarball();
         let mut core = DfTractStage::hush_unity_gain("hush", &tarball).expect("stage should load");
         let mut out = vec![0.0_f32; HOP];
         let mut opened = false;
@@ -591,9 +579,7 @@ mod tests {
     fn hot_input_is_trimmed_for_the_core_and_restored_at_the_output() {
         use noican_core::{FramedStage, Stage as _};
 
-        let Some(tarball) = hush_tarball() else {
-            return;
-        };
+        let tarball = hush_tarball();
         let rms_dbfs = |s: &[f32]| {
             #[expect(
                 clippy::cast_precision_loss,
@@ -662,9 +648,7 @@ mod tests {
     fn wideband_matches_hush_on_band_limited_input() {
         use noican_core::{FramedStage, Stage as _};
 
-        let Some(tarball) = hush_tarball() else {
-            return;
-        };
+        let tarball = hush_tarball();
         let mut wide = FramedStage::new(
             HushWidebandStage::new("hush-48k", &tarball).expect("stage should load"),
             crate::factory::MAX_BLOCK_LEN,

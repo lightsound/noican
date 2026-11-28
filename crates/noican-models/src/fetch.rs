@@ -163,6 +163,7 @@ fn fetch_model_dyn(
         path: dir.clone(),
         source,
     })?;
+    let _turn = lock_model_dir(&dir)?;
     for file in model.files {
         let mut report = |step| {
             progress(FetchEvent {
@@ -209,6 +210,24 @@ fn fetch_model_dyn(
         report(FetchStep::Finished(len));
     }
     Ok(())
+}
+
+const LOCK_FILE: &str = ".fetch.lock";
+
+fn lock_model_dir(dir: &Path) -> Result<std::fs::File, FetchError> {
+    let path = dir.join(LOCK_FILE);
+    let wrap = |source| FetchError::Io {
+        path: path.clone(),
+        source,
+    };
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(wrap)?;
+    file.lock().map_err(wrap)?;
+    Ok(file)
 }
 
 fn hf_token() -> Option<String> {
@@ -411,6 +430,41 @@ mod tests {
         assert_eq!(steps, [FetchStep::Repairing, FetchStep::Started]);
         assert_eq!(std::fs::read(&dest).expect("read"), b"wrong bytes");
         assert!(!dest.with_extension("part").exists());
+        std::fs::remove_dir_all(&models_dir).expect("cleanup");
+    }
+
+    #[test]
+    fn a_second_fetch_waits_for_the_first_and_then_finds_its_files() {
+        let models_dir = std::env::temp_dir().join(format!(
+            "noican-fetch-test-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let dir = model_dir(&models_dir, &VERIFY_SPEC);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let first = lock_model_dir(&dir).expect("lock");
+
+        let (done, finished) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn({
+            let models_dir = models_dir.clone();
+            move || {
+                let mut steps = Vec::new();
+                let outcome =
+                    fetch_model(&models_dir, &VERIFY_SPEC, |event| steps.push(event.step));
+                done.send(()).expect("receiver alive");
+                (outcome, steps)
+            }
+        });
+        assert!(
+            finished.recv_timeout(Duration::from_millis(300)).is_err(),
+            "the second fetch must wait while the first holds the directory"
+        );
+
+        std::fs::write(dir.join("weights.bin"), b"correct weights").expect("write");
+        drop(first);
+        let (outcome, steps) = waiter.join().expect("waiter thread");
+        outcome.expect("the file the first fetch left needs no download");
+        assert_eq!(steps, [FetchStep::Present]);
         std::fs::remove_dir_all(&models_dir).expect("cleanup");
     }
 

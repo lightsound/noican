@@ -346,6 +346,24 @@ Source: `crates/noican-cli/src/main.rs`, `Command::Eval`.
 Segment length in seconds; each mixture is three segments
 (you / you + other / other). Clamped to the material.
 
+## input-stem-collision
+
+Source: `crates/noican-cli/src/process.rs`, `ensure_distinct_outputs`.
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+`noican process` names each output directory after the input's file
+stem (see `batch-output-layout`), so `a/take.wav` and `b/take.wav`,
+or `take.wav` and `take.flac`, wrote into one directory and the
+later input replaced the earlier one's results without a word. The
+command now refuses such a list before it processes anything, naming
+both inputs. Stems are compared without regard to case, because the
+default macOS volume would merge `Take` and `take` as well. Renaming
+the colliding directories automatically was rejected: the layout is
+documented, and a name that depends on what else was on the command
+line cannot be predicted by the scripts that read the output. This
+mirrors `sir-dirname-collision`.
+
 ## integration-test-tolerances
 
 Source: `crates/noican-models/tests/model_integration.rs`, `run_model`.

@@ -160,6 +160,20 @@ struct LicenseActivationTests {
         #expect(isActive(license))
     }
 
+    @Test("A Mac that cannot be identified activates nothing and spends no slot")
+    func unidentifiedMacActivatesNothing() async {
+        let backend = MockBackend()
+        let store = InMemoryLicenseStore(storedLicense())
+        let license = LicenseController(backend: backend, store: store, device: nil)
+        #expect(license.state.status == .unlicensed)
+        await license.refreshIfDue()
+        await license.activate(key: "KEY-2")
+        #expect(backend.calls.isEmpty)
+        #expect(license.state.status == .unlicensed)
+        #expect(license.state.notice == LicenseController.unidentifiedDeviceNotice)
+        #expect(store.license == storedLicense(), "the stored record is neither used nor replaced")
+    }
+
     @Test("Without a backend configuration the controller is inert and allows processing")
     func unconfigured() async {
         let license = controller(backend: nil)

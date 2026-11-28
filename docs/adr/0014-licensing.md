@@ -41,28 +41,36 @@ notes); of the registered models, only `dfn3` is.
 
 Source: `macos/Sources/NoicanMenuBar/LicenseModel.swift`, `LicenseModel.hardwareID`.
 
+Source: `macos/NoicanLicensing/Sources/NoicanLicensing/LicenseController.swift`, `LicenseController.isOwn`.
+
 A salted hash of the hardware UUID: identifies this Mac to the
 local record without sending the UUID anywhere.
 
-When the UUID cannot be read, the ID is a random value minted
-for this launch — never a constant. A constant fallback would be
-shared by every Mac in that state, so a license record carried
-to another such Mac (Migration Assistant moves the Keychain)
-would be mistaken for that Mac's own, including by
-`LicenseController.deactivate`, which would then release the
-first Mac's activation on the server. A per-launch ID makes any
-stored record read as another Mac's — forgotten locally, never
-released. The price on a Mac whose UUID stays unreadable is
-real: `refreshIfDue` re-activates the stored key automatically
-at every launch, spending a fresh activation slot each time
-(orphaned slots are releasable only in the customer portal)
-until the key's activation limit refuses further launches, and
-no launch can release a previous launch's slot. That state
-means IOKit is not reporting a platform UUID at all — broken
-IOKit or a VM, not a healthy Mac — and failing closed there is
-the point. Persisting the random ID would defeat this:
-Migration Assistant would carry it along with the record it is
-meant to disown.
+Revised 2026-11-28. When the UUID cannot be read, this Mac has no
+device identity at all, and the controller is built without one:
+no stored record counts as this Mac's, nothing is activated, and
+the license section says that the Mac could not be identified. The
+ID is never a constant: a constant would be shared by every Mac in
+that state, so a license record carried to another such Mac
+(Migration Assistant moves the Keychain) would be mistaken for
+that Mac's own, including by `LicenseController.deactivate`, which
+would then release the first Mac's activation on the server.
+
+Until this revision the fallback was a random ID minted for each
+launch. It disowned the stored record just as well, but
+`refreshIfDue` then re-activated the stored key at every launch,
+spending a fresh activation slot each time (orphaned slots are
+releasable only in the customer portal) until the key's limit
+refused further launches. Having no identity keeps everything the
+random ID protected (a record is never granted from, and never
+released by, a Mac that cannot prove it is the same one) and
+spends nothing. It also leaves the stored record untouched, so a
+Mac whose UUID is readable again at the next launch finds its
+activation as it left it. Persisting a random ID would defeat the
+purpose: Migration Assistant would carry it along with the record
+it is meant to disown. The state means IOKit is not reporting a
+platform UUID at all (broken IOKit, not a healthy Mac), and
+failing closed there is the point.
 
 ## device-identity-migration-detection
 

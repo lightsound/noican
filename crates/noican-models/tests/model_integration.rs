@@ -1,10 +1,5 @@
 //! See docs/adr/0009-model-catalog-fetch.md#model-integration-tests-opt-in.
 
-#![expect(
-    clippy::print_stderr,
-    reason = "test skip notices must be visible in the test log"
-)]
-
 use std::path::PathBuf;
 
 use noican_core::ENGINE_SAMPLE_RATE;
@@ -49,14 +44,19 @@ fn test_signal() -> Vec<f32> {
         .collect()
 }
 
-fn run_model(id: &str) {
+fn fetched_models_dir(id: &str) -> PathBuf {
     let dir = models_dir();
-    if let Some(spec) = ModelSpec::find(id)
-        && !noican_models::fetch::is_fetched(&dir, spec)
-    {
-        eprintln!("[skip] {id}: weights not fetched under {}", dir.display());
-        return;
-    }
+    let spec = ModelSpec::find(id).expect("registered");
+    assert!(
+        noican_models::fetch::is_fetched(&dir, spec),
+        "{id}: weights not fetched under {} (run: noican fetch {id})",
+        dir.display()
+    );
+    dir
+}
+
+fn run_model(id: &str) {
+    let dir = fetched_models_dir(id);
     let mut stage = create_stage(id, &dir).expect("stage should load");
     let input = test_signal();
     let mut output = vec![0.0_f32; input.len()];
@@ -104,15 +104,7 @@ fn dfn3_runs() {
 #[test]
 #[ignore = "requires downloaded model weights (run: noican fetch dfn3-ll)"]
 fn dfn3_ll_latency_is_twenty_ms() {
-    let dir = models_dir();
-    let spec = ModelSpec::find("dfn3-ll").expect("registered");
-    if !noican_models::fetch::is_fetched(&dir, spec) {
-        eprintln!(
-            "[skip] dfn3-ll: weights not fetched under {}",
-            dir.display()
-        );
-        return;
-    }
+    let dir = fetched_models_dir("dfn3-ll");
     let stage = create_stage("dfn3-ll", &dir).expect("stage should load");
     assert_eq!(stage.latency_samples(), 960);
 }

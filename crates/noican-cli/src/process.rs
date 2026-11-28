@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::Context as _;
@@ -35,6 +36,24 @@ pub(crate) fn run_stage_aligned_timed(
     Ok((output, block_times_ns))
 }
 
+pub(crate) fn ensure_distinct_outputs(inputs: &[PathBuf]) -> anyhow::Result<()> {
+    let mut seen: HashMap<String, &Path> = HashMap::new();
+    for input in inputs {
+        let stem = input
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .context("input file has no valid stem")?;
+        if let Some(earlier) = seen.insert(stem.to_lowercase(), input) {
+            anyhow::bail!(
+                "{} and {} would both write to <out-dir>/{stem}; rename one or process them with different --out-dir values",
+                earlier.display(),
+                input.display()
+            );
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn process_file(
     input_path: &Path,
     out_dir: &Path,
@@ -68,4 +87,32 @@ pub(crate) fn process_file(
         progress(&format!("{stem}: {id} -> {}", out_path.display()));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inputs_with_distinct_stems_are_accepted() {
+        let inputs = [PathBuf::from("a/one.wav"), PathBuf::from("a/two.wav")];
+        assert!(ensure_distinct_outputs(&inputs).is_ok());
+    }
+
+    #[test]
+    fn inputs_that_share_a_stem_are_refused_before_any_work() {
+        for pair in [
+            ["a/take.wav", "b/take.wav"],
+            ["take.wav", "take.flac"],
+            ["Take.wav", "take.wav"],
+        ] {
+            let inputs = pair.map(PathBuf::from);
+            let error = ensure_distinct_outputs(&inputs).expect_err("shared stem");
+            let message = error.to_string();
+            assert!(
+                message.contains(pair[0]) && message.contains(pair[1]),
+                "{message}"
+            );
+        }
+    }
 }

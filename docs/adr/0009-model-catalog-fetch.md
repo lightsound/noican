@@ -59,6 +59,30 @@ short; the body deadline is generous — the largest weights are tens
 of MB, so 15 minutes covers very slow links — and resets per call,
 so a redirect chain gets its own allowance per leg.
 
+## fetch-directory-lock
+
+Source: `crates/noican-models/src/fetch.rs`, `lock_model_dir`.
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+A fetch holds an exclusive advisory lock on `.fetch.lock` inside the
+model's directory while it checks and downloads that model's files.
+Inside the app, preparations already take turns, but the CLI and the
+app (or two CLI runs) share one models directory and one temp-file
+name per file, so two processes fetching the same model wrote into
+the same `.part` and failed with a checksum or filesystem error. The
+second process now waits, then finds the files present and verified
+and downloads nothing. The lock is a file of its own, never the
+`.part`: the temp file is renamed onto the destination, so a lock on
+it would follow the rename and a waiter would truncate the finished
+file. A temp name unique to each process was rejected: it downloads
+the same weights twice and leaves a stray partial file behind on
+every crash, with no name another run would overwrite. The lock is
+taken per model, after its dependencies were fetched and released,
+so two fetches can never hold locks in opposite orders. The file is
+empty and stays in the directory; `is_fetched` only looks at the
+pinned file names.
+
 ## fetch-offline-test-fixture
 
 Source: `crates/noican-models/src/fetch.rs`, `tests::VERIFY_SPEC`.
@@ -331,6 +355,20 @@ cargo test -p noican-models --test model_integration -- --ignored
 
 The models directory defaults to `models/` at the workspace root and can
 be overridden with `NOICAN_MODELS_DIR`.
+
+## missing-weights-fail-opt-in-tests
+
+Source: `crates/noican-models/tests/model_integration.rs`, `fetched_models_dir`.
+
+Decided 2026-11-28; recorded here because code comments are banned.
+
+A test that needs model weights fails when they are not on disk,
+with the directory it looked in and the fetch command. These tests
+are `#[ignore]`d, so they only run when someone asks for them with
+`--ignored`; returning early there reported "ok" for a model that
+never ran, and a missing download looked like a passing model. The
+same holds for the weight-dependent unit tests of `dfn_tract` and
+`hush_wideband`.
 
 ## model-pick-revert-path
 
