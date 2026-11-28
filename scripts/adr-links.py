@@ -22,10 +22,12 @@ script can resolve:
   (the ADRs themselves included), `.agents/`, or `scripts/` must name an
   existing file, and an existing section when it carries a `#<section>`.
 - A reference is read to the end of its token, so a misspelt file name or
-  section is reported as malformed or missing rather than skipped. A
-  trailing `.` or `:` is sentence punctuation only when whitespace or the
-  end of the line follows; inside a Markdown link destination or a quoted
-  span it is part of the reference, and wrong.
+  section is reported as malformed or missing rather than skipped. What
+  opens the reference decides where the token ends: a Markdown link
+  destination (`](...)`, `<...>`), a code span and a quoted string are read
+  literally up to their closing mark, so punctuation inside one is part of
+  the reference, and wrong. Only a reference in running prose may be
+  followed by closing punctuation.
 - A Rust type is defined where its `struct`, `enum`, `union` or `trait`
   is. An `impl` block makes its methods addressable (`Type::method`) but
   does not define `Type`.
@@ -52,7 +54,10 @@ PROSE_PATHS = ("AGENTS.md", "docs", ".agents", "scripts")
 PROSE_EXTS = (".md", ".py", ".sh")
 SKIP_DIRS = {".git", "target", ".build"}
 
-ADR_CANDIDATE = re.compile(r"docs/adr/([^\s`)>\"',;]*)")
+ADR_PREFIX = "docs/adr/"
+ADR_CLOSERS = {"(": ")", "<": ">", "`": "`", '"': '"', "'": "'"}
+ADR_PATH_BREAKS = frozenset(" \t<>()`\"'")
+ADR_TRAILING = ".,:;)]>`\"'"
 ADR_TARGET = re.compile(r"(\d{4}-[a-z0-9-]+\.md)(?:#([a-z0-9-]+))?")
 ADR_PLACEHOLDER = "NNNN-"
 SELF = "scripts/adr-links.py"
@@ -224,13 +229,36 @@ def load_sections(errors):
     return sections
 
 
+def references(line):
+    """Yield what follows `docs/adr/` in every reference on the line.
+
+    What opens a reference decides where it ends: a Markdown link destination
+    runs to its `)`, an angle-bracket destination to its `>`, a code span or
+    a quoted string to the matching mark, and all of it is the reference.
+    Anything else is prose, which ends at whitespace and may carry closing
+    punctuation after the reference.
+    """
+    start = line.find(ADR_PREFIX)
+    while start != -1:
+        opened = start
+        while opened > 0 and line[opened - 1] not in ADR_PATH_BREAKS:
+            opened -= 1
+        mark = line[opened - 1] if opened > 0 else ""
+        if mark == "(" and not line.endswith("](", 0, opened):
+            mark = ""
+        closer = ADR_CLOSERS.get(mark)
+        begin = end = start + len(ADR_PREFIX)
+        while end < len(line) and not line[end].isspace() and line[end] != closer:
+            end += 1
+        token = line[begin:end]
+        yield token if closer else token.rstrip(ADR_TRAILING)
+        start = line.find(ADR_PREFIX, end)
+
+
 def check_mentions(line, where, sections, errors, require_section):
     """Validate every `docs/adr/...` reference on the line; return how many it holds."""
     found = 0
-    for candidate in ADR_CANDIDATE.finditer(line):
-        token = candidate.group(1)
-        if candidate.end() == len(line) or line[candidate.end()].isspace():
-            token = token.rstrip(".:")
+    for token in references(line):
         if not token or token.startswith(ADR_PLACEHOLDER):
             continue
         found += 1
