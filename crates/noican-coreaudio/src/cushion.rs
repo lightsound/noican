@@ -31,7 +31,11 @@ pub(crate) fn requested(value: Option<&str>) -> Result<usize, String> {
         })
 }
 
-pub(crate) fn phase_floor(capture_rate: u32, capture_frames: usize, render_frames: usize) -> usize {
+pub(crate) fn phase_estimate(
+    capture_rate: u32,
+    capture_frames: usize,
+    render_frames: usize,
+) -> usize {
     let capture_rate = usize::try_from(capture_rate).unwrap_or(usize::MAX).max(1);
     let burst = capture_frames
         .saturating_mul(ENGINE_RATE)
@@ -53,12 +57,12 @@ pub(crate) fn describe(
             |frames| format!("{frames} frames"),
         )
     };
-    let floor = capture_frames.zip(render_frames).map_or_else(
+    let estimate = capture_frames.zip(render_frames).map_or_else(
         || "unknown".to_owned(),
-        |(capture, render)| format!("{} samples", phase_floor(capture_rate, capture, render)),
+        |(capture, render)| format!("{} samples", phase_estimate(capture_rate, capture, render)),
     );
     format!(
-        "cushion {cushion} samples, capture buffer {}, render buffer {}, floor {floor}",
+        "cushion {cushion} samples, capture buffer {}, render buffer {}, phase estimate {estimate}",
         frames(capture_frames),
         frames(render_frames)
     )
@@ -91,11 +95,11 @@ mod tests {
     }
 
     #[test]
-    fn the_floor_adds_one_burst_one_render_and_one_block() {
-        assert_eq!(phase_floor(48_000, 512, 512), 1_504);
-        assert_eq!(phase_floor(48_000, 128, 128), 736);
-        assert_eq!(phase_floor(44_100, 512, 512), 1_550);
-        assert_eq!(phase_floor(16_000, 512, 512), 2_528);
+    fn the_estimate_adds_one_burst_one_render_and_one_block() {
+        assert_eq!(phase_estimate(48_000, 512, 512), 1_504);
+        assert_eq!(phase_estimate(48_000, 128, 128), 736);
+        assert_eq!(phase_estimate(44_100, 512, 512), 1_550);
+        assert_eq!(phase_estimate(16_000, 512, 512), 2_528);
     }
 
     #[test]
@@ -103,12 +107,12 @@ mod tests {
         assert_eq!(
             describe(2_400, 16_000, Some(512), Some(512)),
             "cushion 2400 samples, capture buffer 512 frames, render buffer 512 frames, \
-             floor 2528 samples"
+             phase estimate 2528 samples"
         );
         assert_eq!(
             describe(1_680, 48_000, None, Some(256)),
             "cushion 1680 samples, capture buffer unreadable, render buffer 256 frames, \
-             floor unknown"
+             phase estimate unknown"
         );
     }
 }

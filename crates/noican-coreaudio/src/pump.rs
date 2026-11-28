@@ -584,19 +584,26 @@ mod tests {
     }
 
     #[test]
-    fn a_cushion_under_the_phase_floor_leaves_gaps() {
+    fn a_cushion_half_a_block_under_the_phase_estimate_leaves_gaps() {
         for (rate, frames) in [(48_000, 512), (48_000, 128), (16_000, 512)] {
             let cushion =
-                crate::cushion::phase_floor(rate, frames, frames) - WORKER_BLOCK_SAMPLES / 2;
+                crate::cushion::phase_estimate(rate, frames, frames) - WORKER_BLOCK_SAMPLES / 2;
             let gaps = gaps_over_forty_seconds(rate, frames, cushion);
             assert!(gaps > 0, "{rate} Hz, {frames} frames, cushion {cushion}");
         }
     }
 
     #[test]
-    fn a_48_khz_capture_at_512_frames_is_gap_free_from_35_ms_of_cushion() {
+    fn a_48_khz_capture_at_512_frames_gaps_at_30_ms_of_cushion_and_not_at_35() {
+        assert!(gaps_over_forty_seconds(48_000, CALLBACK_FRAMES, 1_440) > 0);
         assert_eq!(gaps_over_forty_seconds(48_000, CALLBACK_FRAMES, 1_680), 0);
-        assert!(crate::cushion::phase_floor(48_000, CALLBACK_FRAMES, CALLBACK_FRAMES) > 1_440);
+    }
+
+    #[test]
+    fn a_44_1_khz_capture_at_512_frames_is_gap_free_under_the_phase_estimate() {
+        let estimate = crate::cushion::phase_estimate(44_100, CALLBACK_FRAMES, CALLBACK_FRAMES);
+        assert!(estimate > 1_440, "{estimate}");
+        assert_eq!(gaps_over_forty_seconds(44_100, CALLBACK_FRAMES, 1_440), 0);
     }
 
     #[test]

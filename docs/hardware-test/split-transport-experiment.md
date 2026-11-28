@@ -39,8 +39,10 @@ every output callback the ring could not fill completely.
 2. **Routing line.** Quit, relaunch with the variable at 50, start the
    same microphone. The log must say `Split output routing` and end
    with `cushion 2400 samples, capture buffer N frames, render buffer
-   M frames, floor F samples`. Record N, M and F. A cushion below F
-   cannot be gap-free.
+   M frames, phase estimate E samples`. Record N, M and E. E is a
+   rough estimate of the cushion needed before scheduling jitter, not
+   a cutoff: the simulator is gap-free somewhat below it in some
+   configurations, so let the sweep decide.
 3. **Sweep.** For each cushion of 50, 40, 35, 30, 25 and 20 ms, in
    that order: relaunch, run ten minutes of speech with the default
    model, and record the underrun count and the delay measured as in
@@ -48,14 +50,21 @@ every output callback the ring could not fill completely.
 4. **Endurance.** With the smallest cushion that stayed at zero, run
    the two-hour procedure of
    [clock-drift-and-endurance.md](clock-drift-and-endurance.md).
-5. **Capture dropout.** With that cushion, unplug and replug the
-   microphone (or, on Bluetooth, force a profile change) mid-run.
-   Underruns may grow during the dropout and must stop growing within
-   a few seconds of the capture returning; no engine fault.
+5. **Disconnect.** With that cushion, unplug the microphone mid-run
+   and plug it back in. Unplugging ends the session (the app stops
+   with "Microphone disconnected"), and a Bluetooth profile change
+   that alters the rate starts a new one, so this step checks the stop
+   and the restart, not recovery inside a session: the app stops
+   without an engine fault, starts again on request, logs a new
+   routing line, and counts underruns from zero. Recovery inside one
+   session after a capture stall is covered by the simulator only. If
+   a stall that keeps the device and its rate happens during any run
+   (a Bluetooth glitch), note whether the underrun count stops growing
+   within a few seconds.
 6. **Shipped cushion on Bluetooth.** Without the variable, start a
    Bluetooth microphone in its telephony profile and read the routing
-   line. If the cushion is below the floor, expect a periodic
-   underrun; repeat with the variable at 60 and compare.
+   line. If the cushion is near or below the estimate, a periodic
+   underrun is likely; repeat with the variable at 60 and compare.
 
 Record, per run: microphone, the routing line, cushion, duration,
 underruns, worker blocks over budget, and measured delay. What the
