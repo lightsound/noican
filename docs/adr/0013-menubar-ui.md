@@ -308,9 +308,11 @@ Source: `macos/Sources/NoicanMenuBar/NoicanMenuBarApp.swift`, `NoicanMenuBarApp.
 The entry point is a plain `NSApplication` run loop, not a SwiftUI
 `App`. A SwiftUI `App` must declare a Scene, and the placeholder that
 used to satisfy it, an empty `Settings` scene, is a real window: the
-framework's Settings… command (⌘,) opened it whenever the menu was
-open, and window restoration brought it back at launch as a blank
-"Noican Settings" window. With no Scene there is no window to open.
+framework's Settings… command (⌘,) opens it whenever the menu is
+open. A blank "Noican Settings" window was also reported at launch;
+window restoration of a previously opened one is the likely path, but
+it was not reproduced. With no Scene there is no window to open, by
+any path.
 
 Source: `macos/Sources/NoicanMenuBar/NoicanMenuBarApp.swift`, `NoicanMenuBarApp.mainMenu`.
 
