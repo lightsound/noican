@@ -74,7 +74,7 @@ final class EngineDiagnostics {
                 """
                 Input overruns: \(overruns, privacy: .public) samples dropped \
                 (model: \(activeModelID, privacy: .public)) — \
-                the capture ring filled faster than the worker drained it
+                the worker fell behind the capture ring, or a capture cycle failed
                 """
             )
         }

@@ -28,11 +28,14 @@ public final class LicenseController {
         }
     }
 
+    static let unidentifiedDeviceNotice = "This Mac could not be identified, so a license cannot be "
+        + "activated on it. Restart the Mac and try again."
+
     public var onChange: ((LicenseState) -> Void)?
 
     private let backend: (any LicenseBackend)?
     private let store: any LicenseStore
-    private let device: DeviceDescriptor
+    private let device: DeviceDescriptor?
     private let policy: LicensePolicy
     private let now: () -> Date
     private var record: StoredLicense?
@@ -43,7 +46,7 @@ public final class LicenseController {
     public init(
         backend: (any LicenseBackend)?,
         store: any LicenseStore,
-        device: DeviceDescriptor,
+        device: DeviceDescriptor?,
         policy: LicensePolicy = .standard,
         now: @escaping () -> Date = Date.init
     ) {
@@ -55,6 +58,9 @@ public final class LicenseController {
         state = LicenseState(status: .unlicensed)
         needsReload = true
         reloadIfNeeded()
+        if backend != nil, device == nil {
+            state.notice = Self.unidentifiedDeviceNotice
+        }
     }
 
     private func reloadIfNeeded() {
@@ -118,11 +124,11 @@ public final class LicenseController {
             return
         }
         reloadIfNeeded()
-        if let record, isOwn(record, backend) {
+        if let device, let record, isOwn(record, backend) {
             begin(.activating)
             do throws(LicenseBackendError) {
                 let grant = try await backend.validate(key: key, activationID: record.activationID)
-                finish(saving: newRecord(key: key, grant: grant, backend: backend))
+                finish(saving: newRecord(key: key, grant: grant, backend: backend, device: device))
                 return
             } catch {
                 if case let .unavailable(reason) = error {
@@ -161,10 +167,14 @@ public final class LicenseController {
     }
 
     private func activate(key: String, backend: any LicenseBackend) async {
+        guard let device else {
+            finish(notice: Self.unidentifiedDeviceNotice)
+            return
+        }
         begin(.activating)
         do throws(LicenseBackendError) {
             let grant = try await backend.activate(key: key, device: device)
-            finish(saving: newRecord(key: key, grant: grant, backend: backend))
+            finish(saving: newRecord(key: key, grant: grant, backend: backend, device: device))
         } catch {
             switch error {
             case let .unavailable(reason):
@@ -231,12 +241,20 @@ public final class LicenseController {
         state = LicenseState(status: evaluate(), notice: notice)
     }
 
-    private func newRecord(key: String, grant: LicenseGrant, backend: any LicenseBackend) -> StoredLicense {
+    private func newRecord(
+        key: String,
+        grant: LicenseGrant,
+        backend: any LicenseBackend,
+        device: DeviceDescriptor
+    ) -> StoredLicense {
         StoredLicense(backendID: backend.identifier, deviceID: device.id, key: key, grant: grant, lastValidatedAt: now())
     }
 
     private func isOwn(_ license: StoredLicense, _ backend: any LicenseBackend) -> Bool {
-        license.belongs(toBackend: backend.identifier, device: device.id)
+        guard let device else {
+            return false
+        }
+        return license.belongs(toBackend: backend.identifier, device: device.id)
     }
 
     private func evaluate() -> LicenseStatus {

@@ -54,8 +54,12 @@ pub(super) fn start(
 
     let mut capture_unit = AuhalUnit::create()?;
     configure_capture_auhal(capture_unit.raw(), input_device, capture_rate)?;
-    let capture_context =
-        ContextGuard::new(Capture::new(capture_unit.raw(), input_producer, &shared));
+    let capture_context = ContextGuard::new(Capture::new(
+        capture_unit.raw(),
+        input_producer,
+        capture_rate,
+        &shared,
+    ));
     attach_input_callback(capture_unit.raw(), capture_context.raw().cast())?;
     capture_unit.initialize()?;
     let workgroup = audio_workgroup(capture_unit.raw())?;

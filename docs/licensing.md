@@ -116,6 +116,10 @@ key again re-activates it.
   a salted SHA-256 of the hardware UUID; on another Mac it no longer matches,
   and the app activates the stored key for the new Mac instead of reusing the
   old Mac's activation. "Deactivate" on such a record only forgets it locally.
+- **A Mac that cannot be identified** (the hardware UUID is unreadable)
+  activates nothing and spends no device slot: the license section says so,
+  and a stored record is left untouched for a launch where the UUID is
+  readable again.
 
 ### Offline grace and revalidation
 

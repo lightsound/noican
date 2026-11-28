@@ -97,6 +97,46 @@ impl CaptureFeed {
             }
         }
     }
+
+    #[cfg(any(target_os = "macos", test))]
+    pub(crate) fn lose(&self, frames: usize) {
+        self.overruns
+            .fetch_add(u64::try_from(frames).unwrap_or(u64::MAX), Ordering::Relaxed);
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+const RENDER_FAILURE_TOLERANCE_MS: usize = 100;
+
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug)]
+pub(crate) struct RenderFailures {
+    run: usize,
+    cycles: usize,
+    limit: usize,
+}
+
+#[cfg(any(target_os = "macos", test))]
+impl RenderFailures {
+    pub(crate) fn new(sample_rate: u32) -> Self {
+        let rate = usize::try_from(sample_rate).unwrap_or(usize::MAX);
+        Self {
+            run: 0,
+            cycles: 0,
+            limit: (rate.saturating_mul(RENDER_FAILURE_TOLERANCE_MS) / 1000).max(1),
+        }
+    }
+
+    pub(crate) fn failed(&mut self, frames: usize) -> bool {
+        self.run = self.run.saturating_add(frames.max(1));
+        self.cycles = self.cycles.saturating_add(1);
+        self.cycles > 1 && self.run >= self.limit
+    }
+
+    pub(crate) const fn recovered(&mut self) {
+        self.run = 0;
+        self.cycles = 0;
+    }
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -288,6 +328,56 @@ mod tests {
         let queued: Vec<f32> = std::iter::from_fn(|| consumer.pop().ok()).collect();
         assert_samples(&queued, &[0.5, 0.0, 0.0, 0.0, -0.25]);
         assert_eq!(overruns.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn an_isolated_render_failure_is_tolerated() {
+        let mut failures = RenderFailures::new(48_000);
+        assert!(!failures.failed(512));
+        failures.recovered();
+        for _ in 0..1_000 {
+            assert!(!failures.failed(4_096), "one failure between successes");
+            failures.recovered();
+        }
+    }
+
+    #[test]
+    fn one_failed_cycle_longer_than_the_tolerance_is_tolerated() {
+        let mut narrowband = RenderFailures::new(8_000);
+        for _ in 0..1_000 {
+            assert!(
+                !narrowband.failed(MAX_CALLBACK_FRAMES),
+                "512 ms in one cycle"
+            );
+            narrowband.recovered();
+        }
+        assert!(!narrowband.failed(1_024), "128 ms in one cycle");
+        assert!(narrowband.failed(1_024), "the next cycle failed as well");
+    }
+
+    #[test]
+    fn render_failures_that_persist_for_the_tolerance_are_a_fault() {
+        let mut failures = RenderFailures::new(48_000);
+        let verdicts: Vec<bool> = (0..10).map(|_| failures.failed(512)).collect();
+        assert_eq!(verdicts.iter().filter(|fault| **fault).count(), 1);
+        assert!(verdicts[9], "4800 frames are 100 ms at 48 kHz");
+
+        let mut telephony = RenderFailures::new(16_000);
+        assert!(!telephony.failed(1_599));
+        assert!(telephony.failed(1));
+
+        let mut empty = RenderFailures::new(48_000);
+        assert!((0..4_799).all(|_| !empty.failed(0)));
+        assert!(empty.failed(0), "an empty failed cycle still counts");
+    }
+
+    #[test]
+    fn lost_capture_frames_are_counted_as_input_that_never_arrived() {
+        let (producer, _consumer) = RingBuffer::new(8);
+        let overruns = Arc::new(AtomicU64::new(0));
+        let feed = CaptureFeed::new(producer, Arc::clone(&overruns));
+        feed.lose(512);
+        assert_eq!(overruns.load(Ordering::Relaxed), 512);
     }
 
     #[test]

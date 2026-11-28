@@ -161,8 +161,8 @@ Input callback of the capture AUHAL: renders the microphone's frames
 into the preallocated buffer and pushes them to the capture ring
 ([`Capture`], shared with the aggregate render callback).
 Real-time rules (docs/tech-research.md §9): no allocation, no locks;
-ring overrun drops samples; a render failure flags the fault and
-returns cleanly.
+ring overrun drops samples; a render failure returns cleanly and
+flags the fault once it persists (`render-failure-tolerance`).
 
 Source: `crates/noican-coreaudio/src/macos/split.rs`, `output_render_callback`.
 

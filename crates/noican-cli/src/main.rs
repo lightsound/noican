@@ -95,6 +95,7 @@ fn main() -> anyhow::Result<()> {
             } else {
                 models
             };
+            process::ensure_distinct_outputs(&inputs, &out_dir)?;
             println!("models: {}", model_ids.join(", "));
             for input in &inputs {
                 process::process_file(
